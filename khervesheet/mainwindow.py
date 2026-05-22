@@ -250,24 +250,19 @@ class MainWindow(QMainWindow):
         fmt.addSeparator()
 
         self._bold_act = fmt.addAction(
-            icons.themed_icon("mdi.format-bold",
-                              color="#333333"), "",
-            self._toggle_bold)
+            icons.bold_icon(28), "Bold", self._toggle_bold)
         self._bold_act.setToolTip("Bold (Ctrl+B)")
         self._bold_act.setCheckable(True)
         self._bold_act.setShortcut("Ctrl+B")
 
         self._italic_act = fmt.addAction(
-            icons.themed_icon("mdi.format-italic",
-                              color="#333333"), "",
-            self._toggle_italic)
+            icons.italic_icon(28), "Italic", self._toggle_italic)
         self._italic_act.setToolTip("Italic (Ctrl+I)")
         self._italic_act.setCheckable(True)
         self._italic_act.setShortcut("Ctrl+I")
 
         self._underline_act = fmt.addAction(
-            icons.themed_icon("mdi.format-underline",
-                              color="#333333"), "",
+            icons.underline_icon(28), "Underline",
             self._toggle_underline)
         self._underline_act.setToolTip("Underline (Ctrl+U)")
         self._underline_act.setCheckable(True)
@@ -276,22 +271,19 @@ class MainWindow(QMainWindow):
         fmt.addSeparator()
 
         self._align_left_act = fmt.addAction(
-            icons.themed_icon("mdi.format-align-left",
-                              color="#333333"), "",
+            icons.align_left_icon(28), "Align Left",
             lambda: self._apply_alignment(Qt.AlignLeft | Qt.AlignVCenter))
         self._align_left_act.setToolTip("Align Left")
         self._align_left_act.setCheckable(True)
 
         self._align_center_act = fmt.addAction(
-            icons.themed_icon("mdi.format-align-center",
-                              color="#333333"), "",
+            icons.align_center_icon(28), "Align Center",
             lambda: self._apply_alignment(Qt.AlignHCenter | Qt.AlignVCenter))
         self._align_center_act.setToolTip("Align Center")
         self._align_center_act.setCheckable(True)
 
         self._align_right_act = fmt.addAction(
-            icons.themed_icon("mdi.format-align-right",
-                              color="#333333"), "",
+            icons.align_right_icon(28), "Align Right",
             lambda: self._apply_alignment(Qt.AlignRight | Qt.AlignVCenter))
         self._align_right_act.setToolTip("Align Right")
         self._align_right_act.setCheckable(True)
