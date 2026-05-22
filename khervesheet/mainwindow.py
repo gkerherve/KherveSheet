@@ -182,24 +182,32 @@ class MainWindow(QMainWindow):
 
     # ── Toolbars ─────────────────────────────────────────────────────
     def _build_toolbars(self):
+        # Trim default toolbar padding so icons fill the toolbar height.
+        self.setStyleSheet(
+            (self.styleSheet() or "")
+            + "\nQToolBar { padding: 0px; margin: 0px; spacing: 1px; }"
+            + "\nQToolButton { padding: 1px; margin: 0px; }")
+
         icon_size = QSize(28, 28)
 
-        # Standard toolbar — matches KhervePlot / SimplePlot
+        # Standard toolbar — matches SimplePlot
         std = self.addToolBar("Standard")
         std.setIconSize(icon_size)
         std.setToolButtonStyle(Qt.ToolButtonIconOnly)
         std.setMovable(False)
 
-        std.addAction(
-            icons.new_sheet_icon(28), "",
-            self._new_workbook).setToolTip("New")
-        std.addAction(
-            icons.open_folder_icon(28), "",
-            self._open_file).setToolTip("Open")
+        std.addAction(icons.new_workbook_icon(28),
+                      "New Workbook", self._new_workbook)
+        std.addAction(icons.new_sheet_icon(28),
+                      "New Sheet",
+                      lambda: self._workbook.add_sheet())
+        std.addSeparator()
+        std.addAction(icons.open_folder_icon(28),
+                      "Open", self._open_file)
         std.addAction(icons.filled_outline_icon(
             "mdi.content-save", "mdi.content-save-outline",
             icons.SAVE_FILL, QStyle.SP_DialogSaveButton),
-            "", self._save_file).setToolTip("Save")
+            "Save", self._save_file)
         std.addSeparator()
 
         # Edit toolbar
@@ -242,19 +250,24 @@ class MainWindow(QMainWindow):
         fmt.addSeparator()
 
         self._bold_act = fmt.addAction(
-            icons.themed_icon("mdi.format-bold"), "", self._toggle_bold)
+            icons.themed_icon("mdi.format-bold",
+                              color="#333333"), "",
+            self._toggle_bold)
         self._bold_act.setToolTip("Bold (Ctrl+B)")
         self._bold_act.setCheckable(True)
         self._bold_act.setShortcut("Ctrl+B")
 
         self._italic_act = fmt.addAction(
-            icons.themed_icon("mdi.format-italic"), "", self._toggle_italic)
+            icons.themed_icon("mdi.format-italic",
+                              color="#333333"), "",
+            self._toggle_italic)
         self._italic_act.setToolTip("Italic (Ctrl+I)")
         self._italic_act.setCheckable(True)
         self._italic_act.setShortcut("Ctrl+I")
 
         self._underline_act = fmt.addAction(
-            icons.themed_icon("mdi.format-underline"), "",
+            icons.themed_icon("mdi.format-underline",
+                              color="#333333"), "",
             self._toggle_underline)
         self._underline_act.setToolTip("Underline (Ctrl+U)")
         self._underline_act.setCheckable(True)
@@ -263,19 +276,22 @@ class MainWindow(QMainWindow):
         fmt.addSeparator()
 
         self._align_left_act = fmt.addAction(
-            icons.themed_icon("mdi.format-align-left"), "",
+            icons.themed_icon("mdi.format-align-left",
+                              color="#333333"), "",
             lambda: self._apply_alignment(Qt.AlignLeft | Qt.AlignVCenter))
         self._align_left_act.setToolTip("Align Left")
         self._align_left_act.setCheckable(True)
 
         self._align_center_act = fmt.addAction(
-            icons.themed_icon("mdi.format-align-center"), "",
+            icons.themed_icon("mdi.format-align-center",
+                              color="#333333"), "",
             lambda: self._apply_alignment(Qt.AlignHCenter | Qt.AlignVCenter))
         self._align_center_act.setToolTip("Align Center")
         self._align_center_act.setCheckable(True)
 
         self._align_right_act = fmt.addAction(
-            icons.themed_icon("mdi.format-align-right"), "",
+            icons.themed_icon("mdi.format-align-right",
+                              color="#333333"), "",
             lambda: self._apply_alignment(Qt.AlignRight | Qt.AlignVCenter))
         self._align_right_act.setToolTip("Align Right")
         self._align_right_act.setCheckable(True)
