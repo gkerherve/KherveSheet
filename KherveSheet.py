@@ -1,0 +1,16 @@
+"""KherveSheet — entry point shim. Run via `python KherveSheet.py` or
+`python -m khervesheet`.
+
+Copyright (C) 2026 Gwilherm Kerherve
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+"""
+
+from khervesheet.app import main
+
+
+if __name__ == "__main__":
+    main()
