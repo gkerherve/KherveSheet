@@ -12,13 +12,13 @@ import csv
 import os
 
 from PyQt5.QtCore import Qt, QSize
-from PyQt5.QtGui import QIcon, QKeySequence
+from PyQt5.QtGui import QIcon, QKeySequence, QFont
 from PyQt5.QtWidgets import QStyle
 from PyQt5.QtWidgets import (
     QMainWindow, QStatusBar, QLabel, QAction, QMenu, QMenuBar,
     QToolBar, QToolButton, QFileDialog, QMessageBox, QProgressBar,
     QSlider, QHBoxLayout, QWidget, QUndoStack, QComboBox,
-    QInputDialog, QApplication,
+    QInputDialog, QApplication, QFontComboBox,
 )
 
 from . import APP_NAME, __version__
@@ -58,6 +58,12 @@ class MainWindow(QMainWindow):
     def _wire_undo_to_sheets(self):
         for s in self._workbook.all_sheets():
             s._undo_stack = self._undo_stack
+            # Connect cell selection to format toolbar sync (guard
+            # against duplicate connections with a flag).
+            if not getattr(s, '_fmt_connected', False):
+                s.table.currentCellChanged.connect(
+                    lambda *_: self._update_format_toolbar())
+                s._fmt_connected = True
 
     # ── Title bar ────────────────────────────────────────────────────
     def _update_title(self):
@@ -210,6 +216,69 @@ class MainWindow(QMainWindow):
             icons.themed_icon("mdi.redo", QStyle.SP_ArrowForward),
             "", self._undo_stack.redo)
         self._redo_act.setToolTip("Redo (Ctrl+Y)")
+
+        # Font toolbar
+        fmt = self.addToolBar("Font")
+        fmt.setIconSize(icon_size)
+        fmt.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        fmt.setMovable(False)
+
+        self._font_combo = QFontComboBox()
+        self._font_combo.setCurrentFont(QFont("Segoe UI"))
+        self._font_combo.setMaximumWidth(160)
+        self._font_combo.currentFontChanged.connect(self._apply_font_family)
+        fmt.addWidget(self._font_combo)
+
+        self._font_size = QComboBox()
+        self._font_size.setEditable(True)
+        self._font_size.setMaximumWidth(50)
+        for s in ("8", "9", "10", "11", "12", "14", "16", "18",
+                  "20", "24", "28", "36", "48", "72"):
+            self._font_size.addItem(s)
+        self._font_size.setCurrentText("9")
+        self._font_size.currentTextChanged.connect(self._apply_font_size)
+        fmt.addWidget(self._font_size)
+
+        fmt.addSeparator()
+
+        self._bold_act = fmt.addAction(
+            icons.themed_icon("mdi.format-bold"), "", self._toggle_bold)
+        self._bold_act.setToolTip("Bold (Ctrl+B)")
+        self._bold_act.setCheckable(True)
+        self._bold_act.setShortcut("Ctrl+B")
+
+        self._italic_act = fmt.addAction(
+            icons.themed_icon("mdi.format-italic"), "", self._toggle_italic)
+        self._italic_act.setToolTip("Italic (Ctrl+I)")
+        self._italic_act.setCheckable(True)
+        self._italic_act.setShortcut("Ctrl+I")
+
+        self._underline_act = fmt.addAction(
+            icons.themed_icon("mdi.format-underline"), "",
+            self._toggle_underline)
+        self._underline_act.setToolTip("Underline (Ctrl+U)")
+        self._underline_act.setCheckable(True)
+        self._underline_act.setShortcut("Ctrl+U")
+
+        fmt.addSeparator()
+
+        self._align_left_act = fmt.addAction(
+            icons.themed_icon("mdi.format-align-left"), "",
+            lambda: self._apply_alignment(Qt.AlignLeft | Qt.AlignVCenter))
+        self._align_left_act.setToolTip("Align Left")
+        self._align_left_act.setCheckable(True)
+
+        self._align_center_act = fmt.addAction(
+            icons.themed_icon("mdi.format-align-center"), "",
+            lambda: self._apply_alignment(Qt.AlignHCenter | Qt.AlignVCenter))
+        self._align_center_act.setToolTip("Align Center")
+        self._align_center_act.setCheckable(True)
+
+        self._align_right_act = fmt.addAction(
+            icons.themed_icon("mdi.format-align-right"), "",
+            lambda: self._apply_alignment(Qt.AlignRight | Qt.AlignVCenter))
+        self._align_right_act.setToolTip("Align Right")
+        self._align_right_act.setCheckable(True)
 
         # Plot toolbar — all plot types with custom icons
         from .sheet import SheetWidget
@@ -600,6 +669,106 @@ class MainWindow(QMainWindow):
             s._selected_chart = None
         else:
             s._clear_selection()
+
+    # ── Font / alignment formatting ─────────────────────────────────
+    def _selected_items(self):
+        """Return all QTableWidgetItems in the current selection."""
+        s = self._active_sheet()
+        if not s:
+            return []
+        from PyQt5.QtWidgets import QTableWidgetItem
+        items = []
+        for rng in s.table.selectedRanges():
+            for r in range(rng.topRow(), rng.bottomRow() + 1):
+                for c in range(rng.leftColumn(), rng.rightColumn() + 1):
+                    it = s.table.item(r, c)
+                    if it is None:
+                        it = QTableWidgetItem("")
+                        s.table.setItem(r, c, it)
+                    items.append(it)
+        return items
+
+    def _apply_font_family(self, font):
+        for it in self._selected_items():
+            f = it.font()
+            f.setFamily(font.family())
+            it.setFont(f)
+
+    def _apply_font_size(self, size_text):
+        try:
+            size = float(size_text)
+        except ValueError:
+            return
+        if size < 1:
+            return
+        for it in self._selected_items():
+            f = it.font()
+            f.setPointSizeF(size)
+            it.setFont(f)
+
+    def _toggle_bold(self):
+        checked = self._bold_act.isChecked()
+        for it in self._selected_items():
+            f = it.font()
+            f.setBold(checked)
+            it.setFont(f)
+
+    def _toggle_italic(self):
+        checked = self._italic_act.isChecked()
+        for it in self._selected_items():
+            f = it.font()
+            f.setItalic(checked)
+            it.setFont(f)
+
+    def _toggle_underline(self):
+        checked = self._underline_act.isChecked()
+        for it in self._selected_items():
+            f = it.font()
+            f.setUnderline(checked)
+            it.setFont(f)
+
+    def _apply_alignment(self, alignment):
+        # Update toggle state — only one alignment active at a time.
+        self._align_left_act.setChecked(
+            alignment & Qt.AlignLeft and not alignment & Qt.AlignHCenter)
+        self._align_center_act.setChecked(bool(alignment & Qt.AlignHCenter))
+        self._align_right_act.setChecked(bool(alignment & Qt.AlignRight))
+        for it in self._selected_items():
+            it.setTextAlignment(int(alignment))
+
+    def _update_format_toolbar(self):
+        """Sync toolbar widgets with the current cell's formatting."""
+        s = self._active_sheet()
+        if not s:
+            return
+        r = s.table.currentRow()
+        c = s.table.currentColumn()
+        if r < 0 or c < 0:
+            return
+        it = s.table.item(r, c)
+        if it is None:
+            return
+        f = it.font()
+
+        # Block signals to avoid re-triggering formatting.
+        self._font_combo.blockSignals(True)
+        self._font_combo.setCurrentFont(f)
+        self._font_combo.blockSignals(False)
+
+        self._font_size.blockSignals(True)
+        self._font_size.setCurrentText(str(int(f.pointSize()))
+                                       if f.pointSize() > 0 else "9")
+        self._font_size.blockSignals(False)
+
+        self._bold_act.setChecked(f.bold())
+        self._italic_act.setChecked(f.italic())
+        self._underline_act.setChecked(f.underline())
+
+        align = it.textAlignment()
+        self._align_left_act.setChecked(
+            bool(align & Qt.AlignLeft) and not bool(align & Qt.AlignHCenter))
+        self._align_center_act.setChecked(bool(align & Qt.AlignHCenter))
+        self._align_right_act.setChecked(bool(align & Qt.AlignRight))
 
     # ── Zoom ─────────────────────────────────────────────────────────
     def _zoom_in(self):
