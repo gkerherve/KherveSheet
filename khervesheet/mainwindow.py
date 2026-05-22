@@ -178,62 +178,62 @@ class MainWindow(QMainWindow):
     def _build_toolbars(self):
         icon_size = QSize(28, 28)
 
-        # Standard toolbar — icon-only, matching KhervePlot style
-        tb = self.addToolBar("Standard")
-        tb.setIconSize(icon_size)
-        tb.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        tb.setMovable(False)
-        tb.addAction(icons.new_workbook_icon(28), "New",
-                     self._new_workbook)
-        tb.addAction(icons.new_sheet_icon(28), "New Sheet",
-                     lambda: self._workbook.add_sheet())
-        tb.addAction(icons.open_folder_icon(28), "Open",
-                     self._open_file)
-        tb.addAction(icons.filled_outline_icon(
+        # Standard toolbar — matches KhervePlot / SimplePlot exactly
+        std = self.addToolBar("Standard")
+        std.setIconSize(icon_size)
+        std.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        std.setMovable(False)
+
+        std.addAction(icons.new_workbook_icon(28),
+                      "New Workbook", self._new_workbook)
+        std.addAction(icons.new_sheet_icon(28),
+                      "New Sheet", lambda: self._workbook.add_sheet())
+        std.addSeparator()
+        std.addAction(icons.open_folder_icon(28),
+                      "Open", self._open_file)
+        std.addAction(icons.filled_outline_icon(
             "mdi.content-save", "mdi.content-save-outline",
             icons.SAVE_FILL, QStyle.SP_DialogSaveButton),
             "Save", self._save_file)
-        tb.addSeparator()
-        tb.addAction(icons.themed_icon("mdi.undo", QStyle.SP_ArrowBack),
-                     "Undo", self._undo_stack.undo)
-        tb.addAction(icons.themed_icon("mdi.redo", QStyle.SP_ArrowForward),
-                     "Redo", self._undo_stack.redo)
-        tb.addSeparator()
-        tb.addAction(icons.themed_icon("mdi.content-cut",
+        std.addSeparator()
+
+        # Edit toolbar
+        ed = self.addToolBar("Edit")
+        ed.setIconSize(icon_size)
+        ed.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        ed.setMovable(False)
+
+        self._undo_act = ed.addAction(
+            icons.themed_icon("mdi.undo", QStyle.SP_ArrowBack),
+            "Undo", self._undo_stack.undo)
+        self._undo_act.setToolTip("Undo (Ctrl+Z)")
+        self._redo_act = ed.addAction(
+            icons.themed_icon("mdi.redo", QStyle.SP_ArrowForward),
+            "Redo", self._undo_stack.redo)
+        self._redo_act.setToolTip("Redo (Ctrl+Y)")
+        ed.addSeparator()
+        ed.addAction(icons.themed_icon("mdi.content-cut",
                                        QStyle.SP_DialogResetButton),
                      "Cut", self._cut)
-        tb.addAction(icons.filled_outline_icon(
+        ed.addAction(icons.filled_outline_icon(
             "mdi.file-multiple", "mdi.file-multiple-outline",
             icons.COPY_FILL, QStyle.SP_DialogApplyButton),
             "Copy", self._copy)
-        tb.addAction(icons.filled_outline_icon(
+        ed.addAction(icons.filled_outline_icon(
             "mdi.clipboard-text", "mdi.clipboard-text-outline",
             icons.PASTE_FILL, QStyle.SP_DialogOkButton),
             "Paste", self._paste)
-        tb.addAction(icons.filled_outline_icon(
+        ed.addAction(icons.filled_outline_icon(
             "mdi.delete", "mdi.delete-outline",
             icons.DELETE_FILL, QStyle.SP_TrashIcon),
             "Clear", self._clear)
 
-        # Format toolbar
-        fmt_tb = self.addToolBar("Format")
-        fmt_tb.setIconSize(icon_size)
-        fmt_tb.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        fmt_tb.setMovable(False)
-
-        self._fmt_combo = QComboBox()
-        from .sheet import NUMBER_FORMATS
-        self._fmt_combo.addItems(NUMBER_FORMATS)
-        self._fmt_combo.setToolTip("Number format")
-        self._fmt_combo.currentTextChanged.connect(self._set_number_format)
-        fmt_tb.addWidget(QLabel(" Format: "))
-        fmt_tb.addWidget(self._fmt_combo)
-
-        # Chart toolbar — all plot types with custom icons
-        chart_tb = self.addToolBar("Chart")
-        chart_tb.setIconSize(icon_size)
-        chart_tb.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        chart_tb.setMovable(False)
+        # Plot toolbar — all plot types with custom icons
+        from .sheet import SheetWidget
+        plot_bar = self.addToolBar("Plot")
+        plot_bar.setIconSize(icon_size)
+        plot_bar.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        plot_bar.setMovable(False)
         _plot_icon_fns = {
             "Line":        icons.plot_icon_line,
             "Scatter":     icons.plot_icon_scatter,
@@ -244,11 +244,10 @@ class MainWindow(QMainWindow):
             "Histogram":   icons.plot_icon_histogram,
             "Box":         icons.plot_icon_box,
         }
-        from .sheet import SheetWidget
         for pt in SheetWidget.PLOT_TYPES:
             fn = _plot_icon_fns.get(pt)
             ic = fn(28) if fn else icons.themed_icon("mdi.chart-line")
-            act = chart_tb.addAction(
+            act = plot_bar.addAction(
                 ic, "",
                 lambda t=pt: self._insert_chart(t))
             act.setToolTip(pt)
