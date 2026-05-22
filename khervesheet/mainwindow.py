@@ -124,6 +124,13 @@ class MainWindow(QMainWindow):
         view_menu.addAction("Zoom In", self._zoom_in, "Ctrl+=")
         view_menu.addAction("Zoom Out", self._zoom_out, "Ctrl+-")
         view_menu.addAction("Reset Zoom", self._zoom_reset, "Ctrl+0")
+        view_menu.addSeparator()
+        theme_menu = view_menu.addMenu("Theme")
+        from .app import THEMES
+        for name in THEMES:
+            act = theme_menu.addAction(name)
+            act.triggered.connect(
+                lambda _, n=name: self._apply_theme(n))
 
         # ── Insert ───────────────────────────────────────────────────
         insert_menu = mb.addMenu("&Insert")
@@ -182,47 +189,27 @@ class MainWindow(QMainWindow):
 
     # ── Toolbars ─────────────────────────────────────────────────────
     def _build_toolbars(self):
-        # Trim default toolbar padding so icons fill the toolbar height.
-        self.setStyleSheet(
-            (self.styleSheet() or "")
-            + "\nQToolBar { padding: 0px; margin: 0px; spacing: 1px; }"
-            + "\nQToolButton { padding: 1px; margin: 0px; }")
-
         icon_size = QSize(28, 28)
 
-        # Standard toolbar — matches SimplePlot
+        # Standard toolbar
         std = self.addToolBar("Standard")
         std.setIconSize(icon_size)
         std.setToolButtonStyle(Qt.ToolButtonIconOnly)
         std.setMovable(False)
 
-        std.addAction(icons.new_workbook_icon(28),
-                      "New Workbook", self._new_workbook)
-        std.addAction(icons.new_sheet_icon(28),
-                      "New Sheet",
-                      lambda: self._workbook.add_sheet())
-        std.addSeparator()
-        std.addAction(icons.open_folder_icon(28),
-                      "Open", self._open_file)
-        std.addAction(icons.filled_outline_icon(
-            "mdi.content-save", "mdi.content-save-outline",
-            icons.SAVE_FILL, QStyle.SP_DialogSaveButton),
-            "Save", self._save_file)
+        std.addAction(
+            icons.new_file_icon(28), "New", self._new_workbook)
+        std.addAction(
+            icons.open_file_icon(28), "Open", self._open_file)
+        std.addAction(
+            icons.save_file_icon(28), "Save", self._save_file)
         std.addSeparator()
 
-        # Edit toolbar
-        ed = self.addToolBar("Edit")
-        ed.setIconSize(icon_size)
-        ed.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        ed.setMovable(False)
-
-        self._undo_act = ed.addAction(
-            icons.themed_icon("mdi.undo", QStyle.SP_ArrowBack),
-            "", self._undo_stack.undo)
+        self._undo_act = std.addAction(
+            icons.undo_icon(28), "Undo", self._undo_stack.undo)
         self._undo_act.setToolTip("Undo (Ctrl+Z)")
-        self._redo_act = ed.addAction(
-            icons.themed_icon("mdi.redo", QStyle.SP_ArrowForward),
-            "", self._undo_stack.redo)
+        self._redo_act = std.addAction(
+            icons.redo_icon(28), "Redo", self._undo_stack.redo)
         self._redo_act.setToolTip("Redo (Ctrl+Y)")
 
         # Font toolbar
@@ -777,6 +764,11 @@ class MainWindow(QMainWindow):
             bool(align & Qt.AlignLeft) and not bool(align & Qt.AlignHCenter))
         self._align_center_act.setChecked(bool(align & Qt.AlignHCenter))
         self._align_right_act.setChecked(bool(align & Qt.AlignRight))
+
+    # ── Theme ────────────────────────────────────────────────────────
+    def _apply_theme(self, name):
+        from .app import apply_theme
+        apply_theme(QApplication.instance(), name)
 
     # ── Zoom ─────────────────────────────────────────────────────────
     def _zoom_in(self):

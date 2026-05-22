@@ -1096,3 +1096,163 @@ def align_right_icon(size: int = 28) -> QIcon:
             p.drawLine(QPointF(right - (s - 2 * m) * w_frac, y),
                        QPointF(right, y))
     return _fmt_icon(size, _draw)
+
+
+# ── Standard toolbar icons (QPainter) ─────────────────────────────
+
+def new_file_icon(size: int = 28) -> QIcon:
+    """White page with folded corner and a green + badge."""
+    def _draw(p, s):
+        m = s * 0.12
+        pw = max(1.2, s / 18)
+        fold = s * 0.28
+        # Page body
+        page = QPolygonF([
+            QPointF(m, m),
+            QPointF(s - m - fold, m),
+            QPointF(s - m, m + fold),
+            QPointF(s - m, s - m),
+            QPointF(m, s - m),
+        ])
+        p.setPen(QPen(QColor("#4a6a8a"), pw))
+        p.setBrush(QColor("#f0f4f8"))
+        p.drawPolygon(page)
+        # Fold triangle
+        tri = QPolygonF([
+            QPointF(s - m - fold, m),
+            QPointF(s - m, m + fold),
+            QPointF(s - m - fold, m + fold),
+        ])
+        p.setBrush(QColor("#c8d8e8"))
+        p.drawPolygon(tri)
+        # Green + badge
+        cx, cy = s * 0.72, s * 0.72
+        r = s * 0.18
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#27ae60"))
+        p.drawEllipse(QPointF(cx, cy), r, r)
+        p.setPen(QPen(QColor("#ffffff"), max(1.5, s / 14)))
+        p.drawLine(QPointF(cx - r * 0.55, cy),
+                   QPointF(cx + r * 0.55, cy))
+        p.drawLine(QPointF(cx, cy - r * 0.55),
+                   QPointF(cx, cy + r * 0.55))
+    return _fmt_icon(size, _draw)
+
+
+def open_file_icon(size: int = 28) -> QIcon:
+    """Yellow folder, open."""
+    def _draw(p, s):
+        m = s * 0.1
+        pw = max(1.2, s / 18)
+        # Back panel
+        p.setPen(QPen(QColor("#b8860b"), pw))
+        p.setBrush(QColor("#f0c040"))
+        back = QPolygonF([
+            QPointF(m, s * 0.25),
+            QPointF(s * 0.42, s * 0.25),
+            QPointF(s * 0.50, s * 0.18),
+            QPointF(s - m, s * 0.18),
+            QPointF(s - m, s - m),
+            QPointF(m, s - m),
+        ])
+        p.drawPolygon(back)
+        # Front flap (open)
+        p.setBrush(QColor("#fad764"))
+        flap = QPolygonF([
+            QPointF(m, s * 0.42),
+            QPointF(s * 0.28, s * 0.33),
+            QPointF(s - m + s * 0.02, s * 0.33),
+            QPointF(s - m - s * 0.08, s - m),
+            QPointF(m, s - m),
+        ])
+        p.drawPolygon(flap)
+    return _fmt_icon(size, _draw)
+
+
+def save_file_icon(size: int = 28) -> QIcon:
+    """Floppy disk."""
+    def _draw(p, s):
+        m = s * 0.1
+        pw = max(1.2, s / 18)
+        body = QRectF(m, m, s - 2 * m, s - 2 * m)
+        p.setPen(QPen(QColor("#2c5f8a"), pw))
+        p.setBrush(QColor("#3a8fd4"))
+        p.drawRoundedRect(body, s * 0.06, s * 0.06)
+        # Metal slider
+        sl_w = (s - 2 * m) * 0.50
+        sl_h = (s - 2 * m) * 0.28
+        sl_x = m + (s - 2 * m - sl_w) / 2
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#c0d0e0"))
+        p.drawRect(QRectF(sl_x, m, sl_w, sl_h))
+        # Slider notch
+        p.setBrush(QColor("#3a8fd4"))
+        p.drawRect(QRectF(sl_x + sl_w * 0.55, m,
+                          sl_w * 0.25, sl_h * 0.7))
+        # Label area
+        lbl_m = s * 0.06
+        lbl_y = s * 0.58
+        p.setBrush(QColor("#e8eef4"))
+        p.drawRoundedRect(QRectF(m + lbl_m, lbl_y,
+                                 s - 2 * m - 2 * lbl_m,
+                                 s - m - lbl_y - lbl_m),
+                          2, 2)
+    return _fmt_icon(size, _draw)
+
+
+def undo_icon(size: int = 28) -> QIcon:
+    """Curved left arrow."""
+    def _draw(p, s):
+        from PyQt5.QtGui import QPainterPath
+        pw = max(2.0, s / 10)
+        p.setPen(QPen(QColor("#2e7d32"), pw, Qt.SolidLine,
+                       Qt.RoundCap, Qt.RoundJoin))
+        p.setBrush(Qt.NoBrush)
+        path = QPainterPath()
+        cx, cy = s * 0.5, s * 0.48
+        rx, ry = s * 0.28, s * 0.22
+        path.moveTo(cx - rx, cy)
+        path.arcTo(QRectF(cx - rx, cy - ry, 2 * rx, 2 * ry),
+                   180, -220)
+        p.drawPath(path)
+        # Arrowhead
+        ax, ay = cx - rx, cy
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#2e7d32"))
+        ah = s * 0.18
+        tri = QPolygonF([
+            QPointF(ax, ay - ah * 0.1),
+            QPointF(ax + ah, ay - ah * 0.7),
+            QPointF(ax + ah * 0.2, ay + ah * 0.7),
+        ])
+        p.drawPolygon(tri)
+    return _fmt_icon(size, _draw)
+
+
+def redo_icon(size: int = 28) -> QIcon:
+    """Curved right arrow."""
+    def _draw(p, s):
+        from PyQt5.QtGui import QPainterPath
+        pw = max(2.0, s / 10)
+        p.setPen(QPen(QColor("#2e7d32"), pw, Qt.SolidLine,
+                       Qt.RoundCap, Qt.RoundJoin))
+        p.setBrush(Qt.NoBrush)
+        path = QPainterPath()
+        cx, cy = s * 0.5, s * 0.48
+        rx, ry = s * 0.28, s * 0.22
+        path.moveTo(cx + rx, cy)
+        path.arcTo(QRectF(cx - rx, cy - ry, 2 * rx, 2 * ry),
+                   0, 220)
+        p.drawPath(path)
+        # Arrowhead
+        ax, ay = cx + rx, cy
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#2e7d32"))
+        ah = s * 0.18
+        tri = QPolygonF([
+            QPointF(ax, ay - ah * 0.1),
+            QPointF(ax - ah, ay - ah * 0.7),
+            QPointF(ax - ah * 0.2, ay + ah * 0.7),
+        ])
+        p.drawPolygon(tri)
+    return _fmt_icon(size, _draw)
