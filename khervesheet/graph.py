@@ -29,6 +29,7 @@ from matplotlib.backends.backend_qt5agg import (
     NavigationToolbar2QT as NavigationToolbar,
 )
 from matplotlib.figure import Figure
+import matplotlib.ticker as mticker
 
 
 # ── Plot defaults ───────────────────────────────────────────────────
@@ -52,6 +53,7 @@ class EmbeddedChart(QWidget):
         self.setMouseTracking(True)
         self._source_sheet = source_sheet
         self._series = []
+        self._fill_artists = []  # fill_between patches
 
         # Dragging / resizing state.
         self._drag_origin = None      # mouse pos at drag start
@@ -144,7 +146,9 @@ class EmbeddedChart(QWidget):
             "plot_type": plot_type, "artist": artist,
         })
 
-        ax.legend(loc="best", framealpha=0.8, fontsize=8)
+        leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
+        if leg:
+            leg.set_draggable(True)
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
         self._canvas.draw_idle()
@@ -262,14 +266,13 @@ class EmbeddedChart(QWidget):
             self._canvas.draw_idle()
 
     def _on_canvas_click(self, event):
-        """Handle double-click on labels (edit text) or axis spines
-        (change scale)."""
+        """Handle double-click on labels or axis spines."""
         if event.dblclick:
             if self._try_edit_axis_label(event):
                 return
             side = self._hit_axis_spine(event)
             if side is not None:
-                self._cycle_scale(side)
+                self._open_axis_dialog(side)
 
     def _try_edit_axis_label(self, event):
         """If *event* hit xlabel, ylabel, or title, open QInputDialog
@@ -319,17 +322,6 @@ class EmbeddedChart(QWidget):
             return "Right"
         return None
 
-    def _cycle_scale(self, side):
-        """Toggle between linear and log for the axis on *side*."""
-        ax = self._ax
-        if side in ("Bottom", "Top"):
-            cur = ax.get_xscale()
-            ax.set_xscale("log" if cur == "linear" else "linear")
-        else:
-            cur = ax.get_yscale()
-            ax.set_yscale("log" if cur == "linear" else "linear")
-        self._canvas.draw_idle()
-
     def _set_scale(self, axis, scale):
         """Set *axis* ('x' or 'y') to *scale* ('linear' or 'log')."""
         ax = self._ax
@@ -338,6 +330,12 @@ class EmbeddedChart(QWidget):
             self._canvas.draw_idle()
         except ValueError:
             pass
+
+    # ── Axis properties dialog ─────────────────────────────────────
+    def _open_axis_dialog(self, side):
+        dlg = AxisPropertiesDialog(self, side)
+        if dlg.exec_() == QDialog.Accepted:
+            dlg.apply_to_chart(self)
 
     # ── Context menu ────────────────────────────────────────────────
     def contextMenuEvent(self, event):
@@ -351,12 +349,22 @@ class EmbeddedChart(QWidget):
         xm.addAction("Linear", lambda: self._set_scale("x", "linear"))
         xm.addAction("Log\u2081\u2080",
                       lambda: self._set_scale("x", "log"))
+        xm.addAction("Properties\u2026",
+                      lambda: self._open_axis_dialog("Bottom"))
 
         # Y Axis submenu
         ym = menu.addMenu("Y Axis")
         ym.addAction("Linear", lambda: self._set_scale("y", "linear"))
         ym.addAction("Log\u2081\u2080",
                       lambda: self._set_scale("y", "log"))
+        ym.addAction("Properties\u2026",
+                      lambda: self._open_axis_dialog("Left"))
+
+        # Top/Right axes
+        menu.addAction("Top Axis\u2026",
+                       lambda: self._open_axis_dialog("Top"))
+        menu.addAction("Right Axis\u2026",
+                       lambda: self._open_axis_dialog("Right"))
 
         menu.addSeparator()
         menu.addAction("Pop Out to Window", self._pop_out)
@@ -395,6 +403,50 @@ class EmbeddedChart(QWidget):
         if title:
             self._title_label.setText(title)
         self._canvas.draw_idle()
+
+    # ── Fill between curves ─────────────────────────────────────────
+    def apply_fill(self, series_idx, fill_mode, fill_target_idx,
+                   fill_color, fill_alpha):
+        """Add or update fill for a series.
+
+        fill_mode: 'none', 'zero', 'series'
+        fill_target_idx: index into self._series (for 'series' mode)
+        """
+        # Remove existing fill for this series.
+        self._remove_fill(series_idx)
+
+        if fill_mode == "none":
+            return
+
+        s = self._series[series_idx]
+        x, y = s["x"], s["y"]
+
+        if fill_mode == "zero":
+            fc = self._ax.fill_between(
+                x, y, 0, alpha=fill_alpha, color=fill_color,
+                label="_nolegend_")
+        elif fill_mode == "series" and 0 <= fill_target_idx < len(self._series):
+            t = self._series[fill_target_idx]
+            # Interpolate target to match x
+            y2 = np.interp(x, t["x"], t["y"])
+            fc = self._ax.fill_between(
+                x, y, y2, alpha=fill_alpha, color=fill_color,
+                label="_nolegend_")
+        else:
+            return
+
+        self._fill_artists.append((series_idx, fc))
+        self._canvas.draw_idle()
+
+    def _remove_fill(self, series_idx):
+        """Remove fill artist for the given series index."""
+        keep = []
+        for idx, artist in self._fill_artists:
+            if idx == series_idx:
+                artist.remove()
+            else:
+                keep.append((idx, artist))
+        self._fill_artists = keep
 
     # ── Drag to move ────────────────────────────────────────────────
     def mousePressEvent(self, event):
@@ -545,7 +597,9 @@ class _ChartWindow(QDialog):
         for s in series:
             EmbeddedChart._plot_one(
                 ax, s["x"], s["y"], s["label"], s["plot_type"])
-        ax.legend(loc="best", framealpha=0.8, fontsize=8)
+        leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
+        if leg:
+            leg.set_draggable(True)
 
         toolbar = NavigationToolbar(canvas, self)
         toolbar.setIconSize(QSize(18, 18))
@@ -591,15 +645,192 @@ class ChartPropertiesDialog(QDialog):
         form.addRow(bb)
 
 
-# ── Plot Details Dialog ─────────────────────────────────────────────
-# Simplified version of KhervePlot's PlotDetailsDialog — single layer,
-# series list on the left, property tabs on the right.
+# ── Axis Properties Dialog ─────────────────────────────────────────
 
 from PyQt5.QtWidgets import (
     QSplitter, QListWidget, QListWidgetItem, QTabWidget,
     QSpinBox, QDoubleSpinBox, QStackedWidget, QGroupBox,
     QGridLayout, QColorDialog,
 )
+
+
+class AxisPropertiesDialog(QDialog):
+    """Per-axis dialog: scale, major/minor ticks, show/hide."""
+
+    _AXIS_LABEL = {
+        "Bottom": "X Axis (Bottom)",
+        "Top": "X Axis (Top)",
+        "Left": "Y Axis (Left)",
+        "Right": "Y Axis (Right)",
+    }
+
+    def __init__(self, chart, side, parent=None):
+        super().__init__(parent or chart)
+        self._chart = chart
+        self._side = side
+        ax = chart._ax
+
+        self.setWindowTitle(self._AXIS_LABEL.get(side, side))
+        self.resize(380, 340)
+
+        form = QFormLayout(self)
+
+        # Determine which matplotlib axis object we're editing.
+        is_x = side in ("Bottom", "Top")
+        self._is_x = is_x
+        self._mpl_axis = ax.xaxis if is_x else ax.yaxis
+
+        # Show / hide spine
+        spine_key = {"Bottom": "bottom", "Top": "top",
+                     "Left": "left", "Right": "right"}[side]
+        self._spine_key = spine_key
+        self.show_spine = QCheckBox("Show axis")
+        self.show_spine.setChecked(ax.spines[spine_key].get_visible())
+        form.addRow(self.show_spine)
+
+        # Show tick labels on this side
+        self.show_ticks = QCheckBox("Show tick labels")
+        if is_x:
+            self.show_ticks.setChecked(
+                side == "Bottom" and ax.xaxis.get_label_position() != "top"
+                or side == "Top" and ax.xaxis.get_label_position() == "top")
+        else:
+            self.show_ticks.setChecked(
+                side == "Left" and ax.yaxis.get_label_position() != "right"
+                or side == "Right" and ax.yaxis.get_label_position() == "right")
+        form.addRow(self.show_ticks)
+
+        # Scale
+        self.scale_combo = QComboBox()
+        self.scale_combo.addItems(["linear", "log", "symlog"])
+        cur = ax.get_xscale() if is_x else ax.get_yscale()
+        self.scale_combo.setCurrentText(cur)
+        form.addRow("Scale:", self.scale_combo)
+
+        form.addRow(QLabel(""))  # spacer
+
+        # ── Major ticks ────────────────────────────────────────────
+        form.addRow(QLabel("<b>Major Ticks</b>"))
+
+        self.major_show = QCheckBox("Show")
+        self.major_show.setChecked(True)
+        major_ticks = (self._mpl_axis.get_major_ticks() or [None])
+        if major_ticks and major_ticks[0]:
+            tk = major_ticks[0]
+            vis = (tk.tick1line.get_visible()
+                   if hasattr(tk, 'tick1line') else True)
+            self.major_show.setChecked(vis)
+        form.addRow(self.major_show)
+
+        self.major_count = QSpinBox()
+        self.major_count.setRange(2, 50)
+        self.major_count.setValue(self._guess_tick_count(major=True))
+        self.major_count.setToolTip("Approximate number of major ticks")
+        form.addRow("Count:", self.major_count)
+
+        # ── Minor ticks ────────────────────────────────────────────
+        form.addRow(QLabel("<b>Minor Ticks</b>"))
+
+        self.minor_show = QCheckBox("Show")
+        minor_on = bool(self._mpl_axis.get_minor_ticks())
+        # Check if minor locator is a NullLocator (= hidden).
+        loc = self._mpl_axis.get_minor_locator()
+        if isinstance(loc, mticker.NullLocator):
+            minor_on = False
+        self.minor_show.setChecked(minor_on)
+        form.addRow(self.minor_show)
+
+        self.minor_count = QSpinBox()
+        self.minor_count.setRange(1, 20)
+        self.minor_count.setValue(5)
+        self.minor_count.setToolTip("Minor divisions per major interval")
+        form.addRow("Subdivisions:", self.minor_count)
+
+        # Footer
+        bb = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        form.addRow(bb)
+
+    def _guess_tick_count(self, major=True):
+        ticks = (self._mpl_axis.get_majorticklocs()
+                 if major else self._mpl_axis.get_minorticklocs())
+        return max(2, len(ticks))
+
+    def apply_to_chart(self, chart):
+        ax = chart._ax
+
+        # Scale
+        scale = self.scale_combo.currentText()
+        try:
+            if self._is_x:
+                ax.set_xscale(scale)
+            else:
+                ax.set_yscale(scale)
+        except ValueError:
+            pass
+
+        # Spine visibility
+        ax.spines[self._spine_key].set_visible(self.show_spine.isChecked())
+
+        # Tick labels
+        if self.show_ticks.isChecked():
+            if self._side == "Top":
+                ax.xaxis.set_tick_params(
+                    which='both', top=True, labeltop=True)
+            elif self._side == "Right":
+                ax.yaxis.set_tick_params(
+                    which='both', right=True, labelright=True)
+        else:
+            if self._side == "Top":
+                ax.xaxis.set_tick_params(
+                    which='both', top=False, labeltop=False)
+            elif self._side == "Bottom":
+                ax.xaxis.set_tick_params(
+                    which='both', bottom=False, labelbottom=False)
+            elif self._side == "Right":
+                ax.yaxis.set_tick_params(
+                    which='both', right=False, labelright=False)
+            elif self._side == "Left":
+                ax.yaxis.set_tick_params(
+                    which='both', left=False, labelleft=False)
+
+        # Major ticks
+        if self.major_show.isChecked():
+            n = self.major_count.value()
+            if self._is_x:
+                ax.xaxis.set_major_locator(mticker.MaxNLocator(nbins=n))
+            else:
+                ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=n))
+        else:
+            if self._is_x:
+                ax.xaxis.set_major_locator(mticker.NullLocator())
+            else:
+                ax.yaxis.set_major_locator(mticker.NullLocator())
+
+        # Minor ticks
+        if self.minor_show.isChecked():
+            n = self.minor_count.value()
+            if self._is_x:
+                ax.xaxis.set_minor_locator(
+                    mticker.AutoMinorLocator(n))
+            else:
+                ax.yaxis.set_minor_locator(
+                    mticker.AutoMinorLocator(n))
+            ax.tick_params(which='minor', length=3)
+        else:
+            if self._is_x:
+                ax.xaxis.set_minor_locator(mticker.NullLocator())
+            else:
+                ax.yaxis.set_minor_locator(mticker.NullLocator())
+
+        chart._canvas.draw_idle()
+
+
+# ── Plot Details Dialog ─────────────────────────────────────────────
+# Simplified version of KhervePlot's PlotDetailsDialog — single layer,
+# series list on the left, property tabs on the right.
 
 _LINE_STYLES = [
     ("Solid", "-"), ("Dashed", "--"), ("Dotted", ":"),
@@ -648,7 +879,7 @@ class PlotDetailsDialog(QDialog):
     def __init__(self, chart, parent=None):
         super().__init__(parent or chart)
         self.setWindowTitle("Plot Details")
-        self.resize(640, 420)
+        self.resize(640, 480)
         self._chart = chart
 
         outer = QVBoxLayout(self)
@@ -671,6 +902,7 @@ class PlotDetailsDialog(QDialog):
         self._build_graph_tab()
         self._build_line_tab()
         self._build_symbol_tab()
+        self._build_fill_tab()
 
         self._series_list.currentRowChanged.connect(self._on_series)
         if self._series_list.count():
@@ -756,6 +988,37 @@ class PlotDetailsDialog(QDialog):
         form.addRow("Edge Color:", self.marker_edge)
         self._tabs.addTab(w, "Symbol")
 
+    def _build_fill_tab(self):
+        """Fill Under Curve tab — fill to zero or to another series."""
+        w = QWidget()
+        form = QFormLayout(w)
+
+        self.fill_mode = QComboBox()
+        self.fill_mode.addItems(["None", "Fill to Zero", "Fill to Series"])
+        form.addRow("Fill Mode:", self.fill_mode)
+
+        # Target series combo (for "Fill to Series")
+        self.fill_target = QComboBox()
+        for s in self._chart._series:
+            self.fill_target.addItem(s["label"])
+        form.addRow("Target Series:", self.fill_target)
+
+        self.fill_color = _ColorButton("#1f77b4")
+        form.addRow("Fill Color:", self.fill_color)
+
+        self.fill_alpha = QDoubleSpinBox()
+        self.fill_alpha.setRange(0.0, 1.0)
+        self.fill_alpha.setSingleStep(0.05)
+        self.fill_alpha.setValue(0.3)
+        form.addRow("Opacity:", self.fill_alpha)
+
+        # Enable/disable target based on mode.
+        self.fill_mode.currentIndexChanged.connect(
+            lambda i: self.fill_target.setEnabled(i == 2))
+        self.fill_target.setEnabled(False)
+
+        self._tabs.addTab(w, "Fill")
+
     def _on_series(self, row):
         """Populate widgets from the selected series."""
         if row < 0 or row >= len(self._chart._series):
@@ -798,6 +1061,21 @@ class PlotDetailsDialog(QDialog):
                 from matplotlib.colors import to_hex
                 self.marker_fill.set_color(to_hex(c))
 
+        # Fill — check if this series already has a fill.
+        fill_found = False
+        for idx, _ in self._chart._fill_artists:
+            if idx == row:
+                fill_found = True
+                break
+        if not fill_found:
+            self.fill_mode.setCurrentIndex(0)
+
+        # Set fill color from line color.
+        if hasattr(artist, 'get_color'):
+            c = artist.get_color()
+            if isinstance(c, str):
+                self.fill_color.set_color(c)
+
     def apply_to_chart(self, chart):
         """Apply all settings to the chart."""
         ax = chart._ax
@@ -810,7 +1088,9 @@ class PlotDetailsDialog(QDialog):
         ax.set_xscale(self.xscale_combo.currentText())
         ax.set_yscale(self.yscale_combo.currentText())
         if self.legend_check.isChecked():
-            ax.legend(loc="best", framealpha=0.8, fontsize=8)
+            leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
+            if leg:
+                leg.set_draggable(True)
         else:
             leg = ax.get_legend()
             if leg:
@@ -848,8 +1128,17 @@ class PlotDetailsDialog(QDialog):
             if hasattr(artist, 'set_markeredgecolor'):
                 artist.set_markeredgecolor(self.marker_edge.color())
 
+            # Fill
+            fm = self.fill_mode.currentIndex()
+            mode = ["none", "zero", "series"][fm]
+            chart.apply_fill(
+                row, mode, self.fill_target.currentIndex(),
+                self.fill_color.color(), self.fill_alpha.value())
+
             # Refresh legend
             if self.legend_check.isChecked():
-                ax.legend(loc="best", framealpha=0.8, fontsize=8)
+                leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
+                if leg:
+                    leg.set_draggable(True)
 
         chart._canvas.draw_idle()
