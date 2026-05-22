@@ -38,6 +38,9 @@ _DEFAULT_MARKERSIZE = 3.0
 # Resize handle size in pixels.
 _HANDLE = 8
 
+# Module-level clipboard for chart cut/copy/paste.
+_chart_clipboard = None
+
 
 class EmbeddedChart(QWidget):
     """A matplotlib chart that lives as a child of the grid viewport."""
@@ -177,11 +180,14 @@ class EmbeddedChart(QWidget):
 
     # ── Close ───────────────────────────────────────────────────────
     def _close_chart(self):
-        if self._source_sheet and hasattr(self._source_sheet, '_charts'):
-            try:
-                self._source_sheet._charts.remove(self)
-            except ValueError:
-                pass
+        if self._source_sheet:
+            if hasattr(self._source_sheet, '_charts'):
+                try:
+                    self._source_sheet._charts.remove(self)
+                except ValueError:
+                    pass
+            if getattr(self._source_sheet, '_selected_chart', None) is self:
+                self._source_sheet._selected_chart = None
         self.deleteLater()
 
     # ── Context menu ────────────────────────────────────────────────
@@ -230,6 +236,9 @@ class EmbeddedChart(QWidget):
     # ── Drag to move ────────────────────────────────────────────────
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
+            # Mark this chart as selected on the parent sheet.
+            self._select()
+
             edge = self._hit_edge(event.pos())
             if edge:
                 self._resizing = True
@@ -242,6 +251,7 @@ class EmbeddedChart(QWidget):
             if event.pos().y() <= 22:
                 self._drag_origin = event.globalPos()
                 self._drag_widget_pos = self.pos()
+                self.setCursor(Qt.SizeAllCursor)
                 event.accept()
                 return
         super().mousePressEvent(event)
@@ -272,7 +282,7 @@ class EmbeddedChart(QWidget):
             event.accept()
             return
 
-        # Update cursor based on edge proximity.
+        # Update cursor based on edge proximity or title bar.
         edge = self._hit_edge(event.pos())
         if edge:
             cursors = {
@@ -284,6 +294,8 @@ class EmbeddedChart(QWidget):
                 'lt': Qt.SizeFDiagCursor, 'tl': Qt.SizeFDiagCursor,
             }
             self.setCursor(cursors.get(edge, Qt.ArrowCursor))
+        elif event.pos().y() <= 22:
+            self.setCursor(Qt.SizeAllCursor)
         else:
             self.unsetCursor()
         super().mouseMoveEvent(event)
@@ -293,7 +305,34 @@ class EmbeddedChart(QWidget):
         self._drag_widget_pos = None
         self._resizing = False
         self._resize_edge = None
+        self.unsetCursor()
         super().mouseReleaseEvent(event)
+
+    # ── Selection ───────────────────────────────────────────────────
+    def _select(self):
+        """Mark this chart as selected on the parent sheet."""
+        if self._source_sheet:
+            # Deselect previous
+            prev = getattr(self._source_sheet, '_selected_chart', None)
+            if prev and prev is not self:
+                prev._set_selected(False)
+            self._source_sheet._selected_chart = self
+            self._set_selected(True)
+
+    def _set_selected(self, selected):
+        """Visual feedback for selection — thicker blue border."""
+        if selected:
+            self.setStyleSheet(
+                "EmbeddedChart { "
+                "  border: 2px solid #3078c6; "
+                "  background: white; "
+                "}")
+        else:
+            self.setStyleSheet(
+                "EmbeddedChart { "
+                "  border: 1px solid #90a4b8; "
+                "  background: white; "
+                "}")
 
     def _hit_edge(self, pos):
         """Return a string like 'r', 'rb', 'l' etc. if pos is near

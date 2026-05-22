@@ -211,22 +211,6 @@ class MainWindow(QMainWindow):
             icons.themed_icon("mdi.redo", QStyle.SP_ArrowForward),
             "Redo", self._undo_stack.redo)
         self._redo_act.setToolTip("Redo (Ctrl+Y)")
-        ed.addSeparator()
-        ed.addAction(icons.themed_icon("mdi.content-cut",
-                                       QStyle.SP_DialogResetButton),
-                     "Cut", self._cut)
-        ed.addAction(icons.filled_outline_icon(
-            "mdi.file-multiple", "mdi.file-multiple-outline",
-            icons.COPY_FILL, QStyle.SP_DialogApplyButton),
-            "Copy", self._copy)
-        ed.addAction(icons.filled_outline_icon(
-            "mdi.clipboard-text", "mdi.clipboard-text-outline",
-            icons.PASTE_FILL, QStyle.SP_DialogOkButton),
-            "Paste", self._paste)
-        ed.addAction(icons.filled_outline_icon(
-            "mdi.delete", "mdi.delete-outline",
-            icons.DELETE_FILL, QStyle.SP_TrashIcon),
-            "Clear", self._clear)
 
         # Plot toolbar — all plot types with custom icons
         from .sheet import SheetWidget
@@ -543,22 +527,79 @@ class MainWindow(QMainWindow):
     # ── Edit operations (proxy to active sheet) ──────────────────────
     def _cut(self):
         s = self._active_sheet()
-        if s:
+        if not s:
+            return
+        sel = getattr(s, '_selected_chart', None)
+        if sel:
+            from . import graph as _g
+            _g._chart_clipboard = {
+                "series": [
+                    {"x": sr["x"].tolist(), "y": sr["y"].tolist(),
+                     "label": sr["label"], "plot_type": sr["plot_type"]}
+                    for sr in sel._series
+                ],
+            }
+            sel._close_chart()
+            s._selected_chart = None
+        else:
             s._cut_selection()
 
     def _copy(self):
         s = self._active_sheet()
-        if s:
+        if not s:
+            return
+        sel = getattr(s, '_selected_chart', None)
+        if sel:
+            from . import graph as _g
+            _g._chart_clipboard = {
+                "series": [
+                    {"x": sr["x"].tolist(), "y": sr["y"].tolist(),
+                     "label": sr["label"], "plot_type": sr["plot_type"]}
+                    for sr in sel._series
+                ],
+            }
+            self.statusBar().showMessage("Chart copied", 2000)
+        else:
             s._copy_selection()
 
     def _paste(self):
         s = self._active_sheet()
-        if s:
+        if not s:
+            return
+        from . import graph as _g
+        cb = getattr(_g, '_chart_clipboard', None)
+        if cb:
+            import numpy as np
+            from .graph import EmbeddedChart
+            if not hasattr(s, '_charts'):
+                s._charts = []
+            viewport = s.table.viewport()
+            first_chart = None
+            for sr in cb["series"]:
+                x = np.array(sr["x"])
+                y = np.array(sr["y"])
+                if first_chart is None:
+                    offset = len(s._charts) * 30
+                    first_chart = EmbeddedChart(
+                        x, y, sr["label"], sr["plot_type"], s, viewport)
+                    first_chart.move(60 + offset, 60 + offset)
+                    s._charts.append(first_chart)
+                else:
+                    first_chart.add_series(x, y, sr["label"], sr["plot_type"])
+            _g._chart_clipboard = None
+            self.statusBar().showMessage("Chart pasted", 2000)
+        else:
             s._paste_clipboard()
 
     def _clear(self):
         s = self._active_sheet()
-        if s:
+        if not s:
+            return
+        sel = getattr(s, '_selected_chart', None)
+        if sel:
+            sel._close_chart()
+            s._selected_chart = None
+        else:
             s._clear_selection()
 
     # ── Zoom ─────────────────────────────────────────────────────────

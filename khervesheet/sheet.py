@@ -729,6 +729,11 @@ class SheetWidget(QWidget):
 
         elif (etype == QEvent.MouseButtonPress
               and event.button() == Qt.LeftButton):
+            # Deselect any selected chart when clicking on the grid.
+            prev = getattr(self, '_selected_chart', None)
+            if prev:
+                prev._set_selected(False)
+                self._selected_chart = None
             hr = self._fill_handle_rect()
             if hr and hr.contains(event.pos()):
                 sel = self.table.selectedRanges()
