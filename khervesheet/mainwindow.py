@@ -133,7 +133,8 @@ class MainWindow(QMainWindow):
         insert_menu.addSeparator()
 
         chart_menu = insert_menu.addMenu("Chart")
-        for pt in ("Line", "Scatter", "Line+Symbol", "Bar"):
+        from .sheet import SheetWidget
+        for pt in SheetWidget.PLOT_TYPES:
             act = chart_menu.addAction(pt)
             act.triggered.connect(
                 lambda _, t=pt: self._insert_chart(t))
@@ -175,15 +176,18 @@ class MainWindow(QMainWindow):
 
     # ── Toolbars ─────────────────────────────────────────────────────
     def _build_toolbars(self):
-        icon_size = QSize(24, 24)
+        icon_size = QSize(28, 28)
 
-        # Standard toolbar
+        # Standard toolbar — icon-only, matching KhervePlot style
         tb = self.addToolBar("Standard")
         tb.setIconSize(icon_size)
+        tb.setToolButtonStyle(Qt.ToolButtonIconOnly)
         tb.setMovable(False)
-        tb.addAction(icons.new_workbook_icon(24), "New",
+        tb.addAction(icons.new_workbook_icon(28), "New",
                      self._new_workbook)
-        tb.addAction(icons.open_folder_icon(24), "Open",
+        tb.addAction(icons.new_sheet_icon(28), "New Sheet",
+                     lambda: self._workbook.add_sheet())
+        tb.addAction(icons.open_folder_icon(28), "Open",
                      self._open_file)
         tb.addAction(icons.filled_outline_icon(
             "mdi.content-save", "mdi.content-save-outline",
@@ -214,6 +218,7 @@ class MainWindow(QMainWindow):
         # Format toolbar
         fmt_tb = self.addToolBar("Format")
         fmt_tb.setIconSize(icon_size)
+        fmt_tb.setToolButtonStyle(Qt.ToolButtonIconOnly)
         fmt_tb.setMovable(False)
 
         self._fmt_combo = QComboBox()
@@ -224,20 +229,29 @@ class MainWindow(QMainWindow):
         fmt_tb.addWidget(QLabel(" Format: "))
         fmt_tb.addWidget(self._fmt_combo)
 
-        # Chart toolbar
+        # Chart toolbar — all plot types with custom icons
         chart_tb = self.addToolBar("Chart")
         chart_tb.setIconSize(icon_size)
+        chart_tb.setToolButtonStyle(Qt.ToolButtonIconOnly)
         chart_tb.setMovable(False)
-        _plot_icons = {
-            "Line": icons.plot_icon_line,
-            "Scatter": icons.plot_icon_scatter,
+        _plot_icon_fns = {
+            "Line":        icons.plot_icon_line,
+            "Scatter":     icons.plot_icon_scatter,
             "Line+Symbol": icons.plot_icon_line_symbol,
-            "Bar": icons.plot_icon_bar,
+            "Bar":         icons.plot_icon_bar,
+            "Step":        icons.plot_icon_step,
+            "Stem":        icons.plot_icon_stem,
+            "Histogram":   icons.plot_icon_histogram,
+            "Box":         icons.plot_icon_box,
         }
-        for pt, icon_fn in _plot_icons.items():
-            chart_tb.addAction(
-                icon_fn(), f"Insert {pt} Chart",
+        from .sheet import SheetWidget
+        for pt in SheetWidget.PLOT_TYPES:
+            fn = _plot_icon_fns.get(pt)
+            ic = fn(28) if fn else icons.themed_icon("mdi.chart-line")
+            act = chart_tb.addAction(
+                ic, "",
                 lambda t=pt: self._insert_chart(t))
+            act.setToolTip(pt)
 
     # ── Status bar ───────────────────────────────────────────────────
     def _build_status_bar(self):

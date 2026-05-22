@@ -422,19 +422,48 @@ class SheetWidget(QWidget):
                    r'([A-Z]+)(\d+)\s*:\s*([A-Z]+)(\d+)\s*\)')
         return re.sub(pattern, _expand_range, expr, flags=re.IGNORECASE)
 
+    # ── Plot types ───────────────────────────────────────────────────
+    PLOT_TYPES = [
+        "Line", "Scatter", "Line+Symbol", "Bar", "Step",
+        "Stem", "Histogram", "Box",
+    ]
+
+    def _add_plot_submenu(self, menu, cols=None):
+        """Add a Plot submenu with all plot types."""
+        sel = self.selected_columns() if cols is None else cols
+        label = ("Plot" if len(sel) <= 1
+                 else f"Plot ({len(sel)} columns)")
+        plot_menu = menu.addMenu(label)
+        for pt in self.PLOT_TYPES:
+            plot_menu.addAction(
+                pt, lambda _=False, p=pt: self._request_plot(p))
+
+    def selected_columns(self):
+        """Return sorted list of columns with any selected cells."""
+        return sorted(set(idx.column()
+                          for idx in self.table.selectedIndexes()))
+
     # ── Right-click menus ────────────────────────────────────────────
     def _header_menu(self, pos):
         col = self.table.horizontalHeader().logicalIndexAt(pos)
         if col < 0:
             return
+        sel = self.selected_columns()
+        if col not in sel:
+            self.table.selectColumn(col)
+            sel = [col]
         menu = QMenu(self)
+
+        # Plot submenu first (like KhervePlot)
+        self._add_plot_submenu(menu, sel)
+        menu.addSeparator()
 
         # Designation
         desig_menu = menu.addMenu("Set As")
         for d in ("X", "Y"):
-            act = desig_menu.addAction(d)
-            act.triggered.connect(
-                lambda _, d=d, c=col: self.set_designation(c, d))
+            desig_menu.addAction(
+                d, lambda _=False, dd=d, cc=col:
+                self.set_designation(cc, dd))
 
         menu.addSeparator()
 
@@ -456,19 +485,25 @@ class SheetWidget(QWidget):
         menu.addAction("Sort Z → A",
                        lambda: self._sort_column(col, Qt.DescendingOrder))
 
+        menu.addSeparator()
+        menu.addAction("Statistics on Column",
+                       lambda: self._column_stats(col))
+
         menu.exec_(self.table.horizontalHeader().mapToGlobal(pos))
 
     def _cell_menu(self, pos):
         menu = QMenu(self)
 
-        menu.addAction("Cut", self._cut_selection,
-                       "Ctrl+X")
-        menu.addAction("Copy", self._copy_selection,
-                       "Ctrl+C")
-        menu.addAction("Paste", self._paste_clipboard,
-                       "Ctrl+V")
-        menu.addAction("Clear", self._clear_selection,
-                       "Del")
+        # Plot submenu first (like KhervePlot)
+        sel = self.selected_columns()
+        if sel:
+            self._add_plot_submenu(menu, sel)
+            menu.addSeparator()
+
+        menu.addAction("Cu&t", self._cut_selection)
+        menu.addAction("&Copy", self._copy_selection)
+        menu.addAction("&Paste", self._paste_clipboard)
+        menu.addAction("Cl&ear", self._clear_selection)
 
         menu.addSeparator()
 
@@ -477,16 +512,28 @@ class SheetWidget(QWidget):
         menu.addAction("Delete Row(s)", self._delete_selected_rows)
         menu.addAction("Add 10 Rows", self._add_10_rows)
 
-        menu.addSeparator()
-
-        # Plot submenu
-        plot_menu = menu.addMenu("Plot")
-        for pt in ("Line", "Scatter", "Line+Symbol", "Bar"):
-            act = plot_menu.addAction(pt)
-            act.triggered.connect(
-                lambda _, t=pt: self._request_plot(t))
-
         menu.exec_(self.table.viewport().mapToGlobal(pos))
+
+    def _column_stats(self, col):
+        """Show statistics for a single column."""
+        import numpy as np
+        data = self.numeric_column(col)
+        valid = data[~np.isnan(data)]
+        if len(valid) == 0:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Statistics",
+                                    "No numeric data in column.")
+            return
+        from PyQt5.QtWidgets import QMessageBox
+        msg = (f"Column {col_index_to_letter(col)}\n\n"
+               f"Count: {len(valid)}\n"
+               f"Sum: {np.nansum(valid):.6g}\n"
+               f"Mean: {np.nanmean(valid):.6g}\n"
+               f"Std Dev: {np.nanstd(valid):.6g}\n"
+               f"Min: {np.nanmin(valid):.6g}\n"
+               f"Max: {np.nanmax(valid):.6g}\n"
+               f"Median: {np.nanmedian(valid):.6g}")
+        QMessageBox.information(self, "Statistics", msg)
 
     def _request_plot(self, plot_type: str):
         """Signal to MainWindow to create a chart from selected data."""
