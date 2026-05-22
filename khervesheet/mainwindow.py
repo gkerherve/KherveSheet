@@ -8,12 +8,35 @@ the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 """
 
-from PyQt5.QtCore import Qt
+import csv
+import os
+
+from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtGui import QColor, QFont, QIcon, QKeySequence, QPixmap, QPainter
 from PyQt5.QtWidgets import (
-    QMainWindow, QStatusBar, QLabel,
+    QMainWindow, QStatusBar, QLabel, QAction, QMenu, QMenuBar,
+    QToolBar, QToolButton, QFileDialog, QMessageBox, QProgressBar,
+    QSlider, QHBoxLayout, QWidget, QUndoStack, QComboBox,
+    QInputDialog, QApplication,
 )
 
 from . import APP_NAME, __version__
+from .workbook import WorkbookWidget
+from .sheet import SheetWidget, col_index_to_letter
+
+
+# ── Tiny icon factory (no external deps) ─────────────────────────────
+def _text_icon(text: str, bg: str = "#2d6da3", fg: str = "#fff",
+               size: int = 28) -> QIcon:
+    pix = QPixmap(size, size)
+    pix.fill(QColor(bg))
+    p = QPainter(pix)
+    p.setPen(QColor(fg))
+    pts = max(7, size // 3)
+    p.setFont(QFont("Segoe UI", pts, QFont.Bold))
+    p.drawText(pix.rect(), Qt.AlignCenter, text)
+    p.end()
+    return QIcon(pix)
 
 
 class MainWindow(QMainWindow):
@@ -21,18 +44,728 @@ class MainWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current_file = None
+        self._recent_files: list = []
+        self._undo_stack = QUndoStack(self)
         self._init_ui()
 
+    # ── UI setup ─────────────────────────────────────────────────────
     def _init_ui(self):
-        self._update_title()
         self.resize(1280, 800)
 
-        # Status bar
-        self.setStatusBar(QStatusBar())
-        self._status_label = QLabel("Ready")
-        self.statusBar().addWidget(self._status_label)
-        self.statusBar().showMessage("Ready")
+        # Central widget: workbook with sheet tabs
+        self._workbook = WorkbookWidget()
+        self.setCentralWidget(self._workbook)
 
+        # Wire undo stack to all sheets
+        self._wire_undo_to_sheets()
+        self._workbook.tabs.currentChanged.connect(
+            lambda: self._wire_undo_to_sheets())
+
+        # Build UI
+        self._build_menu_bar()
+        self._build_toolbars()
+        self._build_status_bar()
+        self._update_title()
+
+    def _wire_undo_to_sheets(self):
+        for s in self._workbook.all_sheets():
+            s._undo_stack = self._undo_stack
+
+    # ── Title bar ────────────────────────────────────────────────────
     def _update_title(self):
         name = self._current_file or "Untitled"
+        if self._current_file:
+            name = os.path.basename(self._current_file)
         self.setWindowTitle(f"{APP_NAME} v{__version__} \u2014 {name}")
+
+    # ── Menu bar ─────────────────────────────────────────────────────
+    def _build_menu_bar(self):
+        mb = self.menuBar()
+
+        # ── File ─────────────────────────────────────────────────────
+        file_menu = mb.addMenu("&File")
+        file_menu.addAction("&New", self._new_workbook, "Ctrl+N")
+        file_menu.addAction("&Open…", self._open_file, "Ctrl+O")
+        file_menu.addSeparator()
+
+        imp = file_menu.addMenu("Import")
+        imp.addAction("CSV…", self._import_csv)
+        imp.addAction("Excel…", self._import_excel)
+
+        file_menu.addSeparator()
+        file_menu.addAction("&Save", self._save_file, "Ctrl+S")
+        file_menu.addAction("Save &As…", self._save_file_as, "Ctrl+Shift+S")
+        file_menu.addSeparator()
+
+        exp = file_menu.addMenu("Export")
+        exp.addAction("CSV…", self._export_csv)
+        exp.addAction("Excel…", self._export_excel)
+
+        file_menu.addSeparator()
+        self._recent_menu = file_menu.addMenu("Recent Files")
+        self._rebuild_recent_menu()
+
+        file_menu.addSeparator()
+        file_menu.addAction("E&xit", self.close, "Ctrl+Q")
+
+        # ── Edit ─────────────────────────────────────────────────────
+        edit_menu = mb.addMenu("&Edit")
+        self._undo_act = edit_menu.addAction(
+            "&Undo", self._undo_stack.undo, "Ctrl+Z")
+        self._redo_act = edit_menu.addAction(
+            "&Redo", self._undo_stack.redo, "Ctrl+Y")
+        edit_menu.addSeparator()
+        edit_menu.addAction("Cu&t", self._cut, "Ctrl+X")
+        edit_menu.addAction("&Copy", self._copy, "Ctrl+C")
+        edit_menu.addAction("&Paste", self._paste, "Ctrl+V")
+        edit_menu.addAction("Cl&ear", self._clear, "Del")
+
+        self._undo_stack.canUndoChanged.connect(self._undo_act.setEnabled)
+        self._undo_stack.canRedoChanged.connect(self._redo_act.setEnabled)
+        self._undo_act.setEnabled(False)
+        self._redo_act.setEnabled(False)
+
+        # ── View ─────────────────────────────────────────────────────
+        view_menu = mb.addMenu("&View")
+        view_menu.addAction("Zoom In", self._zoom_in, "Ctrl+=")
+        view_menu.addAction("Zoom Out", self._zoom_out, "Ctrl+-")
+        view_menu.addAction("Reset Zoom", self._zoom_reset, "Ctrl+0")
+
+        # ── Insert ───────────────────────────────────────────────────
+        insert_menu = mb.addMenu("&Insert")
+        insert_menu.addAction("Row Above",
+                              self._insert_row_above)
+        insert_menu.addAction("Row Below",
+                              self._insert_row_below)
+        insert_menu.addAction("Column",
+                              self._insert_column)
+        insert_menu.addSeparator()
+        insert_menu.addAction("Sheet",
+                              lambda: self._workbook.add_sheet())
+        insert_menu.addSeparator()
+
+        chart_menu = insert_menu.addMenu("Chart")
+        for pt in ("Line", "Scatter", "Line+Symbol", "Bar"):
+            act = chart_menu.addAction(pt)
+            act.triggered.connect(
+                lambda _, t=pt: self._insert_chart(t))
+
+        # ── Format ───────────────────────────────────────────────────
+        format_menu = mb.addMenu("F&ormat")
+        fmt_menu = format_menu.addMenu("Number Format")
+        from .sheet import NUMBER_FORMATS
+        for fmt in NUMBER_FORMATS:
+            act = fmt_menu.addAction(fmt)
+            act.triggered.connect(
+                lambda _, f=fmt: self._set_number_format(f))
+
+        format_menu.addSeparator()
+        format_menu.addAction("Column Width…", self._format_col_width)
+        format_menu.addAction("Row Height…", self._format_row_height)
+
+        # ── Data ─────────────────────────────────────────────────────
+        data_menu = mb.addMenu("&Data")
+        desig_menu = data_menu.addMenu("Set Column As")
+        for d in ("X", "Y"):
+            act = desig_menu.addAction(d)
+            act.triggered.connect(
+                lambda _, d=d: self._set_designation(d))
+
+        data_menu.addSeparator()
+        data_menu.addAction("Sort A → Z", self._sort_asc)
+        data_menu.addAction("Sort Z → A", self._sort_desc)
+
+        # ── Tools ────────────────────────────────────────────────────
+        tools_menu = mb.addMenu("&Tools")
+        tools_menu.addAction("Statistics on Selection",
+                             self._show_statistics)
+
+        # ── Help ─────────────────────────────────────────────────────
+        help_menu = mb.addMenu("&Help")
+        help_menu.addAction("&About", self._show_about)
+        help_menu.addAction("GitHub Repository", self._open_github)
+
+    # ── Toolbars ─────────────────────────────────────────────────────
+    def _build_toolbars(self):
+        icon_size = QSize(24, 24)
+
+        # Standard toolbar
+        tb = self.addToolBar("Standard")
+        tb.setIconSize(icon_size)
+        tb.setMovable(False)
+        tb.addAction(_text_icon("N", "#2d8a4e"), "New",
+                      self._new_workbook)
+        tb.addAction(_text_icon("O", "#3a78b4"), "Open",
+                      self._open_file)
+        tb.addAction(_text_icon("S", "#3a78b4"), "Save",
+                      self._save_file)
+        tb.addSeparator()
+        tb.addAction(_text_icon("↩", "#555"), "Undo",
+                      self._undo_stack.undo)
+        tb.addAction(_text_icon("↪", "#555"), "Redo",
+                      self._undo_stack.redo)
+        tb.addSeparator()
+        tb.addAction(_text_icon("✂", "#b44"), "Cut", self._cut)
+        tb.addAction(_text_icon("⧉", "#555"), "Copy", self._copy)
+        tb.addAction(_text_icon("📋", "#555"), "Paste", self._paste)
+
+        # Format toolbar
+        fmt_tb = self.addToolBar("Format")
+        fmt_tb.setIconSize(icon_size)
+        fmt_tb.setMovable(False)
+
+        self._fmt_combo = QComboBox()
+        from .sheet import NUMBER_FORMATS
+        self._fmt_combo.addItems(NUMBER_FORMATS)
+        self._fmt_combo.setToolTip("Number format")
+        self._fmt_combo.currentTextChanged.connect(self._set_number_format)
+        fmt_tb.addWidget(QLabel(" Format: "))
+        fmt_tb.addWidget(self._fmt_combo)
+
+        # Chart toolbar
+        chart_tb = self.addToolBar("Chart")
+        chart_tb.setIconSize(icon_size)
+        chart_tb.setMovable(False)
+        for pt, color in [("Line", "#2d6da3"), ("Scatter", "#8a4da3"),
+                           ("Bar", "#b47a2d")]:
+            chart_tb.addAction(
+                _text_icon(pt[0], color), f"Insert {pt} Chart",
+                lambda t=pt: self._insert_chart(t))
+
+    # ── Status bar ───────────────────────────────────────────────────
+    def _build_status_bar(self):
+        sb = QStatusBar()
+        self.setStatusBar(sb)
+
+        self._status_label = QLabel("Ready")
+        sb.addWidget(self._status_label, stretch=1)
+
+        self._progress = QProgressBar()
+        self._progress.setMaximumWidth(200)
+        self._progress.setMaximumHeight(16)
+        self._progress.hide()
+        sb.addWidget(self._progress)
+
+        # Zoom slider
+        zoom_w = QWidget()
+        zh = QHBoxLayout(zoom_w)
+        zh.setContentsMargins(4, 0, 4, 0)
+        zh.setSpacing(4)
+        zm = QLabel("−")
+        zm.setCursor(Qt.PointingHandCursor)
+        zm.mousePressEvent = lambda _: self._zoom_out()
+        self._zoom_slider = QSlider(Qt.Horizontal)
+        self._zoom_slider.setRange(50, 200)
+        self._zoom_slider.setValue(100)
+        self._zoom_slider.setMaximumWidth(120)
+        self._zoom_slider.valueChanged.connect(self._apply_zoom)
+        self._zoom_label = QLabel("100%")
+        self._zoom_label.setMinimumWidth(36)
+        zp = QLabel("+")
+        zp.setCursor(Qt.PointingHandCursor)
+        zp.mousePressEvent = lambda _: self._zoom_in()
+        zh.addWidget(zm)
+        zh.addWidget(self._zoom_slider)
+        zh.addWidget(self._zoom_label)
+        zh.addWidget(zp)
+        sb.addPermanentWidget(zoom_w)
+
+        # Selection summary
+        self._sum_label = QLabel("")
+        self._sum_label.setMinimumWidth(120)
+        sb.addPermanentWidget(self._sum_label)
+
+    # ── Active sheet helper ──────────────────────────────────────────
+    def _active_sheet(self) -> SheetWidget:
+        return self._workbook.current_sheet()
+
+    # ── File operations ──────────────────────────────────────────────
+    def _new_workbook(self):
+        self._current_file = None
+        # Reset workbook
+        wb = WorkbookWidget()
+        self.setCentralWidget(wb)
+        self._workbook = wb
+        self._wire_undo_to_sheets()
+        self._workbook.tabs.currentChanged.connect(
+            lambda: self._wire_undo_to_sheets())
+        self._undo_stack.clear()
+        self._update_title()
+        self.statusBar().showMessage("New workbook created", 3000)
+
+    def _open_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open File", "",
+            "CSV Files (*.csv);;Excel Files (*.xlsx);;All Files (*)")
+        if not path:
+            return
+        if path.endswith(".csv"):
+            self._load_csv(path)
+        elif path.endswith(".xlsx"):
+            self._load_excel(path)
+        self._current_file = path
+        self._add_recent(path)
+        self._update_title()
+
+    def _save_file(self):
+        if self._current_file:
+            self._save_to_csv(self._current_file)
+        else:
+            self._save_file_as()
+
+    def _save_file_as(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save As", "",
+            "CSV Files (*.csv);;All Files (*)")
+        if not path:
+            return
+        self._save_to_csv(path)
+        self._current_file = path
+        self._add_recent(path)
+        self._update_title()
+
+    def _import_csv(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import CSV", "", "CSV Files (*.csv *.tsv *.txt)")
+        if path:
+            self._load_csv(path)
+            self._add_recent(path)
+
+    def _import_excel(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Excel", "", "Excel Files (*.xlsx *.xls)")
+        if path:
+            self._load_excel(path)
+            self._add_recent(path)
+
+    def _export_csv(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export CSV", "", "CSV Files (*.csv)")
+        if path:
+            self._save_to_csv(path)
+
+    def _export_excel(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Excel", "", "Excel Files (*.xlsx)")
+        if path:
+            self._save_to_excel(path)
+
+    # ── CSV I/O ──────────────────────────────────────────────────────
+    def _load_csv(self, path: str):
+        sheet = self._active_sheet()
+        if not sheet:
+            return
+        self._show_progress(True)
+        try:
+            with open(path, newline='', encoding='utf-8-sig') as f:
+                reader = csv.reader(f)
+                rows = list(reader)
+            if not rows:
+                return
+
+            n_cols = max(len(r) for r in rows)
+            n_rows = len(rows)
+
+            sheet.table.blockSignals(True)
+            sheet.table.setColumnCount(n_cols)
+            sheet.table.setRowCount(n_rows)
+            sheet._refresh_headers()
+
+            from PyQt5.QtWidgets import QTableWidgetItem
+            for i, row in enumerate(rows):
+                self._progress.setValue(int(100 * i / n_rows))
+                QApplication.processEvents()
+                for j, val in enumerate(row):
+                    sheet.table.setItem(i, j, QTableWidgetItem(val))
+                    sheet._shadow[(i, j)] = val
+            sheet.table.blockSignals(False)
+
+            self.statusBar().showMessage(
+                f"Loaded {n_rows} rows × {n_cols} columns from {path}",
+                5000)
+        except Exception as e:
+            QMessageBox.warning(self, "Import Error", str(e))
+        finally:
+            self._show_progress(False)
+
+    def _save_to_csv(self, path: str):
+        sheet = self._active_sheet()
+        if not sheet:
+            return
+        self._show_progress(True)
+        try:
+            with open(path, 'w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                for r in range(sheet.row_count()):
+                    self._progress.setValue(
+                        int(100 * r / max(1, sheet.row_count())))
+                    row = []
+                    for c in range(sheet.column_count()):
+                        it = sheet.table.item(r, c)
+                        row.append(it.text() if it else "")
+                    writer.writerow(row)
+            self.statusBar().showMessage(f"Saved to {path}", 5000)
+        except Exception as e:
+            QMessageBox.warning(self, "Save Error", str(e))
+        finally:
+            self._show_progress(False)
+
+    # ── Excel I/O ────────────────────────────────────────────────────
+    def _load_excel(self, path: str):
+        try:
+            import openpyxl
+        except ImportError:
+            QMessageBox.warning(
+                self, "Missing Library",
+                "openpyxl is required for Excel import.\n"
+                "Install with: pip install openpyxl")
+            return
+        sheet = self._active_sheet()
+        if not sheet:
+            return
+        self._show_progress(True)
+        try:
+            wb = openpyxl.load_workbook(path, data_only=True)
+            ws = wb.active
+            n_rows = ws.max_row or 0
+            n_cols = ws.max_column or 0
+
+            sheet.table.blockSignals(True)
+            sheet.table.setColumnCount(n_cols)
+            sheet.table.setRowCount(n_rows)
+            sheet._refresh_headers()
+
+            from PyQt5.QtWidgets import QTableWidgetItem
+            for r in range(n_rows):
+                self._progress.setValue(int(100 * r / max(1, n_rows)))
+                QApplication.processEvents()
+                for c in range(n_cols):
+                    cell = ws.cell(r + 1, c + 1)
+                    val = str(cell.value) if cell.value is not None else ""
+                    sheet.table.setItem(r, c, QTableWidgetItem(val))
+                    sheet._shadow[(r, c)] = val
+            sheet.table.blockSignals(False)
+
+            self.statusBar().showMessage(
+                f"Loaded {n_rows} × {n_cols} from {path}", 5000)
+        except Exception as e:
+            QMessageBox.warning(self, "Import Error", str(e))
+        finally:
+            self._show_progress(False)
+
+    def _save_to_excel(self, path: str):
+        try:
+            import openpyxl
+        except ImportError:
+            QMessageBox.warning(
+                self, "Missing Library",
+                "openpyxl is required for Excel export.\n"
+                "Install with: pip install openpyxl")
+            return
+        sheet = self._active_sheet()
+        if not sheet:
+            return
+        self._show_progress(True)
+        try:
+            wb = openpyxl.Workbook()
+            ws = wb.active
+            for r in range(sheet.row_count()):
+                self._progress.setValue(
+                    int(100 * r / max(1, sheet.row_count())))
+                for c in range(sheet.column_count()):
+                    it = sheet.table.item(r, c)
+                    val = it.text() if it else ""
+                    # Try to write as number
+                    try:
+                        val = float(val)
+                        if val == int(val):
+                            val = int(val)
+                    except (ValueError, TypeError):
+                        pass
+                    ws.cell(r + 1, c + 1, val)
+            wb.save(path)
+            self.statusBar().showMessage(f"Exported to {path}", 5000)
+        except Exception as e:
+            QMessageBox.warning(self, "Export Error", str(e))
+        finally:
+            self._show_progress(False)
+
+    # ── Recent files ─────────────────────────────────────────────────
+    def _add_recent(self, path: str):
+        if path in self._recent_files:
+            self._recent_files.remove(path)
+        self._recent_files.insert(0, path)
+        self._recent_files = self._recent_files[:12]
+        self._rebuild_recent_menu()
+
+    def _rebuild_recent_menu(self):
+        self._recent_menu.clear()
+        for p in self._recent_files:
+            act = self._recent_menu.addAction(os.path.basename(p))
+            act.setToolTip(p)
+            act.triggered.connect(
+                lambda _, path=p: self._open_recent(path))
+        if not self._recent_files:
+            self._recent_menu.addAction("(none)").setEnabled(False)
+
+    def _open_recent(self, path: str):
+        if not os.path.exists(path):
+            QMessageBox.warning(self, "File Not Found",
+                                f"{path} no longer exists.")
+            return
+        if path.endswith(".csv"):
+            self._load_csv(path)
+        elif path.endswith(".xlsx"):
+            self._load_excel(path)
+        self._current_file = path
+        self._update_title()
+
+    # ── Edit operations (proxy to active sheet) ──────────────────────
+    def _cut(self):
+        s = self._active_sheet()
+        if s:
+            s._cut_selection()
+
+    def _copy(self):
+        s = self._active_sheet()
+        if s:
+            s._copy_selection()
+
+    def _paste(self):
+        s = self._active_sheet()
+        if s:
+            s._paste_clipboard()
+
+    def _clear(self):
+        s = self._active_sheet()
+        if s:
+            s._clear_selection()
+
+    # ── Zoom ─────────────────────────────────────────────────────────
+    def _zoom_in(self):
+        v = min(200, self._zoom_slider.value() + 10)
+        self._zoom_slider.setValue(v)
+
+    def _zoom_out(self):
+        v = max(50, self._zoom_slider.value() - 10)
+        self._zoom_slider.setValue(v)
+
+    def _zoom_reset(self):
+        self._zoom_slider.setValue(100)
+
+    def _apply_zoom(self, value):
+        self._zoom_label.setText(f"{value}%")
+        sheet = self._active_sheet()
+        if not sheet:
+            return
+        # Scale row/column sizes proportionally
+        base_row = 20
+        base_col = 80
+        factor = value / 100.0
+        sheet.table.verticalHeader().setDefaultSectionSize(
+            int(base_row * factor))
+        sheet.table.horizontalHeader().setDefaultSectionSize(
+            int(base_col * factor))
+        font = sheet.table.font()
+        font.setPointSizeF(9 * factor)
+        sheet.table.setFont(font)
+
+    # ── Insert operations ────────────────────────────────────────────
+    def _insert_row_above(self):
+        s = self._active_sheet()
+        if s:
+            s._insert_row_above()
+
+    def _insert_row_below(self):
+        s = self._active_sheet()
+        if s:
+            s._insert_row_below()
+
+    def _insert_column(self):
+        s = self._active_sheet()
+        if s:
+            col = s.table.currentColumn()
+            if col < 0:
+                col = s.column_count()
+            s._insert_column(col)
+
+    def _insert_chart(self, plot_type: str):
+        self.plot_from_sheet(self._active_sheet(), plot_type)
+
+    # ── Plot from sheet ──────────────────────────────────────────────
+    def plot_from_sheet(self, sheet: SheetWidget, plot_type: str):
+        """Create an embedded chart from selected columns."""
+        if not sheet:
+            return
+        sel = sheet.table.selectedRanges()
+        if not sel:
+            QMessageBox.information(
+                self, "No Selection",
+                "Select columns to plot first.")
+            return
+        s = sel[0]
+        cols = list(range(s.leftColumn(), s.rightColumn() + 1))
+        if len(cols) < 1:
+            return
+
+        # Find X and Y columns
+        x_col = None
+        y_cols = []
+        for c in cols:
+            if sheet.get_designation(c) == "X":
+                x_col = c
+            else:
+                y_cols.append(c)
+
+        # If no X designated, use first column as X
+        if x_col is None and len(cols) >= 2:
+            x_col = cols[0]
+            y_cols = cols[1:]
+        elif x_col is None:
+            # Single column: plot against row index
+            y_cols = cols
+
+        # Collect data
+        import numpy as np
+        if x_col is not None:
+            x_data = sheet.numeric_column(x_col)
+        else:
+            x_data = np.arange(sheet.row_count(), dtype=float)
+
+        # Create embedded chart
+        from .graph import EmbeddedChartDialog
+        for yc in y_cols:
+            y_data = sheet.numeric_column(yc)
+            label = col_index_to_letter(yc)
+
+            # Find valid data (non-NaN in both x and y)
+            mask = ~(np.isnan(x_data) | np.isnan(y_data))
+            x = x_data[mask]
+            y = y_data[mask]
+            if len(x) == 0:
+                continue
+
+            chart = EmbeddedChartDialog(
+                x, y, label, plot_type, sheet, self)
+            chart.show()
+
+        self.statusBar().showMessage(
+            f"Created {plot_type} chart", 3000)
+
+    # ── Format operations ────────────────────────────────────────────
+    def _set_number_format(self, fmt: str):
+        s = self._active_sheet()
+        if not s:
+            return
+        sel = s.table.selectedRanges()
+        if not sel:
+            return
+        for rng in sel:
+            for c in range(rng.leftColumn(), rng.rightColumn() + 1):
+                s._col_formats[c] = fmt
+
+    def _format_col_width(self):
+        s = self._active_sheet()
+        if not s:
+            return
+        col = s.table.currentColumn()
+        if col >= 0:
+            s._set_column_width(col)
+
+    def _format_row_height(self):
+        s = self._active_sheet()
+        if not s:
+            return
+        cur = s.table.verticalHeader().defaultSectionSize()
+        h, ok = QInputDialog.getInt(
+            self, "Row Height", "Height (pixels):", cur, 10, 100)
+        if ok:
+            s.table.verticalHeader().setDefaultSectionSize(h)
+
+    # ── Data operations ──────────────────────────────────────────────
+    def _set_designation(self, desig: str):
+        s = self._active_sheet()
+        if not s:
+            return
+        sel = s.table.selectedRanges()
+        if not sel:
+            return
+        for rng in sel:
+            for c in range(rng.leftColumn(), rng.rightColumn() + 1):
+                s.set_designation(c, desig)
+        self.statusBar().showMessage(
+            f"Set column(s) as {desig}", 2000)
+
+    def _sort_asc(self):
+        s = self._active_sheet()
+        if s:
+            col = s.table.currentColumn()
+            if col >= 0:
+                s._sort_column(col, Qt.AscendingOrder)
+
+    def _sort_desc(self):
+        s = self._active_sheet()
+        if s:
+            col = s.table.currentColumn()
+            if col >= 0:
+                s._sort_column(col, Qt.DescendingOrder)
+
+    # ── Statistics ───────────────────────────────────────────────────
+    def _show_statistics(self):
+        s = self._active_sheet()
+        if not s:
+            return
+        import numpy as np
+        sel = s.table.selectedRanges()
+        if not sel:
+            QMessageBox.information(self, "Statistics",
+                                    "Select cells first.")
+            return
+        vals = []
+        for rng in sel:
+            for r in range(rng.topRow(), rng.bottomRow() + 1):
+                for c in range(rng.leftColumn(), rng.rightColumn() + 1):
+                    it = s.table.item(r, c)
+                    if it:
+                        try:
+                            vals.append(float(it.text()))
+                        except ValueError:
+                            pass
+        if not vals:
+            QMessageBox.information(self, "Statistics",
+                                    "No numeric data selected.")
+            return
+        arr = np.array(vals)
+        msg = (f"Count: {len(arr)}\n"
+               f"Sum: {np.nansum(arr):.6g}\n"
+               f"Mean: {np.nanmean(arr):.6g}\n"
+               f"Std Dev: {np.nanstd(arr):.6g}\n"
+               f"Min: {np.nanmin(arr):.6g}\n"
+               f"Max: {np.nanmax(arr):.6g}\n"
+               f"Median: {np.nanmedian(arr):.6g}")
+        QMessageBox.information(self, "Statistics", msg)
+
+    # ── Progress bar ─────────────────────────────────────────────────
+    def _show_progress(self, show: bool):
+        if show:
+            self._progress.setValue(0)
+            self._progress.show()
+        else:
+            self._progress.hide()
+
+    # ── Help ─────────────────────────────────────────────────────────
+    def _show_about(self):
+        QMessageBox.about(
+            self, f"About {APP_NAME}",
+            f"<h2>{APP_NAME}</h2>"
+            f"<p>Version {__version__}</p>"
+            f"<p>An Excel-inspired spreadsheet workbench built with "
+            f"PyQt5 + matplotlib.</p>"
+            f"<p>Copyright (C) 2026 Gwilherm Kerherve</p>"
+            f"<p>Licensed under GPL-3.0</p>")
+
+    def _open_github(self):
+        from PyQt5.QtGui import QDesktopServices
+        from PyQt5.QtCore import QUrl
+        QDesktopServices.openUrl(
+            QUrl("https://github.com/gkerherve/KherveSheet"))
