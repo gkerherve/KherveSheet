@@ -178,23 +178,22 @@ class MainWindow(QMainWindow):
     def _build_toolbars(self):
         icon_size = QSize(28, 28)
 
-        # Standard toolbar — matches KhervePlot / SimplePlot exactly
+        # Standard toolbar — matches KhervePlot / SimplePlot
         std = self.addToolBar("Standard")
         std.setIconSize(icon_size)
         std.setToolButtonStyle(Qt.ToolButtonIconOnly)
         std.setMovable(False)
 
-        std.addAction(icons.new_workbook_icon(28),
-                      "New Workbook", self._new_workbook)
-        std.addAction(icons.new_sheet_icon(28),
-                      "New Sheet", lambda: self._workbook.add_sheet())
-        std.addSeparator()
-        std.addAction(icons.open_folder_icon(28),
-                      "Open", self._open_file)
+        std.addAction(
+            icons.new_sheet_icon(28), "",
+            self._new_workbook).setToolTip("New")
+        std.addAction(
+            icons.open_folder_icon(28), "",
+            self._open_file).setToolTip("Open")
         std.addAction(icons.filled_outline_icon(
             "mdi.content-save", "mdi.content-save-outline",
             icons.SAVE_FILL, QStyle.SP_DialogSaveButton),
-            "Save", self._save_file)
+            "", self._save_file).setToolTip("Save")
         std.addSeparator()
 
         # Edit toolbar
@@ -205,12 +204,29 @@ class MainWindow(QMainWindow):
 
         self._undo_act = ed.addAction(
             icons.themed_icon("mdi.undo", QStyle.SP_ArrowBack),
-            "Undo", self._undo_stack.undo)
+            "", self._undo_stack.undo)
         self._undo_act.setToolTip("Undo (Ctrl+Z)")
         self._redo_act = ed.addAction(
             icons.themed_icon("mdi.redo", QStyle.SP_ArrowForward),
-            "Redo", self._undo_stack.redo)
+            "", self._undo_stack.redo)
         self._redo_act.setToolTip("Redo (Ctrl+Y)")
+        ed.addSeparator()
+        ed.addAction(
+            icons.themed_icon("mdi.content-cut",
+                              QStyle.SP_DialogResetButton),
+            "", self._cut).setToolTip("Cut (Ctrl+X)")
+        ed.addAction(icons.filled_outline_icon(
+            "mdi.file-multiple", "mdi.file-multiple-outline",
+            icons.COPY_FILL, QStyle.SP_DialogApplyButton),
+            "", self._copy).setToolTip("Copy (Ctrl+C)")
+        ed.addAction(icons.filled_outline_icon(
+            "mdi.clipboard-text", "mdi.clipboard-text-outline",
+            icons.PASTE_FILL, QStyle.SP_DialogOkButton),
+            "", self._paste).setToolTip("Paste (Ctrl+V)")
+        ed.addAction(icons.filled_outline_icon(
+            "mdi.delete", "mdi.delete-outline",
+            icons.DELETE_FILL, QStyle.SP_TrashIcon),
+            "", self._clear).setToolTip("Clear (Del)")
 
         # Plot toolbar — all plot types with custom icons
         from .sheet import SheetWidget
