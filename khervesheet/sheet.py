@@ -351,8 +351,14 @@ class SheetWidget(QWidget):
             ns = {"__builtins__": {}, "math": math, "np": np,
                   "abs": abs, "round": round, "int": int, "float": float,
                   "sum": sum, "min": min, "max": max, "len": len}
-            # Replace cell refs like A1, B5 with actual values
+
+            # Expand SUM(A1:A10) BEFORE replacing individual cell refs,
+            # otherwise A1 inside the range gets resolved first and
+            # the range regex can't match.
             import re
+            expr = self._expand_range_functions(expr)
+
+            # Replace remaining cell refs like A1, B5 with values
             def _cell_ref(m):
                 letters = m.group(1)
                 rnum = int(m.group(2)) - 1  # 0-based row
@@ -367,9 +373,6 @@ class SheetWidget(QWidget):
 
             expr = re.sub(r'\b([A-Z]+)(\d+)\b', _cell_ref, expr,
                           flags=re.IGNORECASE)
-
-            # Handle SUM, AVERAGE etc. with range syntax A1:A10
-            expr = self._expand_range_functions(expr)
 
             result = eval(expr, ns)  # noqa: S307
             if isinstance(result, float):
