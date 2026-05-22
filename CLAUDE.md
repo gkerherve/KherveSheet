@@ -32,14 +32,14 @@ into a new module and import.
   - `app.py`        — `main()`, app icon, crash log, QSS styling.
   - `sheet.py`      — `SheetWidget` (single grid tab with formula bar).
   - `workbook.py`   — `WorkbookWidget` (QTabWidget managing sheets).
-  - `graph.py`      — `EmbeddedChart` (matplotlib chart embedded in grid).
+  - `graph.py`      — `EmbeddedChart` (matplotlib chart overlaid on grid viewport).
   - `mainwindow.py` — `MainWindow` shell: menus, toolbars, status bar.
   - `mainwindow_io.py` — `IOMixin`: CSV / Excel import/export.
   - `mainwindow_columns.py` — `ColumnsMixin`: column operations.
   - `mainwindow_analysis.py` — `AnalysisMixin`: basic analysis ops.
   - `formula_engine.py` — cell formula parser & evaluator.
   - `undo_commands.py` — QUndoCommand classes.
-  - `icons.py`      — icon factory.
+  - `icons.py`      — qtawesome icon factory (themed MDI + custom QPainter plot glyphs).
 - `requirements.txt`, `LICENSE` (GPL-3.0).
 
 ## UI conventions

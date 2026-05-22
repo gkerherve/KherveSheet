@@ -14,7 +14,7 @@ import sys
 import tempfile
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QIcon, QPalette, QPixmap, QPainter, QFont
+from PyQt5.QtGui import QColor, QPalette
 from PyQt5.QtWidgets import QApplication, QStyleFactory
 
 from . import APP_NAME
@@ -43,15 +43,9 @@ def _enable_crash_logging():
 
 
 def _make_app_icon():
-    """Build a simple 'KS' app icon programmatically."""
-    pix = QPixmap(64, 64)
-    pix.fill(QColor("#2d6da3"))
-    p = QPainter(pix)
-    p.setPen(QColor("#ffffff"))
-    p.setFont(QFont("Segoe UI", 28, QFont.Bold))
-    p.drawText(pix.rect(), Qt.AlignCenter, "KS")
-    p.end()
-    return QIcon(pix)
+    """Build the app icon via the icons module (qtawesome themed)."""
+    from .icons import init_app_icon
+    return init_app_icon()
 
 
 _LIGHT_QSS = """

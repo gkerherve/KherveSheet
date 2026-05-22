@@ -12,7 +12,7 @@ import csv
 import os
 
 from PyQt5.QtCore import Qt, QSize
-from PyQt5.QtGui import QColor, QFont, QIcon, QKeySequence, QPixmap, QPainter
+from PyQt5.QtGui import QIcon, QKeySequence
 from PyQt5.QtWidgets import (
     QMainWindow, QStatusBar, QLabel, QAction, QMenu, QMenuBar,
     QToolBar, QToolButton, QFileDialog, QMessageBox, QProgressBar,
@@ -23,20 +23,7 @@ from PyQt5.QtWidgets import (
 from . import APP_NAME, __version__
 from .workbook import WorkbookWidget
 from .sheet import SheetWidget, col_index_to_letter
-
-
-# ── Tiny icon factory (no external deps) ─────────────────────────────
-def _text_icon(text: str, bg: str = "#2d6da3", fg: str = "#fff",
-               size: int = 28) -> QIcon:
-    pix = QPixmap(size, size)
-    pix.fill(QColor(bg))
-    p = QPainter(pix)
-    p.setPen(QColor(fg))
-    pts = max(7, size // 3)
-    p.setFont(QFont("Segoe UI", pts, QFont.Bold))
-    p.drawText(pix.rect(), Qt.AlignCenter, text)
-    p.end()
-    return QIcon(pix)
+from . import icons
 
 
 class MainWindow(QMainWindow):
@@ -193,21 +180,16 @@ class MainWindow(QMainWindow):
         tb = self.addToolBar("Standard")
         tb.setIconSize(icon_size)
         tb.setMovable(False)
-        tb.addAction(_text_icon("N", "#2d8a4e"), "New",
-                      self._new_workbook)
-        tb.addAction(_text_icon("O", "#3a78b4"), "Open",
-                      self._open_file)
-        tb.addAction(_text_icon("S", "#3a78b4"), "Save",
-                      self._save_file)
+        tb.addAction(icons.new_icon(), "New", self._new_workbook)
+        tb.addAction(icons.open_folder_icon(), "Open", self._open_file)
+        tb.addAction(icons.save_icon(), "Save", self._save_file)
         tb.addSeparator()
-        tb.addAction(_text_icon("↩", "#555"), "Undo",
-                      self._undo_stack.undo)
-        tb.addAction(_text_icon("↪", "#555"), "Redo",
-                      self._undo_stack.redo)
+        tb.addAction(icons.undo_icon(), "Undo", self._undo_stack.undo)
+        tb.addAction(icons.redo_icon(), "Redo", self._undo_stack.redo)
         tb.addSeparator()
-        tb.addAction(_text_icon("✂", "#b44"), "Cut", self._cut)
-        tb.addAction(_text_icon("⧉", "#555"), "Copy", self._copy)
-        tb.addAction(_text_icon("📋", "#555"), "Paste", self._paste)
+        tb.addAction(icons.cut_icon(), "Cut", self._cut)
+        tb.addAction(icons.copy_icon(), "Copy", self._copy)
+        tb.addAction(icons.paste_icon(), "Paste", self._paste)
 
         # Format toolbar
         fmt_tb = self.addToolBar("Format")
@@ -226,10 +208,15 @@ class MainWindow(QMainWindow):
         chart_tb = self.addToolBar("Chart")
         chart_tb.setIconSize(icon_size)
         chart_tb.setMovable(False)
-        for pt, color in [("Line", "#2d6da3"), ("Scatter", "#8a4da3"),
-                           ("Bar", "#b47a2d")]:
+        _plot_icons = {
+            "Line": icons.plot_icon_line,
+            "Scatter": icons.plot_icon_scatter,
+            "Line+Symbol": icons.plot_icon_line_symbol,
+            "Bar": icons.plot_icon_bar,
+        }
+        for pt, icon_fn in _plot_icons.items():
             chart_tb.addAction(
-                _text_icon(pt[0], color), f"Insert {pt} Chart",
+                icon_fn(), f"Insert {pt} Chart",
                 lambda t=pt: self._insert_chart(t))
 
     # ── Status bar ───────────────────────────────────────────────────
@@ -632,22 +619,36 @@ class MainWindow(QMainWindow):
         else:
             x_data = np.arange(sheet.row_count(), dtype=float)
 
-        # Create embedded chart
-        from .graph import EmbeddedChartDialog
+        # Create embedded chart on the grid viewport
+        from .graph import EmbeddedChart
+        if not hasattr(sheet, '_charts'):
+            sheet._charts = []
+
+        # Build one chart with all Y columns as series
+        first_chart = None
         for yc in y_cols:
             y_data = sheet.numeric_column(yc)
             label = col_index_to_letter(yc)
 
-            # Find valid data (non-NaN in both x and y)
             mask = ~(np.isnan(x_data) | np.isnan(y_data))
             x = x_data[mask]
             y = y_data[mask]
             if len(x) == 0:
                 continue
 
-            chart = EmbeddedChartDialog(
-                x, y, label, plot_type, sheet, self)
-            chart.show()
+            if first_chart is None:
+                # Place chart on the table viewport so it overlays
+                # the grid cells, just like Excel.
+                viewport = sheet.table.viewport()
+                chart = EmbeddedChart(
+                    x, y, label, plot_type, sheet, viewport)
+                # Position at a visible spot, offset by existing charts.
+                offset = len(sheet._charts) * 30
+                chart.move(40 + offset, 40 + offset)
+                sheet._charts.append(chart)
+                first_chart = chart
+            else:
+                first_chart.add_series(x, y, label, plot_type)
 
         self.statusBar().showMessage(
             f"Created {plot_type} chart", 3000)
