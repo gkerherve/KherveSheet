@@ -210,23 +210,6 @@ class MainWindow(QMainWindow):
             icons.themed_icon("mdi.redo", QStyle.SP_ArrowForward),
             "", self._undo_stack.redo)
         self._redo_act.setToolTip("Redo (Ctrl+Y)")
-        ed.addSeparator()
-        ed.addAction(
-            icons.themed_icon("mdi.content-cut",
-                              QStyle.SP_DialogResetButton),
-            "", self._cut).setToolTip("Cut (Ctrl+X)")
-        ed.addAction(icons.filled_outline_icon(
-            "mdi.file-multiple", "mdi.file-multiple-outline",
-            icons.COPY_FILL, QStyle.SP_DialogApplyButton),
-            "", self._copy).setToolTip("Copy (Ctrl+C)")
-        ed.addAction(icons.filled_outline_icon(
-            "mdi.clipboard-text", "mdi.clipboard-text-outline",
-            icons.PASTE_FILL, QStyle.SP_DialogOkButton),
-            "", self._paste).setToolTip("Paste (Ctrl+V)")
-        ed.addAction(icons.filled_outline_icon(
-            "mdi.delete", "mdi.delete-outline",
-            icons.DELETE_FILL, QStyle.SP_TrashIcon),
-            "", self._clear).setToolTip("Clear (Del)")
 
         # Plot toolbar — all plot types with custom icons
         from .sheet import SheetWidget
