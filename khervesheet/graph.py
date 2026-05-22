@@ -19,7 +19,7 @@ from PyQt5.QtGui import QFont, QCursor, QPainter, QPen, QColor
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QLineEdit, QFormLayout, QDialogButtonBox,
-    QWidget, QCheckBox, QMenu,
+    QWidget, QCheckBox, QMenu, QInputDialog,
 )
 
 import matplotlib
@@ -106,6 +106,12 @@ class EmbeddedChart(QWidget):
         self._toolbar.setFixedHeight(24)
         layout.addWidget(self._toolbar)
 
+        # Interactive label/axis editing — hover highlight + double-click.
+        self._hover_highlight_artist = None
+        self._hover_spine = None          # (spine_obj, orig_color, orig_lw)
+        self._canvas.mpl_connect("motion_notify_event", self._on_label_hover)
+        self._canvas.mpl_connect("button_press_event", self._on_canvas_click)
+
         # Add the initial series.
         self.add_series(x, y, label, plot_type)
 
@@ -190,11 +196,168 @@ class EmbeddedChart(QWidget):
                 self._source_sheet._selected_chart = None
         self.deleteLater()
 
+    # ── Interactive label / axis editing ───────────────────────────
+    _SPINE_MAP = {"Bottom": "bottom", "Top": "top",
+                  "Left": "left", "Right": "right"}
+
+    def _on_label_hover(self, event):
+        """Highlight xlabel, ylabel, or title on hover; highlight axis
+        spine when cursor is near an edge."""
+        ax = self._ax
+        hit_artist = None
+        for artist in (ax.xaxis.label, ax.yaxis.label, ax.title):
+            try:
+                inside, _ = artist.contains(event)
+            except Exception:
+                inside = False
+            if inside and artist.get_text():
+                hit_artist = artist
+                break
+
+        prev = self._hover_highlight_artist
+        changed = False
+        if hit_artist is not prev:
+            if prev is not None:
+                prev.set_bbox(None)
+                self._hover_highlight_artist = None
+                changed = True
+            if hit_artist is not None:
+                hit_artist.set_bbox(dict(
+                    boxstyle="round,pad=0.15", facecolor="#d0e8ff",
+                    edgecolor="#4a90d9", alpha=0.6, linewidth=1.0))
+                self._hover_highlight_artist = hit_artist
+                changed = True
+
+        # Spine highlight.
+        side = self._hit_axis_spine(event)
+        new_spine = None
+        if side is not None and hit_artist is None:
+            key = self._SPINE_MAP.get(side)
+            if key:
+                new_spine = ax.spines[key]
+        prev_sp = self._hover_spine
+        prev_spine_obj = prev_sp[0] if prev_sp else None
+        if new_spine is not prev_spine_obj:
+            if prev_sp is not None:
+                sp, orig_c, orig_lw = prev_sp
+                try:
+                    sp.set_edgecolor(orig_c)
+                    sp.set_linewidth(orig_lw)
+                except Exception:
+                    pass
+                self._hover_spine = None
+                changed = True
+            if new_spine is not None:
+                try:
+                    orig_c = new_spine.get_edgecolor()
+                    orig_lw = new_spine.get_linewidth()
+                    self._hover_spine = (new_spine, orig_c, orig_lw)
+                    new_spine.set_edgecolor("#4a90d9")
+                    new_spine.set_linewidth(2.5)
+                except Exception:
+                    self._hover_spine = None
+                changed = True
+
+        if changed:
+            self._canvas.draw_idle()
+
+    def _on_canvas_click(self, event):
+        """Handle double-click on labels (edit text) or axis spines
+        (change scale)."""
+        if event.dblclick:
+            if self._try_edit_axis_label(event):
+                return
+            side = self._hit_axis_spine(event)
+            if side is not None:
+                self._cycle_scale(side)
+
+    def _try_edit_axis_label(self, event):
+        """If *event* hit xlabel, ylabel, or title, open QInputDialog
+        to edit text inline. Returns True if handled."""
+        ax = self._ax
+        for artist, setter, dlg_title in (
+            (ax.xaxis.label, ax.set_xlabel, "Edit X Axis Label"),
+            (ax.yaxis.label, ax.set_ylabel, "Edit Y Axis Label"),
+            (ax.title,       ax.set_title,  "Edit Plot Title"),
+        ):
+            try:
+                hit, _ = artist.contains(event)
+            except Exception:
+                hit = False
+            if not hit:
+                continue
+            old = artist.get_text()
+            new, ok = QInputDialog.getText(
+                self, dlg_title, "Label:", QLineEdit.Normal, old)
+            if ok and new != old:
+                setter(new)
+                if setter is ax.set_title and new:
+                    self._title_label.setText(new)
+                self._canvas.draw_idle()
+            return True
+        return False
+
+    def _hit_axis_spine(self, event):
+        """Return 'Bottom', 'Top', 'Left', or 'Right' if *event* is
+        near an axis spine, else None."""
+        if event.inaxes is not self._ax:
+            return None
+        ax = self._ax
+        try:
+            bbox = ax.get_window_extent()
+        except Exception:
+            return None
+        margin = 12
+        x, y = event.x, event.y
+        if y <= bbox.y0 + margin:
+            return "Bottom"
+        if y >= bbox.y1 - margin:
+            return "Top"
+        if x <= bbox.x0 + margin:
+            return "Left"
+        if x >= bbox.x1 - margin:
+            return "Right"
+        return None
+
+    def _cycle_scale(self, side):
+        """Toggle between linear and log for the axis on *side*."""
+        ax = self._ax
+        if side in ("Bottom", "Top"):
+            cur = ax.get_xscale()
+            ax.set_xscale("log" if cur == "linear" else "linear")
+        else:
+            cur = ax.get_yscale()
+            ax.set_yscale("log" if cur == "linear" else "linear")
+        self._canvas.draw_idle()
+
+    def _set_scale(self, axis, scale):
+        """Set *axis* ('x' or 'y') to *scale* ('linear' or 'log')."""
+        ax = self._ax
+        try:
+            (ax.set_xscale if axis == "x" else ax.set_yscale)(scale)
+            self._canvas.draw_idle()
+        except ValueError:
+            pass
+
     # ── Context menu ────────────────────────────────────────────────
     def contextMenuEvent(self, event):
         menu = QMenu(self)
         menu.addAction("Plot Details\u2026", self._open_plot_details)
         menu.addAction("Properties\u2026", self._open_properties)
+        menu.addSeparator()
+
+        # X Axis submenu
+        xm = menu.addMenu("X Axis")
+        xm.addAction("Linear", lambda: self._set_scale("x", "linear"))
+        xm.addAction("Log\u2081\u2080",
+                      lambda: self._set_scale("x", "log"))
+
+        # Y Axis submenu
+        ym = menu.addMenu("Y Axis")
+        ym.addAction("Linear", lambda: self._set_scale("y", "linear"))
+        ym.addAction("Log\u2081\u2080",
+                      lambda: self._set_scale("y", "log"))
+
         menu.addSeparator()
         menu.addAction("Pop Out to Window", self._pop_out)
         menu.addSeparator()
