@@ -1,6 +1,6 @@
-"""Icon helpers — qtawesome wrapper with fallback to Qt standard icons.
+"""Icon helpers — qtawesome wrapper, app icon, fallback to Qt standard icons.
 
-Mirrors the KhervePlot / SimplePlot icon system: themed MDI glyphs via
+Same icon system as KhervePlot / SimplePlot: themed MDI glyphs via
 qtawesome, filled+outline stacking, and custom QPainter plot-type icons.
 
 Copyright (C) 2026 Gwilherm Kerherve
@@ -26,16 +26,26 @@ except ImportError:
     qta = None
     HAVE_QTA = False
 
+try:
+    from scipy import optimize as _sp_optimize  # noqa: F401
+    from scipy import signal as _sp_signal  # noqa: F401
+    from scipy import integrate as _sp_integrate  # noqa: F401
+    HAVE_SCIPY = True
+except ImportError:
+    HAVE_SCIPY = False
+
 
 APP_ICON: Optional[QIcon] = None
 
-# ── Icon colour styles ──────────────────────────────────────────────
+# Icon colour styles — name → hex colour used by themed_icon().
 ICON_STYLES = {
+    # --- Darks / neutrals ---
     "Dark Blue":     "#404060",
     "Black":         "#1a1a1a",
     "Charcoal":      "#3c3c3c",
     "Graphite":      "#2e2e38",
     "Dim Grey":      "#555555",
+    # --- Blues ---
     "Navy":          "#1b2a4a",
     "Slate":         "#4a5568",
     "Steel Blue":    "#3a6ea5",
@@ -48,6 +58,7 @@ ICON_STYLES = {
     "Cerulean":      "#1a6e8e",
     "Powder Blue":   "#5b8cb8",
     "Denim":         "#335b8e",
+    # --- Greens / teals ---
     "Teal":          "#1a7a6d",
     "Forest":        "#2d6a4f",
     "Emerald":       "#1b8a5a",
@@ -59,21 +70,29 @@ ICON_STYLES = {
     "Moss":          "#3a6b3a",
     "Spring Green":  "#2d8e5e",
     "Sea Green":     "#2e7d6e",
+    # --- Reds / pinks ---
     "Burgundy":      "#6b2c3e",
     "Crimson":       "#9b1b30",
     "Rust":          "#a0522d",
     "Rose":          "#b5485d",
     "Fuchsia":       "#9b3072",
     "Magenta":       "#8e2a6e",
+    "Hot Pink":      "#c44080",
+    "Blush":         "#b0506a",
+    "Raspberry":     "#8b1a4a",
+    "Coral":         "#c05050",
+    # --- Purples ---
     "Plum":          "#5b3a6e",
     "Indigo":        "#3f3d99",
     "Violet":        "#7c3aad",
     "Mauve":         "#8b6a8f",
+    # --- Warm tones ---
     "Warm Grey":     "#6b5e50",
     "Espresso":      "#4a3728",
     "Terracotta":    "#a0583c",
     "Amber":         "#b8860b",
     "Sienna":        "#8b5a2b",
+    # --- Light / bright (for dark window themes) ---
     "Snow":          "#e8e8f0",
     "Silver":        "#a8a8b8",
     "Ice Blue":      "#88b8e0",
@@ -99,7 +118,6 @@ def active_icon_color() -> str:
     return ICON_STYLES.get(_active_icon_style, "#404060")
 
 
-# ── Core themed icon ────────────────────────────────────────────────
 def themed_icon(qta_name: str, std_fallback=None,
                 color: str = "", scale_factor: float = 1.0) -> QIcon:
     if not color:
@@ -108,55 +126,16 @@ def themed_icon(qta_name: str, std_fallback=None,
         try:
             return qta.icon(qta_name, color=color,
                             scale_factor=scale_factor)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     if std_fallback is not None:
         try:
             return QApplication.style().standardIcon(std_fallback)
-        except Exception:
+        except Exception:  # noqa: BLE001
             pass
     return QIcon()
 
 
-# ── Filled + outline stacking ──────────────────────────────────────
-def filled_outline_icon(filled_name: str, outline_name: str,
-                        fill_color: str,
-                        std_fallback=None,
-                        scale: float = 1.0) -> QIcon:
-    if HAVE_QTA:
-        try:
-            return qta.icon(
-                filled_name, outline_name,
-                options=[
-                    {"color": fill_color, "scale_factor": scale},
-                    {"color": active_icon_color(), "scale_factor": scale},
-                ])
-        except Exception:
-            pass
-    return themed_icon(outline_name, std_fallback, color=fill_color)
-
-
-# ── Accent / fill colours ──────────────────────────────────────────
-ICON_ACCENT = "#e60000"
-LINE_PLOT_ACCENT = "#d49b1f"
-SERIES_PALETTE = ["#1f77b4", "#ff7f0e", "#2ca02c",
-                  "#d62728", "#9467bd", "#8c564b"]
-
-OPEN_FOLDER_YELLOW = "#ffc83d"
-SAVE_GREEN = "#2ca02c"
-DELETE_RED = ICON_ACCENT
-COPY_BLUE = "#1f77b4"
-PASTE_ORANGE = "#ff7f0e"
-
-ADD_FILL = "#cce6cc"
-REMOVE_FILL = "#f5b8b8"
-COPY_FILL = "#c8dcef"
-PASTE_FILL = "#fadcb8"
-DELETE_FILL = "#f5b8b8"
-SAVE_FILL = "#cce6cc"
-
-
-# ── App icon ────────────────────────────────────────────────────────
 def make_app_icon() -> QIcon:
     pm = QPixmap(32, 32)
     pm.fill(Qt.transparent)
@@ -179,59 +158,220 @@ def init_app_icon() -> QIcon:
     return APP_ICON
 
 
-# ── File / action icons ────────────────────────────────────────────
-def new_icon() -> QIcon:
-    return filled_outline_icon("mdi.file", "mdi.file-outline",
-                               ADD_FILL, QStyle.SP_FileIcon)
+def kind_icon(kind: str) -> QIcon:
+    """Return a window icon for an MDI subwindow kind so the title-bar
+    glyph reads as Workbook / Graph / Matrix instead of every window
+    showing the same app icon. Falls back to the app icon if
+    qtawesome isn't available or the lookup fails."""
+    spec = {
+        "Workbook":   ("mdi.table-large", QStyle.SP_FileIcon),
+        "Graph":      ("mdi.chart-line",  QStyle.SP_FileDialogDetailedView),
+        "MatrixBook": ("mdi.grid",        QStyle.SP_DirIcon),
+        "Matrix":     ("mdi.grid",        QStyle.SP_DirIcon),
+    }.get(kind)
+    if spec is not None:
+        ic = themed_icon(spec[0], spec[1], color="#000000")
+        if not ic.isNull():
+            return ic
+    return APP_ICON or QIcon()
 
 
-def open_folder_icon() -> QIcon:
+def axis_arrow_icon(axis: str, side: str, expand: bool,
+                    size: int = 28) -> QIcon:
+    """Draw an axis-edge nudge icon.
+
+    A horizontal or vertical bar represents the axis edge.  A straight
+    arrow extends from the bar's centre — pointing *away* from the bar
+    when *expand* is True (push edge outward) and *toward* the bar when
+    False (pull edge inward).
+
+    *axis*: ``"x"`` or ``"y"``.
+    *side*: ``"hi"`` (top / right) or ``"lo"`` (bottom / left).
+    """
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    color = QColor(active_icon_color())
+    bar_color = QColor(ICON_ACCENT)
+    s = float(size)
+    pad = 2.0
+    # Bar stroke is heavier than the arrow shaft so the red edge
+    # reads as the dominant element of the icon.
+    bar_pw = s * 0.11
+    pw = 2.0                # pen width — arrow shaft
+    aw = s * 0.22           # arrowhead half-width
+    ah = s * 0.20           # arrowhead length
+    bar_half = s * 0.38     # half-length of the edge bar
+    gap = bar_pw / 2 + s * 0.06  # clearance between bar centre and arrow start
+
+    if axis == "y":
+        cx = s / 2
+        if side == "hi":
+            # Bar at top — horizontal.
+            bar_y = pad
+            _draw_bar(p, bar_color, bar_pw, cx - bar_half, bar_y,
+                      cx + bar_half, bar_y)
+            if expand:
+                _draw_arrow(p, color, pw, aw, ah,
+                            cx, s - pad, cx, bar_y + gap)
+            else:
+                _draw_arrow(p, color, pw, aw, ah,
+                            cx, bar_y + gap, cx, s - pad)
+        else:
+            # Bar at bottom — horizontal.
+            bar_y = s - pad
+            _draw_bar(p, bar_color, bar_pw, cx - bar_half, bar_y,
+                      cx + bar_half, bar_y)
+            if expand:
+                _draw_arrow(p, color, pw, aw, ah,
+                            cx, pad, cx, bar_y - gap)
+            else:
+                _draw_arrow(p, color, pw, aw, ah,
+                            cx, bar_y - gap, cx, pad)
+    else:
+        cy = s / 2
+        if side == "lo":
+            # Bar on left — vertical.
+            bar_x = pad
+            _draw_bar(p, bar_color, bar_pw, bar_x, cy - bar_half,
+                      bar_x, cy + bar_half)
+            if expand:
+                _draw_arrow(p, color, pw, aw, ah,
+                            s - pad, cy, bar_x + gap, cy)
+            else:
+                _draw_arrow(p, color, pw, aw, ah,
+                            bar_x + gap, cy, s - pad, cy)
+        else:
+            # Bar on right — vertical.
+            bar_x = s - pad
+            _draw_bar(p, bar_color, bar_pw, bar_x, cy - bar_half,
+                      bar_x, cy + bar_half)
+            if expand:
+                _draw_arrow(p, color, pw, aw, ah,
+                            pad, cy, bar_x - gap, cy)
+            else:
+                _draw_arrow(p, color, pw, aw, ah,
+                            bar_x - gap, cy, pad, cy)
+    p.end()
+    return QIcon(pm)
+
+
+def axis_toggle_icon(side: str, size: int = 28) -> QIcon:
+    """Draw a thin plot-frame rectangle with one edge highlighted in
+    the red accent colour. All edges share the same stroke width — the
+    highlight is colour, not thickness.
+
+    *side*: ``"top"``, ``"bottom"``, ``"left"``, or ``"right"``.
+    """
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    color = QColor(active_icon_color())
+    accent = QColor(ICON_ACCENT)
+    s = float(size)
+    pad = 2.0
+    pw = 1.2          # neutral edges
+    accent_pw = s * 0.10  # heavier red accent edge
+    x0, y0, x1, y1 = pad, pad, s - pad, s - pad
+    edges = {
+        "top":    ((x0, y0, x1, y0), (x0, y1, x1, y1),
+                   (x0, y0, x0, y1), (x1, y0, x1, y1)),
+        "bottom": ((x0, y1, x1, y1), (x0, y0, x1, y0),
+                   (x0, y0, x0, y1), (x1, y0, x1, y1)),
+        "left":   ((x0, y0, x0, y1), (x1, y0, x1, y1),
+                   (x0, y0, x1, y0), (x0, y1, x1, y1)),
+        "right":  ((x1, y0, x1, y1), (x0, y0, x0, y1),
+                   (x0, y0, x1, y0), (x0, y1, x1, y1)),
+    }
+    accent_edge, *other_edges = edges[side]
+    p.setPen(QPen(color, pw, Qt.SolidLine, Qt.SquareCap, Qt.MiterJoin))
+    for ex0, ey0, ex1, ey1 in other_edges:
+        p.drawLine(QPointF(ex0, ey0), QPointF(ex1, ey1))
+    p.setPen(QPen(accent, accent_pw, Qt.SolidLine,
+                  Qt.SquareCap, Qt.MiterJoin))
+    p.drawLine(QPointF(accent_edge[0], accent_edge[1]),
+               QPointF(accent_edge[2], accent_edge[3]))
+    p.end()
+    return QIcon(pm)
+
+
+ICON_ACCENT = "#e60000"
+TWIN_AXIS_ACCENT = ICON_ACCENT
+# Default amber tone for the Line plot icon glyph.
+LINE_PLOT_ACCENT = "#d49b1f"
+# Per-series palette for multicolor Scatter / Bar icons. Borrowed from
+# matplotlib's default cycle so the icons read as "many series".
+SERIES_PALETTE = ["#1f77b4", "#ff7f0e", "#2ca02c",
+                  "#d62728", "#9467bd", "#8c564b"]
+
+
+def math_symbol_icon(text: str, color: str, size: int = 28,
+                     italic: bool = True,
+                     scale: float = 0.75) -> QIcon:
+    """Render *text* as a math glyph (italic serif by default) on a
+    transparent square. Used for the Integrate (∫) and Differentiate
+    (dx) toolbar buttons where MDI doesn't carry a clean icon for
+    the operation."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    p.setRenderHint(QPainter.TextAntialiasing, True)
+    f = QFont("Cambria Math")
+    if not f.exactMatch():
+        # Cambria Math ships on Windows; fall back to common serifs.
+        f = QFont("Times New Roman")
+    f.setItalic(italic)
+    f.setPixelSize(int(size * scale))
+    p.setFont(f)
+    p.setPen(QColor(color))
+    p.drawText(QRectF(0, 0, size, size), Qt.AlignCenter, text)
+    p.end()
+    return QIcon(pm)
+
+
+def with_plus_badge(base_icon: QIcon, size: int = 28) -> QIcon:
+    """Overlay a themed mdi.plus-circle in the bottom-right corner of
+    *base_icon* — matches the badge new_sheet_icon / new_workbook_icon
+    apply via qta stacking, so custom-painted icons (New Graph, New
+    Matrix Book) can carry the same "+" affordance.
+
+    A small white halo is painted behind the badge so it stays
+    legible on busy / coloured base icons (e.g. the yellow matrix
+    grid) that would otherwise blend with the themed badge stroke."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    base_icon.paint(p, 0, 0, size, size)
     if HAVE_QTA:
         try:
-            return qta.icon(
-                "mdi.folder-open", "mdi.folder-open-outline",
-                options=[
-                    {"color": OPEN_FOLDER_YELLOW, "scale_factor": 1.0},
-                    {"color": active_icon_color(), "scale_factor": 1.0},
-                ])
-        except Exception:
+            bs = int(size * 0.55)
+            x0 = size - bs
+            y0 = size - bs
+            # White halo slightly inset from the badge's outer edge.
+            halo_pad = bs * 0.08
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#ffffff"))
+            p.drawEllipse(QRectF(x0 + halo_pad, y0 + halo_pad,
+                                 bs - 2 * halo_pad,
+                                 bs - 2 * halo_pad))
+            badge = qta.icon("mdi.plus-circle", color=active_icon_color())
+            badge.paint(p, x0, y0, bs, bs)
+        except Exception:  # noqa: BLE001
             pass
-    return themed_icon("mdi.folder-open-outline",
-                       QStyle.SP_DirOpenIcon,
-                       color=OPEN_FOLDER_YELLOW)
+    p.end()
+    return QIcon(pm)
 
 
-def save_icon() -> QIcon:
-    return filled_outline_icon("mdi.content-save", "mdi.content-save-outline",
-                               SAVE_FILL, QStyle.SP_DialogSaveButton)
-
-
-def undo_icon() -> QIcon:
-    return themed_icon("mdi.undo", QStyle.SP_ArrowBack)
-
-
-def redo_icon() -> QIcon:
-    return themed_icon("mdi.redo", QStyle.SP_ArrowForward)
-
-
-def cut_icon() -> QIcon:
-    return filled_outline_icon("mdi.content-cut", "mdi.content-cut",
-                               DELETE_FILL, scale=1.1)
-
-
-def copy_icon() -> QIcon:
-    return filled_outline_icon("mdi.content-copy", "mdi.content-copy",
-                               COPY_FILL, scale=1.1)
-
-
-def paste_icon() -> QIcon:
-    return filled_outline_icon("mdi.content-paste", "mdi.content-paste",
-                               PASTE_FILL, scale=1.1)
-
-
-# ── Plot-type icons (custom QPainter) ──────────────────────────────
 def _draw_plot_axes(p: QPainter, color: QColor, x0: float, y0: float,
                     x1: float, y1: float, pw: float = 1.2):
+    """Shared L-shaped axes used by the multicolor plot-type icons.
+    Bottom + left edges only — matches matplotlib's default frame
+    look closely enough at icon scale."""
     p.setPen(QPen(color, pw, Qt.SolidLine, Qt.SquareCap, Qt.MiterJoin))
     p.drawLine(QPointF(x0, y0), QPointF(x0, y1))
     p.drawLine(QPointF(x0, y1), QPointF(x1, y1))
@@ -239,6 +379,7 @@ def _draw_plot_axes(p: QPainter, color: QColor, x0: float, y0: float,
 
 def plot_icon_line(size: int = 22,
                    line_color: str = LINE_PLOT_ACCENT) -> QIcon:
+    """Line-plot icon: themed L-axes + an amber polyline."""
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
@@ -247,6 +388,7 @@ def plot_icon_line(size: int = 22,
     pad = 2.5
     x0, y0, x1, y1 = pad, pad, s - pad, s - pad
     _draw_plot_axes(p, QColor(active_icon_color()), x0, y0, x1, y1)
+    # Polyline within the axes area.
     p.setPen(QPen(QColor(line_color), 2.0, Qt.SolidLine,
                   Qt.RoundCap, Qt.RoundJoin))
     inner = [
@@ -262,6 +404,7 @@ def plot_icon_line(size: int = 22,
 
 
 def plot_icon_scatter(size: int = 22) -> QIcon:
+    """Scatter icon: themed L-axes + five dots in distinct colours."""
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
@@ -270,6 +413,7 @@ def plot_icon_scatter(size: int = 22) -> QIcon:
     pad = 2.5
     x0, y0, x1, y1 = pad, pad, s - pad, s - pad
     _draw_plot_axes(p, QColor(active_icon_color()), x0, y0, x1, y1)
+    # Five dots scattered inside the plot area.
     positions = [(0.18, 0.70), (0.36, 0.40), (0.52, 0.62),
                  (0.70, 0.30), (0.85, 0.55)]
     r = s * 0.10
@@ -283,8 +427,300 @@ def plot_icon_scatter(size: int = 22) -> QIcon:
     return QIcon(pm)
 
 
+MATRIX_BOOK_FILL = "#f4c027"  # warm yellow for the New Matrix Book icon
+NEW_SHEET_GREEN = "#2ca02c"   # matplotlib-cycle green for New Sheet
+NEW_WORKBOOK_BROWN = "#c08552"  # light tan brown for New Workbook
+OPEN_FOLDER_YELLOW = "#ffc83d"  # warm folder yellow for Open
+SAVE_GREEN = "#2ca02c"          # green for Save / Save CSV
+DELETE_RED = ICON_ACCENT        # delete = accent red
+COPY_BLUE = "#1f77b4"           # mpl-cycle blue for Copy
+PASTE_ORANGE = "#ff7f0e"        # mpl-cycle orange for Paste
+
+
+def plot_icon_3d_scatter(size: int = 22) -> QIcon:
+    """3D Scatter icon — themed cube-scan glyph in mpl purple."""
+    return themed_icon("mdi.cube-scan", color="#9467bd")
+
+
+def plot_icon_3d_surface(size: int = 22) -> QIcon:
+    """3D Surface icon — filled blue cube with a dark outline."""
+    if HAVE_QTA:
+        try:
+            return qta.icon(
+                "mdi.cube", "mdi.cube-outline",
+                options=[
+                    {"color": "#1f77b4", "scale_factor": 1.0},
+                    {"color": active_icon_color(), "scale_factor": 1.0},
+                ])
+        except Exception:  # noqa: BLE001
+            pass
+    return themed_icon("mdi.cube-outline", color="#1f77b4")
+
+
+# --- "fill inside the outline" pattern ---------------------------------
+#
+# Stack a filled qta glyph in an action colour under the themed outline
+# variant so the fill is shaped to the icon's silhouette and the
+# contour stays in the user's icon theme.
+
+# Saturated single-glyph tints for icons without an MDI outline pair
+# (Σ, ∫, Δ, eraser, etc.). Pastels wash out at small sizes when the
+# contour isn't separately stroked, so these are full-strength.
+TINT_BLUE = "#1f77b4"
+TINT_ORANGE = "#ff7f0e"
+TINT_GREEN = "#2ca02c"
+TINT_RED = "#e60000"
+TINT_PURPLE = "#9467bd"
+TINT_BROWN = "#8b5a2b"
+TINT_GREY = "#6a6a6a"
+
+ADD_FILL = "#cce6cc"      # pale green for add / create actions
+REMOVE_FILL = "#f5b8b8"   # pale red for remove / clear actions
+COG_FILL = "#dcdcdc"      # neutral grey for settings / config
+LAYOUT_FILL = "#d4e3f4"   # pale blue for layout / view-grid actions
+PIN_FILL = "#f5b8b8"      # pale red for pin / drop-marker
+PRINT_FILL = "#dcdcdc"    # neutral grey for print
+IMAGE_FILL = "#cce6cc"    # pale green for save-image
+COPY_FILL = "#c8dcef"     # pale blue
+PASTE_FILL = "#fadcb8"    # pale orange
+DELETE_FILL = "#f5b8b8"   # pale red
+SAVE_FILL = "#cce6cc"     # pale green
+EYE_OFF_FILL = "#dcdcdc"  # neutral grey
+
+# Column-designation tints.
+X_FILL = "#cfe2f3"     # pale blue
+Y_FILL = "#fce5b6"     # pale yellow
+YERR_FILL = "#d4ead0"  # pale green
+XERR_FILL = "#f8d2c4"  # pale peach
+
+
+def filled_outline_icon(filled_name: str, outline_name: str,
+                        fill_color: str,
+                        std_fallback=None,
+                        scale: float = 1.0) -> QIcon:
+    """Stack a filled qta glyph in *fill_color* under the matching
+    outline glyph in the themed icon colour. Falls back to a tinted
+    outline-only glyph when qtawesome isn't available.
+
+    *scale* enlarges both glyphs within the icon viewport. Useful for
+    pictographic glyphs (cut, paste, delete) that have more inherent
+    padding than letter-in-box glyphs (alpha-x-box, alpha-y-box) and
+    so look smaller when sat next to them on the same toolbar."""
+    if HAVE_QTA:
+        try:
+            return qta.icon(
+                filled_name, outline_name,
+                options=[
+                    {"color": fill_color, "scale_factor": scale},
+                    {"color": active_icon_color(), "scale_factor": scale},
+                ])
+        except Exception:  # noqa: BLE001
+            pass
+    return themed_icon(outline_name, std_fallback, color=fill_color)
+
+
+def err_designation_icon(axis: str, bg_color: str,
+                         size: int = 28) -> QIcon:
+    """yErr / xErr designation icon — same alpha-letter-box plate as
+    column_designation_icon (so X/Y/yE/xE share one visual style),
+    with "yE" / "xE" text painted over the placeholder letter.
+
+    *axis*: ``"y"`` or ``"x"``."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    s = float(size)
+    # Use the very same filled_outline_icon pattern as X / Y, with
+    # the placeholder letter matching *axis* — keeps the rounded-corner
+    # radius, border thickness and inset identical to the other
+    # designation buttons.
+    box = filled_outline_icon(f"mdi.alpha-{axis}-box",
+                              f"mdi.alpha-{axis}-box-outline",
+                              bg_color)
+    box.paint(p, 0, 0, size, size)
+    # Knock out the placeholder letter with a fill-matching rect so
+    # the underlying y / x glyph doesn't bleed through behind the
+    # "yE" / "xE" text. Keep it inside the box outline.
+    knock_pad = s * 0.18
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(bg_color))
+    p.drawRect(QRectF(knock_pad, knock_pad,
+                      s - 2 * knock_pad,
+                      s - 2 * knock_pad))
+    # Two-letter label centred on the plate.
+    text = f"{axis}E"
+    f = QFont()
+    f.setBold(True)
+    f.setPixelSize(int(s * 0.42))
+    p.setFont(f)
+    p.setPen(QColor(active_icon_color()))
+    p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, text)
+    p.end()
+    return QIcon(pm)
+
+
+def column_designation_icon(letter: str, fill_color: str,
+                            size: int = 20) -> QIcon:
+    """X / Y / E column-designation icons — filled alpha-letter-box in
+    *fill_color* under the themed outline glyph."""
+    return filled_outline_icon(f"mdi.alpha-{letter}-box",
+                               f"mdi.alpha-{letter}-box-outline",
+                               fill_color)
+
+
+def open_folder_icon(size: int = 20) -> QIcon:
+    """Open-file icon — yellow folder body with a dark outline."""
+    if HAVE_QTA:
+        try:
+            return qta.icon(
+                "mdi.folder-open", "mdi.folder-open-outline",
+                options=[
+                    {"color": OPEN_FOLDER_YELLOW, "scale_factor": 1.0},
+                    {"color": active_icon_color(), "scale_factor": 1.0},
+                ])
+        except Exception:  # noqa: BLE001
+            pass
+    return themed_icon("mdi.folder-open-outline", color=OPEN_FOLDER_YELLOW)
+
+
+def new_workbook_icon(size: int = 20) -> QIcon:
+    """Stacked icon for the New Workbook button — light-brown filled
+    book with a black outline so the cover shape stays legible
+    against the toolbar background, plus a themed +circle badge."""
+    if HAVE_QTA:
+        try:
+            return qta.icon(
+                "mdi.book", "mdi.book-outline", "mdi.plus-circle",
+                options=[
+                    {"color": NEW_WORKBOOK_BROWN, "scale_factor": 1.0},
+                    {"color": active_icon_color(), "scale_factor": 1.0},
+                    {"color": active_icon_color(), "scale_factor": 0.55,
+                     "offset": (0.25, 0.25)},
+                ])
+        except Exception:  # noqa: BLE001
+            pass
+    return themed_icon("mdi.book-plus", color=NEW_WORKBOOK_BROWN)
+
+
+def new_sheet_icon(size: int = 20) -> QIcon:
+    """Stacked icon for the New Sheet button — green table glyph
+    with a themed plus badge in the bottom-right corner."""
+    if HAVE_QTA:
+        try:
+            return qta.icon(
+                "mdi.table", "mdi.plus-circle",
+                options=[
+                    {"color": NEW_SHEET_GREEN, "scale_factor": 1.0},
+                    {"color": active_icon_color(), "scale_factor": 0.55,
+                     "offset": (0.25, 0.25)},
+                ])
+        except Exception:  # noqa: BLE001
+            pass
+    return themed_icon("mdi.table-plus", color=NEW_SHEET_GREEN)
+
+_HEATMAP_PALETTE = ("#1f77b4", "#ff7f0e", "#2ca02c", "#d62728")
+
+
+def matrix_book_icon(size: int = 20,
+                     fill: str = MATRIX_BOOK_FILL) -> QIcon:
+    """Grid icon for New Matrix Book — yellow cells with themed grid
+    lines."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, False)
+    s = float(size)
+    pad = 2.0
+    x0, y0, x1, y1 = pad, pad, s - pad, s - pad
+    n = 4
+    cw = (x1 - x0) / n
+    ch = (y1 - y0) / n
+    # Cells.
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(fill))
+    for i in range(n):
+        for j in range(n):
+            p.drawRect(QRectF(x0 + j * cw, y0 + i * ch, cw, ch))
+    # Themed grid lines.
+    p.setPen(QPen(QColor(active_icon_color()), 1.0, Qt.SolidLine,
+                  Qt.SquareCap, Qt.MiterJoin))
+    p.setBrush(Qt.NoBrush)
+    p.drawRect(QRectF(x0, y0, x1 - x0, y1 - y0))
+    for k in range(1, n):
+        p.drawLine(QPointF(x0 + k * cw, y0), QPointF(x0 + k * cw, y1))
+        p.drawLine(QPointF(x0, y0 + k * ch), QPointF(x1, y0 + k * ch))
+    p.end()
+    return QIcon(pm)
+
+
+def plot_icon_heatmap(size: int = 22) -> QIcon:
+    """Heatmap icon: themed L-axes + a grid of randomly-coloured cells
+    drawn from a 4-colour palette. The random seed is fixed so the
+    layout is deterministic across renders."""
+    import random
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, False)
+    s = float(size)
+    pad = 2.5
+    x0, y0, x1, y1 = pad, pad, s - pad, s - pad
+    _draw_plot_axes(p, QColor(active_icon_color()), x0, y0, x1, y1)
+    n = 4
+    inset = 1.0  # leave a hair of space between axes and grid
+    gx0 = x0 + inset
+    gy0 = y0
+    gx1 = x1
+    gy1 = y1 - inset
+    cw = (gx1 - gx0) / n
+    ch = (gy1 - gy0) / n
+    rng = random.Random(0xBEEF)  # fixed seed → deterministic layout
+    p.setPen(Qt.NoPen)
+    for i in range(n):
+        for j in range(n):
+            col = QColor(rng.choice(_HEATMAP_PALETTE))
+            p.setBrush(col)
+            p.drawRect(QRectF(gx0 + j * cw, gy0 + i * ch, cw, ch))
+    p.end()
+    return QIcon(pm)
+
+
+def zoom_icon(plus: bool, size: int = 28,
+              accent: str = "") -> QIcon:
+    """Magnifying-glass icon with the +/- symbol in the red accent.
+
+    Stacks an outline-only lens (``mdi.magnify``) in the themed icon
+    colour and a smaller plus or minus glyph in red, offset to sit
+    inside the lens. Falls back to the themed combined glyph if
+    qtawesome isn't available.
+    """
+    accent_color = accent or ICON_ACCENT
+    if HAVE_QTA:
+        try:
+            sym = "mdi.plus" if plus else "mdi.minus"
+            base_color = active_icon_color()
+            return qta.icon(
+                "mdi.magnify", sym,
+                options=[
+                    {"color": base_color, "scale_factor": 1.0},
+                    # Shift the +/- so it sits inside the lens (lens
+                    # centre is biased toward the top-left on the MDI
+                    # canvas because of the handle on the bottom-right).
+                    {"color": "#00e640" if plus else accent_color,
+                     "scale_factor": 0.55,
+                     "offset": (-0.10, -0.10)},
+                ])
+        except Exception:  # noqa: BLE001
+            pass
+    fallback = "mdi.magnify-plus-outline" if plus else "mdi.magnify-minus-outline"
+    return themed_icon(fallback, color=accent_color)
+
+
 def plot_icon_line_symbol(size: int = 22,
                           line_color: str = LINE_PLOT_ACCENT) -> QIcon:
+    """Line+Symbol icon: amber polyline with per-vertex coloured dots."""
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
@@ -312,7 +748,9 @@ def plot_icon_line_symbol(size: int = 22,
     return QIcon(pm)
 
 
-def plot_icon_bar(size: int = 22) -> QIcon:
+def plot_icon_step(size: int = 22,
+                   line_color: str = LINE_PLOT_ACCENT) -> QIcon:
+    """Step icon: themed axes + an amber step (staircase) polyline."""
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
@@ -321,6 +759,143 @@ def plot_icon_bar(size: int = 22) -> QIcon:
     pad = 2.5
     x0, y0, x1, y1 = pad, pad, s - pad, s - pad
     _draw_plot_axes(p, QColor(active_icon_color()), x0, y0, x1, y1)
+    # Four steps — alternating up / down.
+    xs = [0.05, 0.30, 0.55, 0.80, 1.00]
+    ys = [0.30, 0.55, 0.40, 0.75, 0.75]
+    pts = []
+    for i, (xf, yf) in enumerate(zip(xs, ys)):
+        x = x0 + (x1 - x0) * xf
+        y = y1 - (y1 - y0) * yf
+        if i > 0:
+            prev = pts[-1]
+            pts.append(QPointF(x, prev.y()))
+        pts.append(QPointF(x, y))
+    p.setPen(QPen(QColor(line_color), 2.0, Qt.SolidLine,
+                  Qt.SquareCap, Qt.MiterJoin))
+    for a, b in zip(pts, pts[1:]):
+        p.drawLine(a, b)
+    p.end()
+    return QIcon(pm)
+
+
+def plot_icon_stem(size: int = 22) -> QIcon:
+    """Stem icon: themed axes + vertical stems with coloured dot tops."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    s = float(size)
+    pad = 2.5
+    x0, y0, x1, y1 = pad, pad, s - pad, s - pad
+    _draw_plot_axes(p, QColor(active_icon_color()), x0, y0, x1, y1)
+    heights = [0.40, 0.70, 0.50, 0.85, 0.60]
+    n = len(heights)
+    axis_pw = 1.2
+    r = s * 0.09
+    stem_color = QColor(active_icon_color())
+    for i, h in enumerate(heights):
+        fx = (i + 1) / (n + 1)
+        x = x0 + (x1 - x0) * fx
+        y_top = y1 - (y1 - y0) * h
+        y_base = y1 - axis_pw / 2
+        p.setPen(QPen(stem_color, 1.3, Qt.SolidLine, Qt.RoundCap))
+        p.drawLine(QPointF(x, y_base), QPointF(x, y_top))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(SERIES_PALETTE[i % len(SERIES_PALETTE)]))
+        p.drawEllipse(QPointF(x, y_top), r, r)
+    p.end()
+    return QIcon(pm)
+
+
+def plot_icon_histogram(size: int = 22) -> QIcon:
+    """Histogram icon: themed axes + adjacent bars in distinct colours."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    s = float(size)
+    pad = 2.5
+    x0, y0, x1, y1 = pad, pad, s - pad, s - pad
+    _draw_plot_axes(p, QColor(active_icon_color()), x0, y0, x1, y1)
+    # Bell-shaped histogram: 6 adjacent bars, no gaps.
+    heights = [0.30, 0.55, 0.80, 0.75, 0.45, 0.25]
+    n = len(heights)
+    bw = (x1 - x0) / n
+    axis_pw = 1.2
+    p.setPen(Qt.NoPen)
+    for i, h in enumerate(heights):
+        p.setBrush(QColor(SERIES_PALETTE[i % len(SERIES_PALETTE)]))
+        bx = x0 + i * bw
+        bh = (y1 - y0) * h
+        by = y1 - axis_pw / 2 - bh
+        p.drawRect(QRectF(bx, by, bw, bh))
+    p.end()
+    return QIcon(pm)
+
+
+def plot_icon_box(size: int = 22) -> QIcon:
+    """Box-plot icon: themed axes + three coloured box-and-whisker glyphs."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    s = float(size)
+    pad = 2.5
+    x0, y0, x1, y1 = pad, pad, s - pad, s - pad
+    _draw_plot_axes(p, QColor(active_icon_color()), x0, y0, x1, y1)
+    # Three boxes side by side. Each: (q1, median, q3, lo_whisker, hi_whisker)
+    # given as fractions of the plot height (1.0 = top of icon).
+    boxes = [
+        (0.30, 0.45, 0.65, 0.15, 0.80),
+        (0.40, 0.55, 0.75, 0.20, 0.90),
+        (0.25, 0.40, 0.55, 0.10, 0.70),
+    ]
+    n = len(boxes)
+    plot_w = x1 - x0
+    plot_h = y1 - y0
+    bw = plot_w * 0.16
+    centres = [x0 + plot_w * ((i + 1) / (n + 1)) for i in range(n)]
+    for cx, (q1, med, q3, lo, hi), col in zip(centres, boxes, SERIES_PALETTE):
+        y_q1 = y1 - plot_h * q1
+        y_q3 = y1 - plot_h * q3
+        y_med = y1 - plot_h * med
+        y_lo = y1 - plot_h * lo
+        y_hi = y1 - plot_h * hi
+        line = QPen(QColor(col), 1.2, Qt.SolidLine,
+                    Qt.SquareCap, Qt.MiterJoin)
+        # Whiskers.
+        p.setPen(line)
+        p.drawLine(QPointF(cx, y_lo), QPointF(cx, y_q1))
+        p.drawLine(QPointF(cx, y_q3), QPointF(cx, y_hi))
+        # Whisker caps.
+        cap = bw * 0.45
+        p.drawLine(QPointF(cx - cap, y_lo), QPointF(cx + cap, y_lo))
+        p.drawLine(QPointF(cx - cap, y_hi), QPointF(cx + cap, y_hi))
+        # Box body.
+        fill = QColor(col)
+        fill.setAlpha(140)
+        p.setBrush(fill)
+        p.setPen(line)
+        p.drawRect(QRectF(cx - bw / 2, y_q3, bw, y_q1 - y_q3))
+        # Median line.
+        p.setPen(QPen(QColor(col), 1.6, Qt.SolidLine,
+                      Qt.SquareCap, Qt.MiterJoin))
+        p.drawLine(QPointF(cx - bw / 2, y_med), QPointF(cx + bw / 2, y_med))
+    p.end()
+    return QIcon(pm)
+
+
+def plot_icon_bar(size: int = 22) -> QIcon:
+    """Bar-plot icon: themed L-axes + four bars in distinct colours."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    s = float(size)
+    pad = 2.5
+    x0, y0, x1, y1 = pad, pad, s - pad, s - pad
+    _draw_plot_axes(p, QColor(active_icon_color()), x0, y0, x1, y1)
+    # Four bars, ascending then descending, each its own colour.
     heights = [0.45, 0.75, 0.55, 0.85]
     n = len(heights)
     gap = (x1 - x0) * 0.08
@@ -332,38 +907,114 @@ def plot_icon_bar(size: int = 22) -> QIcon:
         p.setBrush(QColor(col))
         bx = x0 + gap + i * (bw + gap)
         bh = (y1 - y0) * h
+        # Sit bars on top of the bottom axis stroke.
         by = y1 - axis_pw / 2 - bh
         p.drawRect(QRectF(bx, by, bw, bh))
     p.end()
     return QIcon(pm)
 
 
-# ── Zoom icons ──────────────────────────────────────────────────────
-def zoom_in_icon() -> QIcon:
-    if HAVE_QTA:
-        try:
-            return qta.icon(
-                "mdi.magnify", "mdi.plus",
-                options=[
-                    {"color": active_icon_color(), "scale_factor": 1.0},
-                    {"color": "#00e640", "scale_factor": 0.55,
-                     "offset": (-0.10, -0.10)},
-                ])
-        except Exception:
-            pass
-    return themed_icon("mdi.magnify-plus-outline")
+def twin_axis_icon(side: str, size: int = 28,
+                   accent: str = "") -> QIcon:
+    """Icon for the Twin X / Twin Y toolbar buttons.
+
+    Draws a plot-frame rectangle with four short tick marks sticking
+    *outward* from the named edge — the new axis being added. The
+    three non-axis frame edges are drawn in the active themed icon
+    colour; the axis edge and its ticks are drawn in *accent* (a
+    red highlight by default) so the eye is drawn to the new axis.
+
+    *side*: ``"top"`` (Twin X, top X axis) or ``"right"`` (Twin Y,
+    right Y axis).
+    """
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    color = QColor(active_icon_color())
+    accent_qc = QColor(accent or TWIN_AXIS_ACCENT)
+    s = float(size)
+    pad = 2.0
+    tick_len = s * 0.11
+    frame_pw = 1.0
+    axis_pw = 2.4
+    tick_pw = 1.4
+    n_ticks = 4
+
+    if side == "top":
+        x0, y0, x1, y1 = pad, pad + tick_len, s - pad, s - pad
+    elif side == "right":
+        x0, y0, x1, y1 = pad, pad, s - pad - tick_len, s - pad
+    else:
+        x0, y0, x1, y1 = pad, pad, s - pad, s - pad
+
+    # Three thin frame edges (everything except the axis edge).
+    thin_pen = QPen(color, frame_pw, Qt.SolidLine, Qt.SquareCap, Qt.MiterJoin)
+    p.setPen(thin_pen)
+    p.setBrush(Qt.NoBrush)
+    if side == "top":
+        p.drawLine(QPointF(x0, y1), QPointF(x1, y1))   # bottom
+        p.drawLine(QPointF(x0, y0), QPointF(x0, y1))   # left
+        p.drawLine(QPointF(x1, y0), QPointF(x1, y1))   # right
+    elif side == "right":
+        p.drawLine(QPointF(x0, y0), QPointF(x1, y0))   # top
+        p.drawLine(QPointF(x0, y1), QPointF(x1, y1))   # bottom
+        p.drawLine(QPointF(x0, y0), QPointF(x0, y1))   # left
+
+    # Thick axis edge with evenly-spaced outward ticks. Edge divided
+    # into (n_ticks + 1) intervals so the corner gap equals the inter-
+    # tick gap.
+    axis_pen = QPen(accent_qc, axis_pw, Qt.SolidLine, Qt.SquareCap,
+                    Qt.MiterJoin)
+    tick_pen = QPen(accent_qc, tick_pw, Qt.SolidLine, Qt.RoundCap)
+    if side == "top":
+        p.setPen(axis_pen)
+        p.drawLine(QPointF(x0, y0), QPointF(x1, y0))
+        p.setPen(tick_pen)
+        L = x1 - x0
+        for i in range(1, n_ticks + 1):
+            t = x0 + L * i / (n_ticks + 1)
+            p.drawLine(QPointF(t, y0), QPointF(t, y0 - tick_len))
+    elif side == "right":
+        p.setPen(axis_pen)
+        p.drawLine(QPointF(x1, y0), QPointF(x1, y1))
+        p.setPen(tick_pen)
+        L = y1 - y0
+        for i in range(1, n_ticks + 1):
+            t = y0 + L * i / (n_ticks + 1)
+            p.drawLine(QPointF(x1, t), QPointF(x1 + tick_len, t))
+    p.end()
+    return QIcon(pm)
 
 
-def zoom_out_icon() -> QIcon:
-    if HAVE_QTA:
-        try:
-            return qta.icon(
-                "mdi.magnify", "mdi.minus",
-                options=[
-                    {"color": active_icon_color(), "scale_factor": 1.0},
-                    {"color": ICON_ACCENT, "scale_factor": 0.55,
-                     "offset": (-0.10, -0.10)},
-                ])
-        except Exception:
-            pass
-    return themed_icon("mdi.magnify-minus-outline")
+def _draw_bar(p: QPainter, color: QColor, pw: float,
+              x1: float, y1: float, x2: float, y2: float):
+    """Draw the axis-edge bar with uniform pen width *pw*."""
+    p.setPen(QPen(color, pw, Qt.SolidLine, Qt.RoundCap))
+    p.drawLine(QPointF(x1, y1), QPointF(x2, y2))
+
+
+def _draw_arrow(p: QPainter, color: QColor, pw: float,
+                aw: float, ah: float,
+                x1: float, y1: float, x2: float, y2: float):
+    """Draw a straight arrow from (x1,y1) to (x2,y2) with a filled head."""
+    import math
+    dx, dy = x2 - x1, y2 - y1
+    length = math.hypot(dx, dy)
+    if length < 1:
+        return
+    ux, uy = dx / length, dy / length
+    nx, ny = -uy, ux
+
+    base_x = x2 - ux * ah
+    base_y = y2 - uy * ah
+    p.setPen(QPen(color, pw, Qt.SolidLine, Qt.RoundCap))
+    p.drawLine(QPointF(x1, y1), QPointF(base_x, base_y))
+
+    p.setPen(Qt.NoPen)
+    p.setBrush(color)
+    tri = QPolygonF([
+        QPointF(x2, y2),
+        QPointF(base_x + nx * aw, base_y + ny * aw),
+        QPointF(base_x - nx * aw, base_y - ny * aw)])
+    p.drawPolygon(tri)

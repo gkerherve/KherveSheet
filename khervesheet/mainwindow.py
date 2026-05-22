@@ -13,6 +13,7 @@ import os
 
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QIcon, QKeySequence
+from PyQt5.QtWidgets import QStyle
 from PyQt5.QtWidgets import (
     QMainWindow, QStatusBar, QLabel, QAction, QMenu, QMenuBar,
     QToolBar, QToolButton, QFileDialog, QMessageBox, QProgressBar,
@@ -180,16 +181,35 @@ class MainWindow(QMainWindow):
         tb = self.addToolBar("Standard")
         tb.setIconSize(icon_size)
         tb.setMovable(False)
-        tb.addAction(icons.new_icon(), "New", self._new_workbook)
-        tb.addAction(icons.open_folder_icon(), "Open", self._open_file)
-        tb.addAction(icons.save_icon(), "Save", self._save_file)
+        tb.addAction(icons.new_workbook_icon(24), "New",
+                     self._new_workbook)
+        tb.addAction(icons.open_folder_icon(24), "Open",
+                     self._open_file)
+        tb.addAction(icons.filled_outline_icon(
+            "mdi.content-save", "mdi.content-save-outline",
+            icons.SAVE_FILL, QStyle.SP_DialogSaveButton),
+            "Save", self._save_file)
         tb.addSeparator()
-        tb.addAction(icons.undo_icon(), "Undo", self._undo_stack.undo)
-        tb.addAction(icons.redo_icon(), "Redo", self._undo_stack.redo)
+        tb.addAction(icons.themed_icon("mdi.undo", QStyle.SP_ArrowBack),
+                     "Undo", self._undo_stack.undo)
+        tb.addAction(icons.themed_icon("mdi.redo", QStyle.SP_ArrowForward),
+                     "Redo", self._undo_stack.redo)
         tb.addSeparator()
-        tb.addAction(icons.cut_icon(), "Cut", self._cut)
-        tb.addAction(icons.copy_icon(), "Copy", self._copy)
-        tb.addAction(icons.paste_icon(), "Paste", self._paste)
+        tb.addAction(icons.themed_icon("mdi.content-cut",
+                                       QStyle.SP_DialogResetButton),
+                     "Cut", self._cut)
+        tb.addAction(icons.filled_outline_icon(
+            "mdi.file-multiple", "mdi.file-multiple-outline",
+            icons.COPY_FILL, QStyle.SP_DialogApplyButton),
+            "Copy", self._copy)
+        tb.addAction(icons.filled_outline_icon(
+            "mdi.clipboard-text", "mdi.clipboard-text-outline",
+            icons.PASTE_FILL, QStyle.SP_DialogOkButton),
+            "Paste", self._paste)
+        tb.addAction(icons.filled_outline_icon(
+            "mdi.delete", "mdi.delete-outline",
+            icons.DELETE_FILL, QStyle.SP_TrashIcon),
+            "Clear", self._clear)
 
         # Format toolbar
         fmt_tb = self.addToolBar("Format")
