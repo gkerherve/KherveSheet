@@ -20,6 +20,8 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QLineEdit, QFormLayout, QDialogButtonBox,
     QWidget, QCheckBox, QMenu, QInputDialog,
+    QSplitter, QTabWidget, QListWidget, QDoubleSpinBox,
+    QColorDialog,
 )
 
 import matplotlib
