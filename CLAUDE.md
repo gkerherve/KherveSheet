@@ -34,6 +34,7 @@ into a new module and import.
   - `workbook.py`   — `WorkbookWidget` (QTabWidget managing sheets).
   - `graph.py`      — `EmbeddedChart` (matplotlib chart overlaid on grid viewport).
   - `axis_dialog.py` — `AxisPropertiesDialog` (per-axis config: scale, title, ticks, grids).
+  - `cellformat.py`  — `CellFormat`, `BorderSpec`, `CellFormatDelegate` (fill + borders).
   - `mainwindow.py` — `MainWindow` shell: menus, toolbars, status bar, I/O (CSV/Excel/HDF5).
   - `formula_engine.py` — cell formula parser & evaluator.
   - `undo_commands.py` — QUndoCommand classes.

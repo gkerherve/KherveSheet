@@ -1106,6 +1106,60 @@ def align_right_icon(size: int = 28) -> QIcon:
     return _fmt_icon(size, _draw)
 
 
+def fill_color_icon(size: int = 28, color: str = "#ffff00") -> QIcon:
+    """Paint-bucket icon with a coloured bar at the bottom."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        pw = max(1.2, s / 16)
+        m = s * 0.18
+        # "A" letter
+        f = QFont("Arial", int(s * 0.45))
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QPen(fg))
+        p.drawText(QRectF(0, 0, s, s * 0.72), Qt.AlignCenter, "A")
+        # Coloured bar at bottom
+        bar_y = s * 0.76
+        bar_h = s * 0.18
+        p.fillRect(QRectF(m, bar_y, s - 2 * m, bar_h), QColor(color))
+        p.setPen(QPen(fg, max(1.0, s / 28)))
+        p.drawRect(QRectF(m, bar_y, s - 2 * m, bar_h))
+    return _fmt_icon(size, _draw)
+
+
+def font_color_icon(size: int = 28, color: str = "#ff0000") -> QIcon:
+    """Font colour icon — "A" with a coloured underline bar."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        m = s * 0.18
+        f = QFont("Arial", int(s * 0.45))
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QPen(QColor(color)))
+        p.drawText(QRectF(0, 0, s, s * 0.72), Qt.AlignCenter, "A")
+        bar_y = s * 0.76
+        bar_h = s * 0.18
+        p.fillRect(QRectF(m, bar_y, s - 2 * m, bar_h), QColor(color))
+    return _fmt_icon(size, _draw)
+
+
+def border_icon(size: int = 28) -> QIcon:
+    """Grid icon representing cell borders."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        pw = max(1.2, s / 16)
+        p.setPen(QPen(fg, pw))
+        m = s * 0.18
+        w = s - 2 * m
+        # Outer rectangle
+        p.drawRect(QRectF(m, m, w, w))
+        # Cross in the middle
+        mid = s / 2
+        p.drawLine(QPointF(m, mid), QPointF(s - m, mid))
+        p.drawLine(QPointF(mid, m), QPointF(mid, s - m))
+    return _fmt_icon(size, _draw)
+
+
 # ── Standard toolbar icons (QPainter) ─────────────────────────────
 
 def new_file_icon(size: int = 28) -> QIcon:

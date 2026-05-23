@@ -238,6 +238,13 @@ class SheetWidget(QWidget):
 
         layout.addWidget(self.table)
 
+        # ── Cell format delegate (borders) ──────────────────────────
+        from .cellformat import CellFormat, CellFormatDelegate
+        self._cell_formats: dict = {}    # (row, col) → CellFormat
+        self._fmt_delegate = CellFormatDelegate(
+            self._cell_formats, self.table)
+        self.table.setItemDelegate(self._fmt_delegate)
+
         # ── Internal state ───────────────────────────────────────────
         self._shadow: dict = {}          # (row, col) → last-known text
         self._cell_formulas: dict = {}   # (row, col) → "=formula"
@@ -292,6 +299,48 @@ class SheetWidget(QWidget):
 
     def column_display_name(self, col: int) -> str:
         return col_index_to_letter(col)
+
+    # ── Cell formatting (fill + borders) ───────────────────────────
+    def set_cell_bg(self, row: int, col: int,
+                    color_hex: Optional[str]):
+        """Set the background colour of a single cell."""
+        from .cellformat import CellFormat
+        cf = self._cell_formats.setdefault((row, col), CellFormat())
+        cf.bg_color = color_hex
+        it = self.table.item(row, col)
+        if it is None:
+            it = QTableWidgetItem("")
+            self.table.setItem(row, col, it)
+        if color_hex:
+            it.setBackground(QColor(color_hex))
+        else:
+            it.setBackground(QBrush())   # reset to default
+        if cf.is_empty():
+            self._cell_formats.pop((row, col), None)
+
+    def set_cell_borders(self, row: int, col: int,
+                         sides: dict):
+        """Set borders on a cell.
+
+        *sides* maps side names ('top', 'bottom', 'left', 'right')
+        to a BorderSpec or None (to remove).
+        """
+        from .cellformat import CellFormat
+        cf = self._cell_formats.setdefault((row, col), CellFormat())
+        for side, spec in sides.items():
+            setattr(cf, f"border_{side}", spec)
+        if cf.is_empty():
+            self._cell_formats.pop((row, col), None)
+        # Redraw affected area.
+        self.table.viewport().update()
+
+    def clear_cell_format(self, row: int, col: int):
+        """Remove all formatting from a cell."""
+        self._cell_formats.pop((row, col), None)
+        it = self.table.item(row, col)
+        if it:
+            it.setBackground(QBrush())
+        self.table.viewport().update()
 
     # ── Headers ──────────────────────────────────────────────────────
     def _refresh_headers(self):

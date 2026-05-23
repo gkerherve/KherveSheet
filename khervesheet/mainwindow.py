@@ -12,7 +12,7 @@ import csv
 import os
 
 from PyQt5.QtCore import Qt, QSize
-from PyQt5.QtGui import QIcon, QKeySequence, QFont
+from PyQt5.QtGui import QColor, QIcon, QKeySequence, QFont
 from PyQt5.QtWidgets import QStyle
 from PyQt5.QtWidgets import (
     QMainWindow, QStatusBar, QLabel, QAction, QMenu, QMenuBar,
@@ -173,6 +173,33 @@ class MainWindow(QMainWindow):
                 lambda _, f=fmt: self._set_number_format(f))
 
         format_menu.addSeparator()
+        format_menu.addAction("Fill Color\u2026", self._pick_fill_color)
+        format_menu.addAction("Font Color\u2026", self._pick_font_color)
+        border_sub = format_menu.addMenu("Borders")
+        border_sub.addAction(
+            "All Borders",
+            lambda: self._apply_border_preset("all"))
+        border_sub.addAction(
+            "Outside Borders",
+            lambda: self._apply_border_preset("outside"))
+        border_sub.addSeparator()
+        border_sub.addAction(
+            "Bottom Border",
+            lambda: self._apply_border_preset("bottom"))
+        border_sub.addAction(
+            "Top Border",
+            lambda: self._apply_border_preset("top"))
+        border_sub.addAction(
+            "Left Border",
+            lambda: self._apply_border_preset("left"))
+        border_sub.addAction(
+            "Right Border",
+            lambda: self._apply_border_preset("right"))
+        border_sub.addSeparator()
+        border_sub.addAction(
+            "No Borders",
+            lambda: self._apply_border_preset("none"))
+        format_menu.addSeparator()
         format_menu.addAction("Column Width…", self._format_col_width)
         format_menu.addAction("Row Height…", self._format_row_height)
 
@@ -288,6 +315,64 @@ class MainWindow(QMainWindow):
             lambda: self._apply_alignment(Qt.AlignRight | Qt.AlignVCenter))
         self._align_right_act.setToolTip("Align Right")
         self._align_right_act.setCheckable(True)
+
+        fmt.addSeparator()
+
+        # ── Fill colour button with dropdown ──────────────────────
+        self._last_fill_color = "#ffff00"
+        self._fill_btn = QToolButton()
+        self._fill_btn.setIcon(
+            icons.fill_color_icon(28, self._last_fill_color))
+        self._fill_btn.setToolTip("Fill Color")
+        self._fill_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        self._fill_btn.clicked.connect(self._apply_last_fill_color)
+        fill_menu = QMenu(self._fill_btn)
+        fill_menu.addAction("Choose Color\u2026",
+                            self._pick_fill_color)
+        fill_menu.addAction("No Fill",
+                            self._clear_fill_color)
+        self._fill_btn.setMenu(fill_menu)
+        fmt.addWidget(self._fill_btn)
+
+        # ── Font colour button with dropdown ──────────────────────
+        self._last_font_color = "#ff0000"
+        self._font_color_btn = QToolButton()
+        self._font_color_btn.setIcon(
+            icons.font_color_icon(28, self._last_font_color))
+        self._font_color_btn.setToolTip("Font Color")
+        self._font_color_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        self._font_color_btn.clicked.connect(
+            self._apply_last_font_color)
+        fc_menu = QMenu(self._font_color_btn)
+        fc_menu.addAction("Choose Color\u2026",
+                          self._pick_font_color)
+        self._font_color_btn.setMenu(fc_menu)
+        fmt.addWidget(self._font_color_btn)
+
+        # ── Border button with dropdown ───────────────────────────
+        self._border_btn = QToolButton()
+        self._border_btn.setIcon(icons.border_icon(28))
+        self._border_btn.setToolTip("Borders")
+        self._border_btn.setPopupMode(QToolButton.InstantPopup)
+        brd_menu = QMenu(self._border_btn)
+        brd_menu.addAction("All Borders",
+                           lambda: self._apply_border_preset("all"))
+        brd_menu.addAction("Outside Borders",
+                           lambda: self._apply_border_preset("outside"))
+        brd_menu.addSeparator()
+        brd_menu.addAction("Bottom Border",
+                           lambda: self._apply_border_preset("bottom"))
+        brd_menu.addAction("Top Border",
+                           lambda: self._apply_border_preset("top"))
+        brd_menu.addAction("Left Border",
+                           lambda: self._apply_border_preset("left"))
+        brd_menu.addAction("Right Border",
+                           lambda: self._apply_border_preset("right"))
+        brd_menu.addSeparator()
+        brd_menu.addAction("No Borders",
+                           lambda: self._apply_border_preset("none"))
+        self._border_btn.setMenu(brd_menu)
+        fmt.addWidget(self._border_btn)
 
         # Plot toolbar — all plot types with custom icons
         from .sheet import SheetWidget
@@ -634,6 +719,12 @@ class MainWindow(QMainWindow):
                     dt = h5py.string_dtype()
                     sg.create_dataset("cells", data=data, dtype=dt)
 
+                    # Cell formats (fill + borders).
+                    from .cellformat import formats_to_json
+                    fmt_json = formats_to_json(sheet._cell_formats)
+                    if fmt_json:
+                        sg.attrs['cell_formats'] = fmt_json
+
                     # Column designations.
                     if sheet._col_designations:
                         sg.attrs['col_designations'] = json.dumps(
@@ -744,6 +835,22 @@ class MainWindow(QMainWindow):
                         d = json.loads(desig_json)
                         sheet._col_designations = {
                             int(k): v for k, v in d.items()}
+
+                    # Cell formats (fill + borders).
+                    fmt_json = sg.attrs.get('cell_formats', '')
+                    if fmt_json:
+                        from .cellformat import formats_from_json
+                        sheet._cell_formats.update(
+                            formats_from_json(fmt_json))
+                        # Apply background colours to items.
+                        from PyQt5.QtWidgets import QTableWidgetItem
+                        for (fr, fc), cf in sheet._cell_formats.items():
+                            if cf.bg_color:
+                                it = sheet.table.item(fr, fc)
+                                if it is None:
+                                    it = QTableWidgetItem("")
+                                    sheet.table.setItem(fr, fc, it)
+                                it.setBackground(QColor(cf.bg_color))
 
                     # Column widths.
                     if "col_widths" in sg:
@@ -1000,6 +1107,101 @@ class MainWindow(QMainWindow):
         self._align_right_act.setChecked(bool(alignment & Qt.AlignRight))
         for it in self._selected_items():
             it.setTextAlignment(int(alignment))
+
+    # ── Fill colour ─────────────────────────────────────────────────
+    def _apply_last_fill_color(self):
+        self._apply_fill_color(self._last_fill_color)
+
+    def _pick_fill_color(self):
+        from PyQt5.QtWidgets import QColorDialog
+        dlg = QColorDialog(QColor(self._last_fill_color), self)
+        dlg.setStyleSheet("")
+        if dlg.exec_() == QColorDialog.Accepted:
+            c = dlg.currentColor().name()
+            self._last_fill_color = c
+            self._fill_btn.setIcon(
+                icons.fill_color_icon(28, c))
+            self._apply_fill_color(c)
+
+    def _apply_fill_color(self, color_hex):
+        s = self._active_sheet()
+        if not s:
+            return
+        for rng in s.table.selectedRanges():
+            for r in range(rng.topRow(), rng.bottomRow() + 1):
+                for c in range(rng.leftColumn(),
+                               rng.rightColumn() + 1):
+                    s.set_cell_bg(r, c, color_hex)
+
+    def _clear_fill_color(self):
+        s = self._active_sheet()
+        if not s:
+            return
+        for rng in s.table.selectedRanges():
+            for r in range(rng.topRow(), rng.bottomRow() + 1):
+                for c in range(rng.leftColumn(),
+                               rng.rightColumn() + 1):
+                    s.set_cell_bg(r, c, None)
+
+    # ── Font colour ──────────────────────────────────────────────────
+    def _apply_last_font_color(self):
+        self._apply_font_color(self._last_font_color)
+
+    def _pick_font_color(self):
+        from PyQt5.QtWidgets import QColorDialog
+        dlg = QColorDialog(QColor(self._last_font_color), self)
+        dlg.setStyleSheet("")
+        if dlg.exec_() == QColorDialog.Accepted:
+            c = dlg.currentColor().name()
+            self._last_font_color = c
+            self._font_color_btn.setIcon(
+                icons.font_color_icon(28, c))
+            self._apply_font_color(c)
+
+    def _apply_font_color(self, color_hex):
+        for it in self._selected_items():
+            it.setForeground(QColor(color_hex))
+
+    # ── Borders ──────────────────────────────────────────────────────
+    def _apply_border_preset(self, preset):
+        """Apply a border preset to the current selection."""
+        from .cellformat import BorderSpec
+        s = self._active_sheet()
+        if not s:
+            return
+
+        spec = BorderSpec()  # solid black 1px
+
+        for rng in s.table.selectedRanges():
+            top_r = rng.topRow()
+            bot_r = rng.bottomRow()
+            left_c = rng.leftColumn()
+            right_c = rng.rightColumn()
+
+            for r in range(top_r, bot_r + 1):
+                for c in range(left_c, right_c + 1):
+                    sides = {}
+
+                    if preset == "all":
+                        sides = {"top": spec, "bottom": spec,
+                                 "left": spec, "right": spec}
+                    elif preset == "outside":
+                        if r == top_r:
+                            sides["top"] = spec
+                        if r == bot_r:
+                            sides["bottom"] = spec
+                        if c == left_c:
+                            sides["left"] = spec
+                        if c == right_c:
+                            sides["right"] = spec
+                    elif preset == "none":
+                        sides = {"top": None, "bottom": None,
+                                 "left": None, "right": None}
+                    elif preset in ("top", "bottom", "left", "right"):
+                        sides[preset] = spec
+
+                    if sides:
+                        s.set_cell_borders(r, c, sides)
 
     def _update_format_toolbar(self):
         """Sync toolbar widgets with the current cell's formatting."""
