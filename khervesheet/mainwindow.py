@@ -751,48 +751,46 @@ class MainWindow(QMainWindow):
                         for c, w in enumerate(widths):
                             sheet.table.setColumnWidth(c, int(w))
 
-                    # Charts.
+                    # Collect chart data (defer creation until after
+                    # the workbook is installed as central widget so
+                    # the viewport is part of a visible window —
+                    # matplotlib crashes if the parent is off-screen).
                     chart_count = int(sg.attrs.get('chart_count', 0))
-                    if chart_count:
-                        from .graph import EmbeddedChart
-                        if not hasattr(sheet, '_charts'):
-                            sheet._charts = []
-                        viewport = sheet.table.viewport()
-                        for ci in range(chart_count):
-                            cg = sg[f"chart_{ci}"]
-                            series_count = int(
-                                cg.attrs['series_count'])
-                            series = []
-                            for ki in range(series_count):
-                                srg = cg[f"series_{ki}"]
-                                series.append({
-                                    "x": list(srg["x"][:]),
-                                    "y": list(srg["y"][:]),
-                                    "label": srg.attrs['label'],
-                                    "plot_type": srg.attrs[
-                                        'plot_type'],
-                                })
-                            cd = {
-                                "series": series,
-                                "pos_x": int(cg.attrs['pos_x']),
-                                "pos_y": int(cg.attrs['pos_y']),
-                                "width": int(cg.attrs['width']),
-                                "height": int(cg.attrs['height']),
-                                "title": cg.attrs.get('title', ''),
-                                "xlabel": cg.attrs.get(
-                                    'xlabel', 'X'),
-                                "ylabel": cg.attrs.get(
-                                    'ylabel', 'Y'),
-                                "xscale": cg.attrs.get(
-                                    'xscale', 'linear'),
-                                "yscale": cg.attrs.get(
-                                    'yscale', 'linear'),
-                                "grid": bool(cg.attrs.get(
-                                    'grid', False)),
-                            }
-                            chart = EmbeddedChart.from_dict(
-                                cd, sheet, viewport)
-                            sheet._charts.append(chart)
+                    deferred_charts = []
+                    for ci in range(chart_count):
+                        cg = sg[f"chart_{ci}"]
+                        series_count = int(
+                            cg.attrs['series_count'])
+                        series = []
+                        for ki in range(series_count):
+                            srg = cg[f"series_{ki}"]
+                            series.append({
+                                "x": list(srg["x"][:]),
+                                "y": list(srg["y"][:]),
+                                "label": srg.attrs['label'],
+                                "plot_type": srg.attrs[
+                                    'plot_type'],
+                            })
+                        deferred_charts.append({
+                            "series": series,
+                            "pos_x": int(cg.attrs['pos_x']),
+                            "pos_y": int(cg.attrs['pos_y']),
+                            "width": int(cg.attrs['width']),
+                            "height": int(cg.attrs['height']),
+                            "title": cg.attrs.get('title', ''),
+                            "xlabel": cg.attrs.get(
+                                'xlabel', 'X'),
+                            "ylabel": cg.attrs.get(
+                                'ylabel', 'Y'),
+                            "xscale": cg.attrs.get(
+                                'xscale', 'linear'),
+                            "yscale": cg.attrs.get(
+                                'yscale', 'linear'),
+                            "grid": bool(cg.attrs.get(
+                                'grid', False)),
+                        })
+                    if deferred_charts:
+                        sheet._deferred_charts = deferred_charts
 
                 wb.tabs.setCurrentIndex(0)
                 self.setCentralWidget(wb)
@@ -801,6 +799,23 @@ class MainWindow(QMainWindow):
                 self._workbook.tabs.currentChanged.connect(
                     lambda: self._wire_undo_to_sheets())
                 self._undo_stack.clear()
+
+            # Now create charts — workbook is visible and viewports
+            # are valid parents for matplotlib canvases.
+            from .graph import EmbeddedChart
+            for si in range(wb.tabs.count()):
+                sheet = wb.tabs.widget(si)
+                chart_dicts = getattr(sheet, '_deferred_charts', [])
+                if not chart_dicts:
+                    continue
+                if not hasattr(sheet, '_charts'):
+                    sheet._charts = []
+                viewport = sheet.table.viewport()
+                for cd in chart_dicts:
+                    chart = EmbeddedChart.from_dict(
+                        cd, sheet, viewport)
+                    sheet._charts.append(chart)
+                del sheet._deferred_charts
 
             self._status_msg(
                 f"Loaded {path}", 5000)
