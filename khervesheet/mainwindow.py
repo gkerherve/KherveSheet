@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
     QToolBar, QToolButton, QFileDialog, QMessageBox, QProgressBar,
     QSlider, QHBoxLayout, QWidget, QUndoStack, QComboBox,
     QInputDialog, QApplication, QFontComboBox, QPushButton,
-    QWidgetAction, QGridLayout,
+    QWidgetAction, QGridLayout, QDialog,
 )
 
 from . import APP_NAME, __version__
@@ -182,6 +182,13 @@ class MainWindow(QMainWindow):
         format_menu.addSeparator()
         format_menu.addAction("Column Width…", self._format_col_width)
         format_menu.addAction("Row Height…", self._format_row_height)
+        format_menu.addSeparator()
+        fc_act = format_menu.addAction(
+            "Format Cells\u2026\tCtrl+1", self._open_format_cells_dialog)
+        from PyQt5.QtWidgets import QShortcut
+        from PyQt5.QtGui import QKeySequence
+        QShortcut(QKeySequence("Ctrl+1"), self,
+                  self._open_format_cells_dialog)
 
         # ── Formulas ─────────────────────────────────────────────────
         build_formulas_menu(mb, self._insert_function)
@@ -1606,6 +1613,111 @@ class MainWindow(QMainWindow):
             self, "Row Height", "Height (pixels):", cur, 10, 100)
         if ok:
             s.table.verticalHeader().setDefaultSectionSize(h)
+
+    # ── Format Cells dialog ────────────────────────────────────────
+    def _open_format_cells_dialog(self):
+        """Open the Format Cells dialog for the current selection."""
+        from .format_dialog import FormatCellsDialog
+        from .cellformat import CellFormat
+
+        s = self._active_sheet()
+        if not s:
+            return
+
+        ranges = s.table.selectedRanges()
+        if not ranges:
+            r = s.table.currentRow()
+            c = s.table.currentColumn()
+            if r < 0 or c < 0:
+                return
+            from PyQt5.QtWidgets import QTableWidgetSelectionRange
+            ranges = [QTableWidgetSelectionRange(r, c, r, c)]
+
+        first_r = ranges[0].topRow()
+        first_c = ranges[0].leftColumn()
+        cf = s._cell_formats.get((first_r, first_c), CellFormat())
+
+        # Sample value for number format preview.
+        sample = s._shadow.get((first_r, first_c), "")
+        if not sample:
+            it = s.table.item(first_r, first_c)
+            sample = it.text() if it else ""
+
+        # Current number format (cell overrides column).
+        num_fmt = cf.number_format or s._col_formats.get(first_c, "General")
+
+        dlg = FormatCellsDialog(cf, sample, self._PALETTE, num_fmt, self)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+
+        result = dlg.get_result()
+        self._apply_format_cells_result(s, ranges, result)
+
+    def _apply_format_cells_result(self, sheet, ranges, result):
+        """Apply formatting result dict to all cells in *ranges*."""
+        for rng in ranges:
+            for r in range(rng.topRow(), rng.bottomRow() + 1):
+                for c in range(rng.leftColumn(), rng.rightColumn() + 1):
+                    cf = self._cell_fmt(sheet, r, c)
+                    it = sheet.table.item(r, c)
+                    if it is None:
+                        from PyQt5.QtWidgets import QTableWidgetItem
+                        it = QTableWidgetItem("")
+                        sheet.table.setItem(r, c, it)
+
+                    # Number format.
+                    if result.get("number_format") is not None:
+                        nf = result["number_format"]
+                        cf.number_format = nf if nf != "General" else None
+
+                    # Font properties.
+                    f = it.font()
+                    if result.get("bold") is not None:
+                        cf.bold = result["bold"]
+                        f.setBold(result["bold"])
+                    if result.get("italic") is not None:
+                        cf.italic = result["italic"]
+                        f.setItalic(result["italic"])
+                    if result.get("underline") is not None:
+                        cf.underline = result["underline"]
+                        f.setUnderline(result["underline"])
+                    if result.get("font_family") is not None:
+                        cf.font_family = result["font_family"]
+                        f.setFamily(result["font_family"])
+                    if result.get("font_size") is not None:
+                        cf.font_size = result["font_size"]
+                        f.setPointSizeF(result["font_size"])
+                    it.setFont(f)
+
+                    # Font color.
+                    if result.get("font_color") is not None:
+                        cf.font_color = result["font_color"]
+                        it.setForeground(QColor(result["font_color"]))
+
+                    # Alignment.
+                    if result.get("alignment") is not None:
+                        cf.alignment = result["alignment"]
+                        it.setTextAlignment(result["alignment"])
+
+                    # Wrap text.
+                    if result.get("wrap_text") is not None:
+                        cf.wrap_text = result["wrap_text"]
+
+                    # Fill.
+                    if "bg_color" in result:
+                        sheet.set_cell_bg(r, c, result["bg_color"])
+
+                    # Borders.
+                    for side in ("top", "bottom", "left", "right"):
+                        key = f"border_{side}"
+                        if key in result:
+                            setattr(cf, key, result[key])
+
+                    # Clean up empty formats.
+                    if cf.is_empty():
+                        sheet._cell_formats.pop((r, c), None)
+
+        sheet.table.viewport().update()
 
     # ── Formulas ─────────────────────────────────────────────────────
     def _insert_function(self, func_name: str):

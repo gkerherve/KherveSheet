@@ -55,6 +55,8 @@ class CellFormat:
     font_size: Optional[float] = None
     font_color: Optional[str] = None
     alignment: Optional[int] = None
+    number_format: Optional[str] = None
+    wrap_text: Optional[bool] = None
 
     def is_empty(self) -> bool:
         return (self.bg_color is None
@@ -68,7 +70,9 @@ class CellFormat:
                 and self.font_family is None
                 and self.font_size is None
                 and self.font_color is None
-                and self.alignment is None)
+                and self.alignment is None
+                and self.number_format is None
+                and self.wrap_text is None)
 
     def to_dict(self) -> dict:
         d: dict = {}
@@ -92,6 +96,10 @@ class CellFormat:
             d["font_color"] = self.font_color
         if self.alignment is not None:
             d["alignment"] = self.alignment
+        if self.number_format is not None:
+            d["number_format"] = self.number_format
+        if self.wrap_text is not None:
+            d["wrap_text"] = self.wrap_text
         return d
 
     @classmethod
@@ -113,6 +121,8 @@ class CellFormat:
         cf.alignment = d.get("alignment")
         if cf.alignment is not None:
             cf.alignment = int(cf.alignment)
+        cf.number_format = d.get("number_format")
+        cf.wrap_text = d.get("wrap_text")
         return cf
 
 
