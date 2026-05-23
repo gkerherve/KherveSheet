@@ -72,6 +72,8 @@ class EmbeddedChart(QWidget):
         self._legend_long_press_timer.timeout.connect(
             self._on_legend_long_press)
         self._legend_press_pos = None  # global pos at legend press
+        self._legend_drag_origin = None  # global pos when legend drag started
+        self._legend_anchor_start = (0, 0)  # axes-frac coords at drag start
 
         self.setMinimumSize(240, 180)
         self.resize(480, 320)
@@ -130,8 +132,6 @@ class EmbeddedChart(QWidget):
             self._y_cols.append(y_col)
 
         leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
-        if leg:
-            leg.set_draggable(True)
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
         self._canvas.draw_idle()
@@ -358,10 +358,50 @@ class EmbeddedChart(QWidget):
 
     def _on_legend_long_press(self):
         """Timer fired — switch from chart drag to legend drag."""
+        leg = self._ax.get_legend()
+        if leg is None:
+            return
         self._legend_dragging = True
-        # Cancel the in-progress chart drag.
+        self._legend_drag_origin = self._legend_press_pos
+        # Snapshot the legend bbox in axes fraction coords.
+        bbox = leg.get_bbox_to_anchor()
+        if bbox is not None:
+            inv = self._ax.transAxes.inverted()
+            x0, y0 = inv.transform((bbox.x0, bbox.y0))
+            self._legend_anchor_start = (x0, y0)
+        else:
+            self._legend_anchor_start = (0, 0)
+        # Cancel the in-progress chart drag and undo any movement.
+        if self._drag_widget_pos is not None:
+            self.move(self._drag_widget_pos)
         self._drag_origin = None
         self._drag_widget_pos = None
+        self.setCursor(Qt.ClosedHandCursor)
+
+    def _move_legend(self, global_pos):
+        """Manually reposition the legend based on mouse drag delta."""
+        leg = self._ax.get_legend()
+        if leg is None or self._legend_drag_origin is None:
+            return
+        # Compute pixel delta and convert to axes-fraction delta.
+        delta = global_pos - self._legend_drag_origin
+        dx_px, dy_px = delta.x(), delta.y()
+        # Get axes bbox in display (pixel) coords.
+        ax_bbox = self._ax.get_position().transformed(
+            self._figure.transFigure)
+        fig_w, fig_h = self._figure.get_size_inches()
+        dpi = self._figure.dpi
+        ax_w = ax_bbox.width * fig_w * dpi
+        ax_h = ax_bbox.height * fig_h * dpi
+        if ax_w == 0 or ax_h == 0:
+            return
+        dx_frac = dx_px / ax_w
+        dy_frac = -dy_px / ax_h  # Qt Y is inverted vs mpl
+        x0, y0 = self._legend_anchor_start
+        leg.set_bbox_to_anchor(
+            (x0 + dx_frac, y0 + dy_frac),
+            transform=self._ax.transAxes)
+        self._canvas.draw_idle()
 
     # ── Interactive label / axis editing ───────────────────────────
     _SPINE_MAP = {"Bottom": "bottom", "Top": "top",
@@ -608,9 +648,10 @@ class EmbeddedChart(QWidget):
             if self._legend_long_press_timer.isActive():
                 self._legend_long_press_timer.stop()
                 self._legend_press_pos = None
-            # While legend is being dragged, let matplotlib handle it.
+            # While legend is being dragged, move it manually.
             if self._legend_dragging:
-                return False
+                self._move_legend(event.globalPos())
+                return True
             if self._resizing and self._drag_origin is not None:
                 delta = event.globalPos() - self._drag_origin
                 geo = QRect(self._drag_widget_pos)
@@ -656,7 +697,8 @@ class EmbeddedChart(QWidget):
             self._legend_press_pos = None
             if self._legend_dragging:
                 self._legend_dragging = False
-                return False  # let mpl finalize
+                self._legend_drag_origin = None
+                return True
             if self._drag_origin is not None or self._resizing:
                 self._drag_origin = None
                 self._drag_widget_pos = None
@@ -822,9 +864,7 @@ class _ChartWindow(QDialog):
         for s in series:
             EmbeddedChart._plot_one(
                 ax, s["x"], s["y"], s["label"], s["plot_type"])
-        leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
-        if leg:
-            leg.set_draggable(True)
+        ax.legend(loc="best", framealpha=0.8, fontsize=8)
 
         toolbar = NavigationToolbar(canvas, self)
         toolbar.setIconSize(QSize(18, 18))
@@ -1227,9 +1267,7 @@ class PlotDetailsDialog(QDialog):
         ax.set_xscale(self.xscale_combo.currentText())
         ax.set_yscale(self.yscale_combo.currentText())
         if self.legend_check.isChecked():
-            leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
-            if leg:
-                leg.set_draggable(True)
+            ax.legend(loc="best", framealpha=0.8, fontsize=8)
         else:
             leg = ax.get_legend()
             if leg:
@@ -1287,9 +1325,7 @@ class PlotDetailsDialog(QDialog):
 
             # Refresh legend (only include visible series).
             if self.legend_check.isChecked():
-                leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
-                if leg:
-                    leg.set_draggable(True)
+                ax.legend(loc="best", framealpha=0.8, fontsize=8)
 
         chart._canvas.draw_idle()
 
