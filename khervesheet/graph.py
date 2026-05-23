@@ -177,12 +177,25 @@ class EmbeddedChart(QWidget):
         ax = self._ax
         series = []
         for s in self._series:
-            series.append({
+            sd = {
                 "x": list(s["x"]),
                 "y": list(s["y"]),
                 "label": s["label"],
                 "plot_type": s["plot_type"],
-            })
+            }
+            # Fill properties.
+            fm = s.get("fill_mode", "none")
+            if fm != "none":
+                sd["fill_mode"] = fm
+                sd["fill_target"] = s.get("fill_target", 0)
+                sd["fill_color"] = s.get("fill_color", "#1f77b4")
+                sd["fill_alpha"] = s.get("fill_alpha", 0.3)
+            # Visibility.
+            artist = s.get("artist")
+            if artist and hasattr(artist, 'get_visible'):
+                if not artist.get_visible():
+                    sd["visible"] = False
+            series.append(sd)
         d = {
             "series": series,
             "pos_x": self.x(),
@@ -259,6 +272,20 @@ class EmbeddedChart(QWidget):
         if chart._source_sheet and chart._y_cols:
             chart._source_sheet.data_changed.connect(
                 chart._on_data_changed)
+        # Restore fill and visibility per series.
+        for i, sd in enumerate(series):
+            if i >= len(chart._series):
+                break
+            if sd.get("visible") is False:
+                artist = chart._series[i].get("artist")
+                if artist and hasattr(artist, 'set_visible'):
+                    artist.set_visible(False)
+            fm = sd.get("fill_mode", "none")
+            if fm != "none":
+                chart.apply_fill(
+                    i, fm, sd.get("fill_target", 0),
+                    sd.get("fill_color", "#1f77b4"),
+                    sd.get("fill_alpha", 0.3))
         chart._canvas.draw_idle()
         return chart
 
@@ -490,11 +517,17 @@ class EmbeddedChart(QWidget):
         # Remove existing fill for this series.
         self._remove_fill(series_idx)
 
+        # Store fill parameters on the series dict for persistence.
+        s = self._series[series_idx]
+        s["fill_mode"] = fill_mode
+        s["fill_target"] = fill_target_idx
+        s["fill_color"] = fill_color
+        s["fill_alpha"] = fill_alpha
+
         if fill_mode == "none":
             return
 
-        s = self._series[series_idx]
-        x, y = s["x"], s["y"]
+        x, y = np.asarray(s["x"]), np.asarray(s["y"])
 
         if fill_mode == "zero":
             fc = self._ax.fill_between(
@@ -502,8 +535,10 @@ class EmbeddedChart(QWidget):
                 label="_nolegend_")
         elif fill_mode == "series" and 0 <= fill_target_idx < len(self._series):
             t = self._series[fill_target_idx]
-            # Interpolate target to match x
-            y2 = np.interp(x, t["x"], t["y"])
+            tx, ty = np.asarray(t["x"]), np.asarray(t["y"])
+            # Sort target by X so np.interp works correctly.
+            order = np.argsort(tx)
+            y2 = np.interp(x, tx[order], ty[order])
             fc = self._ax.fill_between(
                 x, y, y2, alpha=fill_alpha, color=fill_color,
                 label="_nolegend_")
@@ -1140,20 +1175,24 @@ class PlotDetailsDialog(QDialog):
                 from matplotlib.colors import to_hex
                 self.marker_fill.set_color(to_hex(c))
 
-        # Fill — check if this series already has a fill.
-        fill_found = False
-        for idx, _ in self._chart._fill_artists:
-            if idx == row:
-                fill_found = True
-                break
-        if not fill_found:
-            self.fill_mode.setCurrentIndex(0)
-
-        # Set fill color from line color.
-        if hasattr(artist, 'get_color'):
+        # Fill — restore from series dict.
+        fm = s.get("fill_mode", "none")
+        mode_map = {"none": 0, "zero": 1, "series": 2}
+        self.fill_mode.setCurrentIndex(mode_map.get(fm, 0))
+        self.fill_target.setEnabled(fm == "series")
+        ft = s.get("fill_target", 0)
+        if 0 <= ft < self.fill_target.count():
+            self.fill_target.setCurrentIndex(ft)
+        fc = s.get("fill_color")
+        if fc:
+            self.fill_color.set_color(fc)
+        elif hasattr(artist, 'get_color'):
             c = artist.get_color()
             if isinstance(c, str):
                 self.fill_color.set_color(c)
+        fa = s.get("fill_alpha")
+        if fa is not None:
+            self.fill_alpha.setValue(fa)
 
     @staticmethod
     def _parse_range(range_str):
