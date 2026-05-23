@@ -14,7 +14,7 @@ the Free Software Foundation, either version 3 of the License, or
 
 import numpy as np
 
-from PyQt5.QtCore import Qt, QSize, QPoint, QRect, QEvent, QTimer
+from PyQt5.QtCore import Qt, QSize, QPoint, QRect, QEvent
 from PyQt5.QtGui import QFont, QCursor, QPainter, QPen, QColor
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -65,15 +65,9 @@ class EmbeddedChart(QWidget):
         self._drag_widget_pos = None  # widget pos at drag start
         self._resizing = False
         self._resize_edge = None      # which edges: combination of t/b/l/r
-        self._legend_dragging = False # True while mpl handles legend drag
-        self._legend_long_press_timer = QTimer(self)
-        self._legend_long_press_timer.setSingleShot(True)
-        self._legend_long_press_timer.setInterval(400)  # ms
-        self._legend_long_press_timer.timeout.connect(
-            self._on_legend_long_press)
-        self._legend_press_pos = None  # global pos at legend press
-        self._legend_drag_origin = None  # global pos when legend drag started
-        self._legend_anchor_start = (0, 0)  # axes-frac coords at drag start
+        self._legend_dragging = False
+        self._legend_drag_origin = None
+        self._legend_anchor_start = (0, 0)
 
         self.setMinimumSize(240, 180)
         self.resize(480, 320)
@@ -356,13 +350,13 @@ class EmbeddedChart(QWidget):
         except Exception:
             return False
 
-    def _on_legend_long_press(self):
-        """Timer fired — switch from chart drag to legend drag."""
+    def _start_legend_drag(self, global_pos):
+        """Begin manual legend drag."""
         leg = self._ax.get_legend()
         if leg is None:
             return
         self._legend_dragging = True
-        self._legend_drag_origin = self._legend_press_pos
+        self._legend_drag_origin = global_pos
         # Snapshot the legend bbox in axes fraction coords.
         bbox = leg.get_bbox_to_anchor()
         if bbox is not None:
@@ -371,11 +365,6 @@ class EmbeddedChart(QWidget):
             self._legend_anchor_start = (x0, y0)
         else:
             self._legend_anchor_start = (0, 0)
-        # Cancel the in-progress chart drag and undo any movement.
-        if self._drag_widget_pos is not None:
-            self.move(self._drag_widget_pos)
-        self._drag_origin = None
-        self._drag_widget_pos = None
         self.setCursor(Qt.ClosedHandCursor)
 
     def _move_legend(self, global_pos):
@@ -631,11 +620,10 @@ class EmbeddedChart(QWidget):
                     self._drag_origin = event.globalPos()
                     self._drag_widget_pos = self.geometry()
                     return True   # consumed — resize only
-                # If click is on the legend, start a long-press timer.
-                # Short drag = move chart; long press = move legend.
+                # Click on legend → move legend only (not the chart).
                 if self._hit_legend(event.pos()):
-                    self._legend_press_pos = event.globalPos()
-                    self._legend_long_press_timer.start()
+                    self._start_legend_drag(event.globalPos())
+                    return True  # consumed — legend drag only
                 # Record press for potential drag, but don't consume
                 # so matplotlib can detect double-clicks.
                 self._drag_origin = event.globalPos()
@@ -643,11 +631,6 @@ class EmbeddedChart(QWidget):
             return False  # let matplotlib see the press
 
         if etype == QEvent.MouseMove:
-            # If the long-press timer is still running and we moved,
-            # this is a chart drag — cancel the legend timer.
-            if self._legend_long_press_timer.isActive():
-                self._legend_long_press_timer.stop()
-                self._legend_press_pos = None
             # While legend is being dragged, move it manually.
             if self._legend_dragging:
                 self._move_legend(event.globalPos())
@@ -687,14 +670,12 @@ class EmbeddedChart(QWidget):
                 self.setCursor(cursors.get(edge, Qt.ArrowCursor))
                 return True
             if self._hit_legend(event.pos()):
-                self.setCursor(Qt.ArrowCursor)
+                self.setCursor(Qt.OpenHandCursor)
                 return False
             self.setCursor(Qt.SizeAllCursor)
             return False
 
         if etype == QEvent.MouseButtonRelease:
-            self._legend_long_press_timer.stop()
-            self._legend_press_pos = None
             if self._legend_dragging:
                 self._legend_dragging = False
                 self._legend_drag_origin = None
