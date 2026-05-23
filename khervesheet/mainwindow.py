@@ -25,6 +25,7 @@ from . import APP_NAME, __version__
 from .workbook import WorkbookWidget
 from .sheet import SheetWidget, col_index_to_letter
 from . import icons
+from .formulas import build_formulas_menu
 
 
 class MainWindow(QMainWindow):
@@ -174,6 +175,9 @@ class MainWindow(QMainWindow):
         format_menu.addSeparator()
         format_menu.addAction("Column Width…", self._format_col_width)
         format_menu.addAction("Row Height…", self._format_row_height)
+
+        # ── Formulas ─────────────────────────────────────────────────
+        build_formulas_menu(mb, self._insert_function)
 
         # ── Data ─────────────────────────────────────────────────────
         data_menu = mb.addMenu("&Data")
@@ -1185,6 +1189,18 @@ class MainWindow(QMainWindow):
             self, "Row Height", "Height (pixels):", cur, 10, 100)
         if ok:
             s.table.verticalHeader().setDefaultSectionSize(h)
+
+    # ── Formulas ─────────────────────────────────────────────────────
+    def _insert_function(self, func_name: str):
+        """Insert ``=FUNC()`` into the active sheet's formula bar."""
+        s = self._active_sheet()
+        if not s:
+            return
+        bar = s._formula_bar
+        bar.setText(f"={func_name}()")
+        bar.setFocus()
+        # Place cursor between the parentheses.
+        bar.setCursorPosition(len(bar.text()) - 1)
 
     # ── Data operations ──────────────────────────────────────────────
     def _set_designation(self, desig: str):
