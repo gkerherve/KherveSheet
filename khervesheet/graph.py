@@ -48,7 +48,7 @@ class EmbeddedChart(QWidget):
     """A matplotlib chart that lives as a child of the grid viewport."""
 
     def __init__(self, x, y, label, plot_type, source_sheet=None,
-                 parent=None):
+                 parent=None, x_col=None, y_col=None):
         # Parent must be the table viewport so we paint over the grid.
         super().__init__(parent)
         self.setMouseTracking(True)
@@ -56,12 +56,16 @@ class EmbeddedChart(QWidget):
         self._series = []
         self._fill_artists = []  # fill_between patches
         self._axis_props = {}    # persisted axis dialog state
+        # Source column indices for live data updates.
+        self._x_col = x_col      # None means row-index X
+        self._y_cols = []         # populated by add_series
 
         # Dragging / resizing state.
         self._drag_origin = None      # mouse pos at drag start
         self._drag_widget_pos = None  # widget pos at drag start
         self._resizing = False
         self._resize_edge = None      # which edges: combination of t/b/l/r
+        self._legend_dragging = False # True while mpl handles legend drag
 
         self.setMinimumSize(240, 180)
         self.resize(480, 320)
@@ -88,7 +92,7 @@ class EmbeddedChart(QWidget):
         self._canvas.mpl_connect("button_press_event", self._on_canvas_click)
 
         # Add the initial series.
-        self.add_series(x, y, label, plot_type)
+        self.add_series(x, y, label, plot_type, y_col=y_col)
 
         try:
             self._figure.set_layout_engine("tight")
@@ -108,7 +112,7 @@ class EmbeddedChart(QWidget):
         self.raise_()
 
     # ── Series management ───────────────────────────────────────────
-    def add_series(self, x, y, label, plot_type="Line"):
+    def add_series(self, x, y, label, plot_type="Line", y_col=None):
         ax = self._ax
         artist = self._plot_one(ax, x, y, label, plot_type)
 
@@ -116,6 +120,8 @@ class EmbeddedChart(QWidget):
             "x": x, "y": y, "label": label,
             "plot_type": plot_type, "artist": artist,
         })
+        if y_col is not None:
+            self._y_cols.append(y_col)
 
         leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
         if leg:
@@ -189,6 +195,10 @@ class EmbeddedChart(QWidget):
         }
         if self._axis_props:
             d["axis_props"] = self._axis_props
+        if self._x_col is not None:
+            d["x_col"] = self._x_col
+        if self._y_cols:
+            d["y_cols"] = self._y_cols
         return d
 
     @classmethod
@@ -237,12 +247,23 @@ class EmbeddedChart(QWidget):
             except ValueError:
                 pass
             ax.grid(d.get("grid", False))
+        # Restore source column mapping for live updates.
+        chart._x_col = d.get("x_col")
+        chart._y_cols = d.get("y_cols", [])
+        if chart._source_sheet and chart._y_cols:
+            chart._source_sheet.data_changed.connect(
+                chart._on_data_changed)
         chart._canvas.draw_idle()
         return chart
 
     # ── Close ───────────────────────────────────────────────────────
     def _close_chart(self):
         if self._source_sheet:
+            try:
+                self._source_sheet.data_changed.disconnect(
+                    self._on_data_changed)
+            except (TypeError, RuntimeError):
+                pass
             if hasattr(self._source_sheet, '_charts'):
                 try:
                     self._source_sheet._charts.remove(self)
@@ -251,6 +272,56 @@ class EmbeddedChart(QWidget):
             if getattr(self._source_sheet, '_selected_chart', None) is self:
                 self._source_sheet._selected_chart = None
         self.deleteLater()
+
+    # ── Live data update ─────────────────────────────────────────────
+    def _on_data_changed(self, col: int):
+        """Re-read source data and refresh the chart when a plotted
+        column changes on the sheet."""
+        if not self._source_sheet:
+            return
+        # Check if this column is one we care about.
+        relevant = (col == self._x_col) or (col in self._y_cols)
+        if not relevant:
+            return
+        sheet = self._source_sheet
+        # Re-read X data.
+        if self._x_col is not None:
+            x_data = sheet.numeric_column(self._x_col)
+        else:
+            x_data = np.arange(sheet.row_count(), dtype=float)
+        # Update each series.
+        for i, (s, yc) in enumerate(
+                zip(self._series, self._y_cols)):
+            y_data = sheet.numeric_column(yc)
+            mask = ~(np.isnan(x_data) | np.isnan(y_data))
+            x = x_data[mask]
+            y = y_data[mask]
+            s["x"], s["y"] = x, y
+            artist = s.get("artist")
+            if artist is None:
+                continue
+            if hasattr(artist, 'set_data'):
+                artist.set_data(x, y)
+            elif hasattr(artist, 'set_offsets'):
+                artist.set_offsets(np.column_stack([x, y]))
+        self._ax.relim()
+        self._ax.autoscale_view()
+        self._canvas.draw_idle()
+
+    # ── Legend hit testing ─────────────────────────────────────────────
+    def _hit_legend(self, event_pos):
+        """Return True if *event_pos* (canvas-local QPoint) is over the
+        legend artist."""
+        leg = self._ax.get_legend()
+        if leg is None or not leg.get_visible():
+            return False
+        try:
+            # Transform canvas-local Qt coords → matplotlib display coords.
+            cx, cy = event_pos.x(), self._canvas.height() - event_pos.y()
+            bbox = leg.get_window_extent()
+            return bbox.contains(cx, cy)
+        except Exception:
+            return False
 
     # ── Interactive label / axis editing ───────────────────────────
     _SPINE_MAP = {"Bottom": "bottom", "Top": "top",
@@ -472,6 +543,11 @@ class EmbeddedChart(QWidget):
                     self._drag_origin = event.globalPos()
                     self._drag_widget_pos = self.geometry()
                     return True   # consumed — resize only
+                # If click is on the legend, let matplotlib handle the
+                # drag — don't start a chart move.
+                if self._hit_legend(event.pos()):
+                    self._legend_dragging = True
+                    return False  # let mpl handle it
                 # Record press for potential drag, but don't consume
                 # so matplotlib can detect double-clicks.
                 self._drag_origin = event.globalPos()
@@ -479,6 +555,9 @@ class EmbeddedChart(QWidget):
             return False  # let matplotlib see the press
 
         if etype == QEvent.MouseMove:
+            # While legend is being dragged, let matplotlib handle it.
+            if self._legend_dragging:
+                return False
             if self._resizing and self._drag_origin is not None:
                 delta = event.globalPos() - self._drag_origin
                 geo = QRect(self._drag_widget_pos)
@@ -513,10 +592,16 @@ class EmbeddedChart(QWidget):
                 }
                 self.setCursor(cursors.get(edge, Qt.ArrowCursor))
                 return True
+            if self._hit_legend(event.pos()):
+                self.setCursor(Qt.ArrowCursor)
+                return False
             self.setCursor(Qt.SizeAllCursor)
             return False
 
         if etype == QEvent.MouseButtonRelease:
+            if self._legend_dragging:
+                self._legend_dragging = False
+                return False  # let mpl finalize
             if self._drag_origin is not None or self._resizing:
                 self._drag_origin = None
                 self._drag_widget_pos = None

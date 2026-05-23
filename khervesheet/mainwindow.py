@@ -1662,14 +1662,18 @@ class MainWindow(QMainWindow):
                 # the grid cells, just like Excel.
                 viewport = sheet.table.viewport()
                 chart = EmbeddedChart(
-                    x, y, label, plot_type, sheet, viewport)
+                    x, y, label, plot_type, sheet, viewport,
+                    x_col=x_col, y_col=yc)
                 # Position at a visible spot, offset by existing charts.
                 offset = len(sheet._charts) * 30
                 chart.move(40 + offset, 40 + offset)
                 sheet._charts.append(chart)
+                # Connect data change signal for live updates.
+                sheet.data_changed.connect(chart._on_data_changed)
                 first_chart = chart
             else:
-                first_chart.add_series(x, y, label, plot_type)
+                first_chart.add_series(x, y, label, plot_type,
+                                       y_col=yc)
 
         self._status_msg(
             f"Created {plot_type} chart", 3000)
