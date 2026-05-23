@@ -384,6 +384,7 @@ class SheetWidget(QWidget):
         # Signals
         self.table.cellChanged.connect(self._on_cell_changed)
         self.table.currentCellChanged.connect(self._on_current_cell_changed)
+        self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
 
         # ── Drag-fill state ──────────────────────────────────────────
         self._fill_dragging = False
@@ -538,12 +539,17 @@ class SheetWidget(QWidget):
         formula = self._cell_formulas.get((row, col))
         if formula:
             self._formula_bar.setText(formula)
-            # Show ref highlights for existing formulas when selected.
-            if not self._formula_bar.hasFocus():
-                self._update_ref_highlights(formula)
         else:
             it = self.table.item(row, col)
             self._formula_bar.setText(it.text() if it else "")
+
+    def _on_cell_double_clicked(self, row, col):
+        """Show formula ref highlights when entering edit mode."""
+        formula = self._cell_formulas.get((row, col))
+        if formula:
+            self._update_ref_highlights(formula)
+            # Show the formula in the formula bar.
+            self._formula_bar.setText(formula)
 
     # ── Cell editing ─────────────────────────────────────────────────
     def _on_cell_changed(self, row, col):
@@ -1614,6 +1620,12 @@ class SheetWidget(QWidget):
         return True
 
     def eventFilter(self, obj, event):
+        # ── Formula bar focus-in: show highlights for existing formula ──
+        if obj is self._formula_bar and event.type() == QEvent.FocusIn:
+            text = self._formula_bar.text()
+            if text.startswith("="):
+                self._update_ref_highlights(text)
+
         # ── Formula bar arrow key interception ───────────────────
         if obj is self._formula_bar and event.type() == QEvent.KeyPress:
             key = event.key()
