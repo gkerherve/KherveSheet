@@ -59,6 +59,39 @@ def letter_to_col_index(letters: str) -> int:
     return result - 1
 
 
+def shift_formula(formula: str, d_row: int, d_col: int) -> str:
+    """Shift cell references in *formula* by (d_row, d_col).
+
+    Handles Excel-style absolute references:
+      $A$1 — both fixed    $A1 — column fixed    A$1 — row fixed
+      A1   — both relative
+    """
+    import re
+
+    def _shift(m):
+        dollar_col = m.group(1) or ""   # '$' or ''
+        letters = m.group(2)
+        dollar_row = m.group(3) or ""   # '$' or ''
+        row_num = int(m.group(4))
+
+        if not dollar_col:
+            new_col = letter_to_col_index(letters) + d_col
+            if new_col < 0:
+                new_col = 0
+            letters = col_index_to_letter(new_col)
+        if not dollar_row:
+            row_num += d_row
+            if row_num < 1:
+                row_num = 1
+
+        return f"{dollar_col}{letters}{dollar_row}{row_num}"
+
+    # Match optional $ before letters and optional $ before digits.
+    return re.sub(
+        r'(\$?)([A-Z]+)(\$?)(\d+)',
+        _shift, formula, flags=re.IGNORECASE)
+
+
 # ── Cell format storage ──────────────────────────────────────────────
 def _format_value(raw: str, fmt: str) -> str:
     """Display-format a raw cell value according to the format string."""
@@ -784,28 +817,66 @@ class SheetWidget(QWidget):
         if fill_end <= src_bot:
             return
 
+        src_len = src_bot - src_top + 1
         changes = []
         self.table.blockSignals(True)
         try:
             for c in range(s.leftColumn(), s.rightColumn() + 1):
+                # Check if any source cell has a formula.
+                formulas = []
                 vals = []
                 for r in range(src_top, src_bot + 1):
                     it = self.table.item(r, c)
                     vals.append(it.text() if it else "")
-                pattern = self._detect_pattern(vals)
-                for r in range(src_bot + 1, fill_end + 1):
-                    idx = r - src_top
-                    text = self._pattern_value(pattern, idx, vals)
-                    it = self.table.item(r, c)
-                    old = it.text() if it else ""
-                    if it is None:
-                        it = QTableWidgetItem(text)
-                        self.table.setItem(r, c, it)
-                    else:
-                        it.setText(text)
-                    self._shadow[(r, c)] = text
-                    if old != text:
-                        changes.append((r, c, old, text))
+                    formulas.append(
+                        self._cell_formulas.get((r, c)))
+
+                has_formulas = any(f is not None for f in formulas)
+
+                if has_formulas:
+                    # Formula fill: shift cell references.
+                    for r in range(src_bot + 1, fill_end + 1):
+                        src_idx = (r - src_top) % src_len
+                        src_r = src_top + src_idx
+                        f = formulas[src_idx]
+                        if f:
+                            d_row = r - src_r
+                            shifted = shift_formula(f, d_row, 0)
+                            self._cell_formulas[(r, c)] = shifted
+                            result = self._evaluate_formula(
+                                shifted, r, c)
+                            text = str(result)
+                        else:
+                            text = vals[src_idx]
+                            self._cell_formulas.pop((r, c), None)
+
+                        it = self.table.item(r, c)
+                        old = it.text() if it else ""
+                        if it is None:
+                            it = QTableWidgetItem(text)
+                            self.table.setItem(r, c, it)
+                        else:
+                            it.setText(text)
+                        self._shadow[(r, c)] = text
+                        if old != text:
+                            changes.append((r, c, old, text))
+                else:
+                    # Value fill: detect numeric patterns.
+                    pattern = self._detect_pattern(vals)
+                    for r in range(src_bot + 1, fill_end + 1):
+                        idx = r - src_top
+                        text = self._pattern_value(
+                            pattern, idx, vals)
+                        it = self.table.item(r, c)
+                        old = it.text() if it else ""
+                        if it is None:
+                            it = QTableWidgetItem(text)
+                            self.table.setItem(r, c, it)
+                        else:
+                            it.setText(text)
+                        self._shadow[(r, c)] = text
+                        if old != text:
+                            changes.append((r, c, old, text))
         finally:
             self.table.blockSignals(False)
         if changes and self._undo_stack:
