@@ -39,6 +39,12 @@ class MainWindow(QMainWindow):
     # ── UI setup ─────────────────────────────────────────────────────
     def _init_ui(self):
         self.resize(1280, 800)
+        # Centre the window on screen.
+        screen = QApplication.primaryScreen()
+        if screen:
+            sg = screen.availableGeometry()
+            self.move((sg.width() - 1280) // 2,
+                      (sg.height() - 800) // 2)
 
         # Central widget: workbook with sheet tabs
         self._workbook = WorkbookWidget()

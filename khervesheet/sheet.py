@@ -397,26 +397,44 @@ class SheetWidget(QWidget):
 
     # ── Formula evaluation (basic) ───────────────────────────────────
     def _evaluate_formula(self, formula: str, row: int, col: int):
-        """Evaluate a cell formula. Basic implementation — will be
-        extended by formula_engine.py."""
+        """Evaluate a cell formula.
+
+        Supports:
+        - Cell refs: A1, b5, AA12 (case-insensitive)
+        - Arithmetic: A1+5, A1*A3, A1^2, A1**2
+        - Range functions: SUM(A1:A10), AVERAGE(B1:B20)
+        - Whole-column functions: max(A), min(B), mean(A),
+          sum(C), average(A), count(A)
+        - Math: abs, round, int, float, math.*, np.*
+        """
         expr = formula[1:]  # strip leading =
         try:
-            # Simple math evaluation with numpy
             import math
+            import re
+
+            def _mean(vals):
+                v = list(vals)
+                return sum(v) / len(v) if v else 0
+
             ns = {"__builtins__": {}, "math": math, "np": np,
                   "abs": abs, "round": round, "int": int, "float": float,
-                  "sum": sum, "min": min, "max": max, "len": len}
+                  "sum": sum, "min": min, "max": max, "len": len,
+                  "mean": _mean, "avg": _mean,
+                  "PI": math.pi, "pi": math.pi,
+                  "sqrt": math.sqrt, "log": math.log,
+                  "log10": math.log10, "exp": math.exp,
+                  "sin": math.sin, "cos": math.cos, "tan": math.tan}
 
-            # Expand SUM(A1:A10) BEFORE replacing individual cell refs,
-            # otherwise A1 inside the range gets resolved first and
-            # the range regex can't match.
-            import re
+            # 1. Expand range functions: SUM(A1:A10)
             expr = self._expand_range_functions(expr)
 
-            # Replace remaining cell refs like A1, B5 with values
+            # 2. Expand whole-column functions: max(A), min(B), etc.
+            expr = self._expand_column_functions(expr)
+
+            # 3. Replace cell refs like A1, B5 with numeric values.
             def _cell_ref(m):
                 letters = m.group(1)
-                rnum = int(m.group(2)) - 1  # 0-based row
+                rnum = int(m.group(2)) - 1
                 c = letter_to_col_index(letters)
                 it = self.table.item(rnum, c)
                 if it and it.text():
@@ -426,8 +444,24 @@ class SheetWidget(QWidget):
                         return "0"
                 return "0"
 
-            expr = re.sub(r'\b([A-Z]+)(\d+)\b', _cell_ref, expr,
-                          flags=re.IGNORECASE)
+            # Match cell refs: 1-3 letters + digits (A1, AB12, etc.)
+            # but not known functions like log10, exp2.
+            _SKIP = {"log", "exp", "sin", "cos", "tan", "sqrt",
+                     "abs", "int", "sum", "min", "max", "len",
+                     "avg", "mean", "count", "stdev", "round",
+                     "float", "math", "PI", "pi", "np"}
+
+            def _safe_cell_ref(m):
+                name = m.group(1)
+                if name.lower() in {s.lower() for s in _SKIP}:
+                    return m.group(0)
+                return _cell_ref(m)
+
+            expr = re.sub(r'\b([A-Za-z]{1,3})(\d+)\b',
+                          _safe_cell_ref, expr)
+
+            # 4. Replace ^ with ** for exponentiation.
+            expr = expr.replace("^", "**")
 
             result = eval(expr, ns)  # noqa: S307
             if isinstance(result, float):
@@ -461,21 +495,73 @@ class SheetWidget(QWidget):
                         except ValueError:
                             pass
 
-            if func == "sum":
+            if func in ("sum",):
                 return str(sum(vals)) if vals else "0"
-            elif func == "average":
-                return str(sum(vals) / len(vals)) if vals else "0"
+            elif func in ("average", "avg", "mean"):
+                return (str(sum(vals) / len(vals))
+                        if vals else "0")
             elif func == "min":
                 return str(min(vals)) if vals else "0"
             elif func == "max":
                 return str(max(vals)) if vals else "0"
             elif func == "count":
                 return str(len(vals))
+            elif func == "stdev":
+                if len(vals) < 2:
+                    return "0"
+                m_ = sum(vals) / len(vals)
+                return str((sum((v - m_)**2 for v in vals)
+                            / (len(vals) - 1)) ** 0.5)
             return m.group(0)
 
-        pattern = (r'(SUM|AVERAGE|MIN|MAX|COUNT)\s*\(\s*'
+        pattern = (r'(SUM|AVERAGE|AVG|MEAN|MIN|MAX|COUNT|STDEV)'
+                   r'\s*\(\s*'
                    r'([A-Z]+)(\d+)\s*:\s*([A-Z]+)(\d+)\s*\)')
-        return re.sub(pattern, _expand_range, expr, flags=re.IGNORECASE)
+        return re.sub(pattern, _expand_range, expr,
+                      flags=re.IGNORECASE)
+
+    def _expand_column_functions(self, expr: str) -> str:
+        """Expand whole-column functions like max(A), min(B),
+        mean(A), sum(C), average(A), count(A)."""
+        import re
+
+        def _expand_col(m):
+            func = m.group(1).lower()
+            col_letter = m.group(2).upper()
+            c = letter_to_col_index(col_letter)
+            vals = []
+            for r in range(self.row_count()):
+                it = self.table.item(r, c)
+                if it and it.text():
+                    try:
+                        vals.append(float(it.text()))
+                    except ValueError:
+                        pass
+
+            if func in ("sum",):
+                return str(sum(vals)) if vals else "0"
+            elif func in ("average", "avg", "mean"):
+                return (str(sum(vals) / len(vals))
+                        if vals else "0")
+            elif func == "min":
+                return str(min(vals)) if vals else "0"
+            elif func == "max":
+                return str(max(vals)) if vals else "0"
+            elif func == "count":
+                return str(len(vals))
+            elif func == "stdev":
+                if len(vals) < 2:
+                    return "0"
+                m_ = sum(vals) / len(vals)
+                return str((sum((v - m_)**2 for v in vals)
+                            / (len(vals) - 1)) ** 0.5)
+            return m.group(0)
+
+        # Match func(A) where A is one or more letters (no digit).
+        pattern = (r'(SUM|AVERAGE|AVG|MEAN|MIN|MAX|COUNT|STDEV)'
+                   r'\s*\(\s*([A-Z]+)\s*\)')
+        return re.sub(pattern, _expand_col, expr,
+                      flags=re.IGNORECASE)
 
     # ── Plot types ───────────────────────────────────────────────────
     PLOT_TYPES = [
