@@ -32,7 +32,11 @@ class MainWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._current_file = None
-        self._recent_files: list = []
+        self._settings = __import__(
+            'PyQt5.QtCore', fromlist=['QSettings']).QSettings(
+            "KherveSheet", "KherveSheet")
+        self._recent_files: list = (
+            self._settings.value("recent_files", []) or [])
         self._undo_stack = QUndoStack(self)
         self._init_ui()
 
@@ -797,6 +801,7 @@ class MainWindow(QMainWindow):
             self._recent_files.remove(path)
         self._recent_files.insert(0, path)
         self._recent_files = self._recent_files[:12]
+        self._settings.setValue("recent_files", self._recent_files)
         self._rebuild_recent_menu()
 
     def _rebuild_recent_menu(self):
