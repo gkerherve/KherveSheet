@@ -708,6 +708,7 @@ class SheetWidget(QWidget):
         next_row = row + 1
         if next_row < self.row_count():
             self.table.setCurrentCell(next_row, col)
+        self.table.setFocus()
 
     # ── Formula reference highlighting ─────────────────────────────
     _REF_PATTERN = None  # compiled lazily
