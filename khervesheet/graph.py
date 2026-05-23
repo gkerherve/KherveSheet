@@ -29,7 +29,6 @@ from matplotlib.backends.backend_qt5agg import (
     NavigationToolbar2QT as NavigationToolbar,
 )
 from matplotlib.figure import Figure
-import matplotlib.ticker as mticker
 
 
 # ── Plot defaults ───────────────────────────────────────────────────
@@ -187,6 +186,8 @@ class EmbeddedChart(QWidget):
             "yscale": ax.get_yscale(),
             "grid": (ax.xaxis.get_gridlines()[0].get_visible()
                      if ax.xaxis.get_gridlines() else False),
+            "top_label": getattr(self, '_top_label_text', ''),
+            "right_label": getattr(self, '_right_label_text', ''),
         }
 
     @classmethod
@@ -208,6 +209,19 @@ class EmbeddedChart(QWidget):
         ax.set_title(d.get("title", ""))
         ax.set_xlabel(d.get("xlabel", "X"))
         ax.set_ylabel(d.get("ylabel", "Y"))
+        # Secondary labels (top / right).
+        top_lbl = d.get("top_label", "")
+        right_lbl = d.get("right_label", "")
+        if top_lbl:
+            chart._top_label_text = top_lbl
+            from .axis_dialog import AxisPropertiesDialog
+            AxisPropertiesDialog._set_secondary_label(
+                chart, "top", top_lbl, {"fontsize": 10})
+        if right_lbl:
+            chart._right_label_text = right_lbl
+            from .axis_dialog import AxisPropertiesDialog
+            AxisPropertiesDialog._set_secondary_label(
+                chart, "right", right_lbl, {"fontsize": 10})
         try:
             ax.set_xscale(d.get("xscale", "linear"))
             ax.set_yscale(d.get("yscale", "linear"))
@@ -361,6 +375,7 @@ class EmbeddedChart(QWidget):
 
     # ── Axis properties dialog ─────────────────────────────────────
     def _open_axis_dialog(self, side):
+        from .axis_dialog import AxisPropertiesDialog
         dlg = AxisPropertiesDialog(self, side)
         if dlg.exec_() == QDialog.Accepted:
             dlg.apply_to_chart(self)
@@ -377,16 +392,22 @@ class EmbeddedChart(QWidget):
         xm.addAction("Linear", lambda: self._set_scale("x", "linear"))
         xm.addAction("Log\u2081\u2080",
                       lambda: self._set_scale("x", "log"))
-        xm.addAction("Properties\u2026",
+        xm.addSeparator()
+        xm.addAction("Bottom Axis\u2026",
                       lambda: self._open_axis_dialog("Bottom"))
+        xm.addAction("Top Axis\u2026",
+                      lambda: self._open_axis_dialog("Top"))
 
         # Y Axis submenu
         ym = menu.addMenu("Y Axis")
         ym.addAction("Linear", lambda: self._set_scale("y", "linear"))
         ym.addAction("Log\u2081\u2080",
                       lambda: self._set_scale("y", "log"))
-        ym.addAction("Properties\u2026",
+        ym.addSeparator()
+        ym.addAction("Left Axis\u2026",
                       lambda: self._open_axis_dialog("Left"))
+        ym.addAction("Right Axis\u2026",
+                      lambda: self._open_axis_dialog("Right"))
 
         menu.addSeparator()
         menu.addAction("Pop Out to Window", self._pop_out)
@@ -679,189 +700,6 @@ class ChartPropertiesDialog(QDialog):
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         form.addRow(bb)
-
-
-# ── Axis Properties Dialog ─────────────────────────────────────────
-
-from PyQt5.QtWidgets import (
-    QSplitter, QListWidget, QListWidgetItem, QTabWidget,
-    QSpinBox, QDoubleSpinBox, QStackedWidget, QGroupBox,
-    QGridLayout, QColorDialog,
-)
-
-
-class AxisPropertiesDialog(QDialog):
-    """Per-axis dialog: scale, major/minor ticks, show/hide."""
-
-    _AXIS_LABEL = {
-        "Bottom": "X Axis (Bottom)",
-        "Top": "X Axis (Top)",
-        "Left": "Y Axis (Left)",
-        "Right": "Y Axis (Right)",
-    }
-
-    def __init__(self, chart, side, parent=None):
-        super().__init__(parent or chart)
-        self._chart = chart
-        self._side = side
-        ax = chart._ax
-
-        self.setWindowTitle(self._AXIS_LABEL.get(side, side))
-        self.resize(380, 340)
-
-        form = QFormLayout(self)
-
-        # Determine which matplotlib axis object we're editing.
-        is_x = side in ("Bottom", "Top")
-        self._is_x = is_x
-        self._mpl_axis = ax.xaxis if is_x else ax.yaxis
-
-        # Show / hide spine
-        spine_key = {"Bottom": "bottom", "Top": "top",
-                     "Left": "left", "Right": "right"}[side]
-        self._spine_key = spine_key
-        self.show_spine = QCheckBox("Show axis")
-        self.show_spine.setChecked(ax.spines[spine_key].get_visible())
-        form.addRow(self.show_spine)
-
-        # Show tick labels on this side
-        self.show_ticks = QCheckBox("Show tick labels")
-        if is_x:
-            self.show_ticks.setChecked(
-                side == "Bottom" and ax.xaxis.get_label_position() != "top"
-                or side == "Top" and ax.xaxis.get_label_position() == "top")
-        else:
-            self.show_ticks.setChecked(
-                side == "Left" and ax.yaxis.get_label_position() != "right"
-                or side == "Right" and ax.yaxis.get_label_position() == "right")
-        form.addRow(self.show_ticks)
-
-        # Scale
-        self.scale_combo = QComboBox()
-        self.scale_combo.addItems(["linear", "log", "symlog"])
-        cur = ax.get_xscale() if is_x else ax.get_yscale()
-        self.scale_combo.setCurrentText(cur)
-        form.addRow("Scale:", self.scale_combo)
-
-        form.addRow(QLabel(""))  # spacer
-
-        # ── Major ticks ────────────────────────────────────────────
-        form.addRow(QLabel("<b>Major Ticks</b>"))
-
-        self.major_show = QCheckBox("Show")
-        self.major_show.setChecked(True)
-        major_ticks = (self._mpl_axis.get_major_ticks() or [None])
-        if major_ticks and major_ticks[0]:
-            tk = major_ticks[0]
-            vis = (tk.tick1line.get_visible()
-                   if hasattr(tk, 'tick1line') else True)
-            self.major_show.setChecked(vis)
-        form.addRow(self.major_show)
-
-        self.major_count = QSpinBox()
-        self.major_count.setRange(2, 50)
-        self.major_count.setValue(self._guess_tick_count(major=True))
-        self.major_count.setToolTip("Approximate number of major ticks")
-        form.addRow("Count:", self.major_count)
-
-        # ── Minor ticks ────────────────────────────────────────────
-        form.addRow(QLabel("<b>Minor Ticks</b>"))
-
-        self.minor_show = QCheckBox("Show")
-        minor_on = bool(self._mpl_axis.get_minor_ticks())
-        # Check if minor locator is a NullLocator (= hidden).
-        loc = self._mpl_axis.get_minor_locator()
-        if isinstance(loc, mticker.NullLocator):
-            minor_on = False
-        self.minor_show.setChecked(minor_on)
-        form.addRow(self.minor_show)
-
-        self.minor_count = QSpinBox()
-        self.minor_count.setRange(1, 20)
-        self.minor_count.setValue(5)
-        self.minor_count.setToolTip("Minor divisions per major interval")
-        form.addRow("Subdivisions:", self.minor_count)
-
-        # Footer
-        bb = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept)
-        bb.rejected.connect(self.reject)
-        form.addRow(bb)
-
-    def _guess_tick_count(self, major=True):
-        ticks = (self._mpl_axis.get_majorticklocs()
-                 if major else self._mpl_axis.get_minorticklocs())
-        return max(2, len(ticks))
-
-    def apply_to_chart(self, chart):
-        ax = chart._ax
-
-        # Scale
-        scale = self.scale_combo.currentText()
-        try:
-            if self._is_x:
-                ax.set_xscale(scale)
-            else:
-                ax.set_yscale(scale)
-        except ValueError:
-            pass
-
-        # Spine visibility
-        ax.spines[self._spine_key].set_visible(self.show_spine.isChecked())
-
-        # Tick labels
-        if self.show_ticks.isChecked():
-            if self._side == "Top":
-                ax.xaxis.set_tick_params(
-                    which='both', top=True, labeltop=True)
-            elif self._side == "Right":
-                ax.yaxis.set_tick_params(
-                    which='both', right=True, labelright=True)
-        else:
-            if self._side == "Top":
-                ax.xaxis.set_tick_params(
-                    which='both', top=False, labeltop=False)
-            elif self._side == "Bottom":
-                ax.xaxis.set_tick_params(
-                    which='both', bottom=False, labelbottom=False)
-            elif self._side == "Right":
-                ax.yaxis.set_tick_params(
-                    which='both', right=False, labelright=False)
-            elif self._side == "Left":
-                ax.yaxis.set_tick_params(
-                    which='both', left=False, labelleft=False)
-
-        # Major ticks
-        if self.major_show.isChecked():
-            n = self.major_count.value()
-            if self._is_x:
-                ax.xaxis.set_major_locator(mticker.MaxNLocator(nbins=n))
-            else:
-                ax.yaxis.set_major_locator(mticker.MaxNLocator(nbins=n))
-        else:
-            if self._is_x:
-                ax.xaxis.set_major_locator(mticker.NullLocator())
-            else:
-                ax.yaxis.set_major_locator(mticker.NullLocator())
-
-        # Minor ticks
-        if self.minor_show.isChecked():
-            n = self.minor_count.value()
-            if self._is_x:
-                ax.xaxis.set_minor_locator(
-                    mticker.AutoMinorLocator(n))
-            else:
-                ax.yaxis.set_minor_locator(
-                    mticker.AutoMinorLocator(n))
-            ax.tick_params(which='minor', length=3)
-        else:
-            if self._is_x:
-                ax.xaxis.set_minor_locator(mticker.NullLocator())
-            else:
-                ax.yaxis.set_minor_locator(mticker.NullLocator())
-
-        chart._canvas.draw_idle()
 
 
 # ── Plot Details Dialog ─────────────────────────────────────────────
