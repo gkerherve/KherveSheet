@@ -36,7 +36,7 @@ _DEFAULT_LINEWIDTH = 1.0
 _DEFAULT_MARKERSIZE = 3.0
 
 # Resize handle size in pixels.
-_HANDLE = 8
+_HANDLE = 6
 
 # Module-level clipboard for chart cut/copy/paste.
 _chart_clipboard = None
@@ -65,7 +65,7 @@ class EmbeddedChart(QWidget):
 
         # ── Layout ──────────────────────────────────────────────────
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(0)
 
         # Matplotlib figure — no title bar, just the plot.
