@@ -169,6 +169,34 @@ class BulkCellEditCmd(QUndoCommand):
         self.sheet.table.blockSignals(False)
 
 
+def _format_number(value):
+    """Format a numeric result for cell display.
+
+    Rules:
+    - Integers display without decimals: 2, 100, -5
+    - Floats show up to 3 decimal places by default, trailing zeros
+      stripped: 3.14, 0.5, 2 (not 2.000)
+    - If the number has meaningful precision beyond 3 decimals, show
+      all significant digits up to 10: 3.14159265
+    - Non-numeric results pass through unchanged.
+    """
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, int):
+        return value
+    if not isinstance(value, float):
+        return value
+    # Exact integer floats.
+    if value == int(value) and abs(value) < 1e15:
+        return int(value)
+    # Round to 10 significant decimals to remove float noise.
+    rounded = round(value, 10)
+    # Format with up to 10 decimals, then strip trailing zeros.
+    s = f"{rounded:.10f}"
+    s = s.rstrip("0").rstrip(".")
+    return s
+
+
 # ── SheetWidget ──────────────────────────────────────────────────────
 class SheetWidget(QWidget):
     """A single Excel-style spreadsheet grid."""
@@ -407,6 +435,18 @@ class SheetWidget(QWidget):
         else:
             self._cell_formulas.pop((row, col), None)
             self._unregister_deps(row, col)
+            # Format plain numbers (strip trailing zeros).
+            if new_text:
+                try:
+                    v = float(new_text)
+                    formatted = str(_format_number(v))
+                    if formatted != new_text:
+                        self.table.blockSignals(True)
+                        it.setText(formatted)
+                        self.table.blockSignals(False)
+                        new_text = formatted
+                except ValueError:
+                    pass
 
         self._shadow[(row, col)] = new_text
 
@@ -894,11 +934,7 @@ class SheetWidget(QWidget):
             expr = expr.replace("^", "**")
 
             result = eval(expr, ns)  # noqa: S307
-            if isinstance(result, float):
-                if result == int(result) and abs(result) < 1e15:
-                    return int(result)
-                return round(result, 10)
-            return result
+            return _format_number(result)
         except Exception:
             return "#ERROR"
 
