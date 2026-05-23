@@ -876,19 +876,43 @@ class SheetWidget(QWidget):
                 self._selected_chart = None
 
             # Formula entry mode: insert cell ref on click.
-            if self._formula_entry_cell is not None:
+            # Check both explicit formula mode (formula bar) and
+            # inline cell editor starting with "=".
+            formula_cell = self._formula_entry_cell
+            inline_editor = None
+            if formula_cell is None:
+                # Check for active inline cell editor with "=" text.
+                editor = self.table.findChild(QLineEdit, "",
+                                              Qt.FindDirectChildrenOnly)
+                if editor is None:
+                    # Editor may be a child of the viewport.
+                    vp = self.table.viewport()
+                    for child in vp.children():
+                        if isinstance(child, QLineEdit):
+                            editor = child
+                            break
+                if editor and editor is not self._formula_bar:
+                    txt = editor.text()
+                    if txt.startswith("="):
+                        r = self.table.currentRow()
+                        c = self.table.currentColumn()
+                        if r >= 0 and c >= 0:
+                            formula_cell = (r, c)
+                            inline_editor = editor
+
+            if formula_cell is not None:
                 idx = self.table.indexAt(event.pos())
                 if idx.isValid():
                     r, c = idx.row(), idx.column()
-                    fc_r, fc_c = self._formula_entry_cell
+                    fc_r, fc_c = formula_cell
                     if (r, c) != (fc_r, fc_c):
                         ref = col_index_to_letter(c) + str(r + 1)
-                        bar = self._formula_bar
-                        cp = bar.cursorPosition()
-                        text = bar.text()
-                        bar.setText(text[:cp] + ref + text[cp:])
-                        bar.setCursorPosition(cp + len(ref))
-                        bar.setFocus()
+                        target = inline_editor or self._formula_bar
+                        cp = target.cursorPosition()
+                        text = target.text()
+                        target.setText(text[:cp] + ref + text[cp:])
+                        target.setCursorPosition(cp + len(ref))
+                        target.setFocus()
                         return True  # consume click
 
             hr = self._fill_handle_rect()
