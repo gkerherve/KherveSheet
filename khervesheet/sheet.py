@@ -572,8 +572,7 @@ class SheetWidget(QWidget):
     def _add_plot_submenu(self, menu, cols=None):
         """Add a Plot submenu with all plot types."""
         sel = self.selected_columns() if cols is None else cols
-        label = ("Plot" if len(sel) <= 1
-                 else f"Plot ({len(sel)} columns)")
+        label = "Plot"
         plot_menu = menu.addMenu(label)
         for pt in self.PLOT_TYPES:
             plot_menu.addAction(
