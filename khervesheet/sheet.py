@@ -203,6 +203,7 @@ class SheetWidget(QWidget):
         self._formula_bar.setPlaceholderText(
             "Value or =formula  (e.g. =SUM(A1:A10), =B1+C1)")
         self._formula_bar.returnPressed.connect(self._apply_formula_bar)
+        self._formula_bar.textChanged.connect(self._on_formula_bar_text)
 
         fbar.addWidget(cell_lbl)
         fbar.addWidget(self._cell_ref_label)
@@ -242,6 +243,10 @@ class SheetWidget(QWidget):
         self._cell_formulas: dict = {}   # (row, col) → "=formula"
         self._col_formats: dict = {}     # col → format string
         self._col_designations: dict = {}  # col → "X" or "Y"
+
+        # Formula entry mode: when editing a formula, clicking a cell
+        # inserts a cell reference instead of navigating.
+        self._formula_entry_cell = None   # (row, col) being edited
 
         # Signals
         self.table.cellChanged.connect(self._on_cell_changed)
@@ -304,6 +309,7 @@ class SheetWidget(QWidget):
             self._cell_ref_label.setText("")
             self._formula_bar.clear()
             return
+
         ref = f"{col_index_to_letter(col)}{row + 1}"
         self._cell_ref_label.setText(ref)
         # Show formula if cell has one, otherwise show value
@@ -355,7 +361,23 @@ class SheetWidget(QWidget):
         self._shadow[(row, col)] = text
         self.table.blockSignals(False)
 
+    # ── Formula entry mode ─────────────────────────────────────────
+    def _on_formula_bar_text(self, text):
+        """Enter formula mode when the bar text starts with '='."""
+        if text.startswith("=") and self._formula_bar.hasFocus():
+            if self._formula_entry_cell is None:
+                r = self.table.currentRow()
+                c = self.table.currentColumn()
+                if r >= 0 and c >= 0:
+                    self._formula_entry_cell = (r, c)
+        elif not text.startswith("="):
+            self._formula_entry_cell = None
+
+    def _exit_formula_mode(self):
+        self._formula_entry_cell = None
+
     def _apply_formula_bar(self):
+        self._formula_entry_cell = None
         idx = self.table.currentIndex()
         if not idx.isValid():
             return
@@ -767,6 +789,23 @@ class SheetWidget(QWidget):
             if prev:
                 prev._set_selected(False)
                 self._selected_chart = None
+
+            # Formula entry mode: insert cell ref on click.
+            if self._formula_entry_cell is not None:
+                idx = self.table.indexAt(event.pos())
+                if idx.isValid():
+                    r, c = idx.row(), idx.column()
+                    fc_r, fc_c = self._formula_entry_cell
+                    if (r, c) != (fc_r, fc_c):
+                        ref = col_index_to_letter(c) + str(r + 1)
+                        bar = self._formula_bar
+                        cp = bar.cursorPosition()
+                        text = bar.text()
+                        bar.setText(text[:cp] + ref + text[cp:])
+                        bar.setCursorPosition(cp + len(ref))
+                        bar.setFocus()
+                        return True  # consume click
+
             hr = self._fill_handle_rect()
             if hr and hr.contains(event.pos()):
                 sel = self.table.selectedRanges()

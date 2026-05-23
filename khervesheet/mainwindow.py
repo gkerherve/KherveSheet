@@ -313,12 +313,17 @@ class MainWindow(QMainWindow):
         self._progress.hide()
         sb.addWidget(self._progress)
 
-        # Zoom slider
+        # Selection summary (left of zoom)
+        self._sum_label = QLabel("")
+        self._sum_label.setMinimumWidth(120)
+        sb.addPermanentWidget(self._sum_label)
+
+        # Zoom slider (far right)
         zoom_w = QWidget()
         zh = QHBoxLayout(zoom_w)
         zh.setContentsMargins(4, 0, 4, 0)
         zh.setSpacing(4)
-        zm = QLabel("−")
+        zm = QLabel("\u2212")
         zm.setCursor(Qt.PointingHandCursor)
         zm.mousePressEvent = lambda _: self._zoom_out()
         self._zoom_slider = QSlider(Qt.Horizontal)
@@ -336,11 +341,6 @@ class MainWindow(QMainWindow):
         zh.addWidget(self._zoom_label)
         zh.addWidget(zp)
         sb.addPermanentWidget(zoom_w)
-
-        # Selection summary
-        self._sum_label = QLabel("")
-        self._sum_label.setMinimumWidth(120)
-        sb.addPermanentWidget(self._sum_label)
 
     # ── Active sheet helper ──────────────────────────────────────────
     def _active_sheet(self) -> SheetWidget:
