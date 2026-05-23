@@ -590,7 +590,7 @@ class AxisPropertiesDialog(QDialog):
         self._on_auto_limits(True)
         inverted = (ax.xaxis_inverted() if is_x
                     else ax.yaxis_inverted())
-        self.invert_check.setChecked(inverted)
+        self.invert_check.setChecked(bool(inverted))
 
         # Title — for Bottom/Left use native label; for Top/Right
         # check for stored secondary labels on the chart.
