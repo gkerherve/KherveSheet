@@ -165,6 +165,37 @@ class EmbeddedChart(QWidget):
             lines = ax.plot(x, y, label=label)
             return lines[0] if lines else None
 
+    def change_series_type(self, series_idx, new_plot_type):
+        """Remove the old artist and replot a series with a new type."""
+        if series_idx < 0 or series_idx >= len(self._series):
+            return
+        s = self._series[series_idx]
+        if s["plot_type"] == new_plot_type:
+            return
+        old_artist = s.get("artist")
+        # Remove old artist from axes.
+        if old_artist is not None:
+            try:
+                old_artist.remove()
+            except Exception:
+                # Some artist types (stem, bar containers) need
+                # per-child removal.
+                if hasattr(old_artist, '__iter__'):
+                    for child in old_artist:
+                        try:
+                            child.remove()
+                        except Exception:
+                            pass
+        # Replot with new type.
+        x, y = np.asarray(s["x"]), np.asarray(s["y"])
+        new_artist = self._plot_one(
+            self._ax, x, y, s["label"], new_plot_type)
+        s["artist"] = new_artist
+        s["plot_type"] = new_plot_type
+        # Refresh legend.
+        leg = self._ax.legend(loc="best", framealpha=0.8, fontsize=8)
+        self._canvas.draw_idle()
+
     # ── Serialisation ────────────────────────────────────────────────
     def to_dict(self):
         """Return a JSON-safe dict capturing chart state."""
@@ -177,6 +208,42 @@ class EmbeddedChart(QWidget):
                 "label": s["label"],
                 "plot_type": s["plot_type"],
             }
+            # Line / marker visual properties.
+            artist = s.get("artist")
+            if artist is not None:
+                if hasattr(artist, 'get_linestyle'):
+                    sd["linestyle"] = artist.get_linestyle()
+                if hasattr(artist, 'get_linewidth'):
+                    sd["linewidth"] = artist.get_linewidth()
+                if hasattr(artist, 'get_color'):
+                    c = artist.get_color()
+                    if isinstance(c, str):
+                        sd["color"] = c
+                    elif hasattr(c, '__len__') and len(c) >= 3:
+                        from matplotlib.colors import to_hex
+                        sd["color"] = to_hex(c)
+                if hasattr(artist, 'get_marker'):
+                    sd["marker"] = str(artist.get_marker())
+                if hasattr(artist, 'get_markersize'):
+                    sd["markersize"] = artist.get_markersize()
+                if hasattr(artist, 'get_markerfacecolor'):
+                    c = artist.get_markerfacecolor()
+                    if isinstance(c, str):
+                        sd["markerfacecolor"] = c
+                    elif hasattr(c, '__len__') and len(c) >= 3:
+                        from matplotlib.colors import to_hex
+                        sd["markerfacecolor"] = to_hex(c)
+                if hasattr(artist, 'get_markeredgecolor'):
+                    c = artist.get_markeredgecolor()
+                    if isinstance(c, str):
+                        sd["markeredgecolor"] = c
+                    elif hasattr(c, '__len__') and len(c) >= 3:
+                        from matplotlib.colors import to_hex
+                        sd["markeredgecolor"] = to_hex(c)
+                # Visibility.
+                if hasattr(artist, 'get_visible'):
+                    if not artist.get_visible():
+                        sd["visible"] = False
             # Fill properties.
             fm = s.get("fill_mode", "none")
             if fm != "none":
@@ -184,11 +251,6 @@ class EmbeddedChart(QWidget):
                 sd["fill_target"] = s.get("fill_target", 0)
                 sd["fill_color"] = s.get("fill_color", "#1f77b4")
                 sd["fill_alpha"] = s.get("fill_alpha", 0.3)
-            # Visibility.
-            artist = s.get("artist")
-            if artist and hasattr(artist, 'get_visible'):
-                if not artist.get_visible():
-                    sd["visible"] = False
             series.append(sd)
         d = {
             "series": series,
@@ -266,14 +328,32 @@ class EmbeddedChart(QWidget):
         if chart._source_sheet and chart._y_cols:
             chart._source_sheet.data_changed.connect(
                 chart._on_data_changed)
-        # Restore fill and visibility per series.
+        # Restore visual properties, fill, and visibility per series.
         for i, sd in enumerate(series):
             if i >= len(chart._series):
                 break
-            if sd.get("visible") is False:
-                artist = chart._series[i].get("artist")
-                if artist and hasattr(artist, 'set_visible'):
-                    artist.set_visible(False)
+            artist = chart._series[i].get("artist")
+            if artist is not None:
+                if "linestyle" in sd and hasattr(artist, 'set_linestyle'):
+                    artist.set_linestyle(sd["linestyle"])
+                if "linewidth" in sd and hasattr(artist, 'set_linewidth'):
+                    artist.set_linewidth(sd["linewidth"])
+                if "color" in sd and hasattr(artist, 'set_color'):
+                    artist.set_color(sd["color"])
+                if "marker" in sd and hasattr(artist, 'set_marker'):
+                    mk = sd["marker"]
+                    artist.set_marker(mk if mk != "None" else "")
+                if "markersize" in sd and hasattr(artist, 'set_markersize'):
+                    artist.set_markersize(sd["markersize"])
+                if "markerfacecolor" in sd and hasattr(
+                        artist, 'set_markerfacecolor'):
+                    artist.set_markerfacecolor(sd["markerfacecolor"])
+                if "markeredgecolor" in sd and hasattr(
+                        artist, 'set_markeredgecolor'):
+                    artist.set_markeredgecolor(sd["markeredgecolor"])
+                if sd.get("visible") is False:
+                    if hasattr(artist, 'set_visible'):
+                        artist.set_visible(False)
             fm = sd.get("fill_mode", "none")
             if fm != "none":
                 chart.apply_fill(
@@ -345,7 +425,8 @@ class EmbeddedChart(QWidget):
         try:
             # Transform canvas-local Qt coords → matplotlib display coords.
             cx, cy = event_pos.x(), self._canvas.height() - event_pos.y()
-            bbox = leg.get_window_extent()
+            renderer = self._canvas.get_renderer()
+            bbox = leg.get_window_extent(renderer)
             return bbox.contains(cx, cy)
         except Exception:
             return False
@@ -1069,23 +1150,36 @@ class PlotDetailsDialog(QDialog):
         letter = self._col_letter(col_idx)
         return f"{letter}1:{letter}{data_len}"
 
+    _PLOT_TYPES = [
+        "Line", "Scatter", "Line+Symbol", "Bar", "Step", "Stem",
+        "Histogram",
+    ]
+
     def _build_line_tab(self):
         w = QWidget()
         form = QFormLayout(w)
+
+        self.label_edit = QLineEdit()
+        form.addRow("Label:", self.label_edit)
+
+        self.plot_type_combo = QComboBox()
+        self.plot_type_combo.addItems(self._PLOT_TYPES)
+        form.addRow("Plot Type:", self.plot_type_combo)
+
         self.line_style = QComboBox()
         for name, _ in _LINE_STYLES:
             self.line_style.addItem(name)
+        form.addRow("Style:", self.line_style)
+
         self.line_width = QDoubleSpinBox()
         self.line_width.setRange(0.0, 20.0)
         self.line_width.setSingleStep(0.5)
         self.line_width.setValue(_DEFAULT_LINEWIDTH)
-        self.line_color = _ColorButton()
-        self.label_edit = QLineEdit()
-
-        form.addRow("Label:", self.label_edit)
-        form.addRow("Style:", self.line_style)
         form.addRow("Width:", self.line_width)
+
+        self.line_color = _ColorButton()
         form.addRow("Color:", self.line_color)
+
         self._tabs.addTab(w, "Line")
 
     def _build_symbol_tab(self):
@@ -1145,6 +1239,12 @@ class PlotDetailsDialog(QDialog):
         s = self._chart._series[row]
         artist = s.get("artist")
         self.label_edit.setText(s["label"])
+
+        # Plot type combo.
+        pt = s.get("plot_type", "Line")
+        idx = self.plot_type_combo.findText(pt)
+        if idx >= 0:
+            self.plot_type_combo.setCurrentIndex(idx)
 
         # Data tab — populate range info.
         chart = self._chart
@@ -1273,6 +1373,12 @@ class PlotDetailsDialog(QDialog):
         # Series settings for currently selected series
         if 0 <= row < len(chart._series):
             s = chart._series[row]
+
+            # Change plot type if different.
+            new_pt = self.plot_type_combo.currentText()
+            if new_pt != s.get("plot_type"):
+                chart.change_series_type(row, new_pt)
+
             artist = s.get("artist")
             s["label"] = self.label_edit.text()
 

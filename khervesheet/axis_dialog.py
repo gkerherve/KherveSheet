@@ -1103,6 +1103,8 @@ class AxisPropertiesDialog(QDialog):
                 labelrotation=st["tl_rotation"],
             )
             fmt_idx = st["tl_format"]
+            if fmt_idx >= len(_TICK_FORMATS):
+                fmt_idx = 0
             fmt_code = _TICK_FORMATS[fmt_idx][1]
             self._apply_tick_format(
                 mpl_axis, fmt_code, st["tl_decimals"],
@@ -1291,6 +1293,8 @@ class AxisPropertiesDialog(QDialog):
                 labelrotation=st.get("tl_rotation", 0),
             )
             fmt_idx = st.get("tl_format", 0)
+            if fmt_idx >= len(_TICK_FORMATS):
+                fmt_idx = 0
             fmt_code = _TICK_FORMATS[fmt_idx][1]
             cls._apply_tick_format(
                 mpl_axis, fmt_code, st.get("tl_decimals", 2),
