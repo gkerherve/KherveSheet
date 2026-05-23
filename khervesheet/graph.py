@@ -14,7 +14,7 @@ the Free Software Foundation, either version 3 of the License, or
 
 import numpy as np
 
-from PyQt5.QtCore import Qt, QSize, QPoint, QRect, QEvent
+from PyQt5.QtCore import Qt, QSize, QPoint, QRect, QEvent, QTimer
 from PyQt5.QtGui import QFont, QCursor, QPainter, QPen, QColor
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -66,6 +66,12 @@ class EmbeddedChart(QWidget):
         self._resizing = False
         self._resize_edge = None      # which edges: combination of t/b/l/r
         self._legend_dragging = False # True while mpl handles legend drag
+        self._legend_long_press_timer = QTimer(self)
+        self._legend_long_press_timer.setSingleShot(True)
+        self._legend_long_press_timer.setInterval(400)  # ms
+        self._legend_long_press_timer.timeout.connect(
+            self._on_legend_long_press)
+        self._legend_press_pos = None  # global pos at legend press
 
         self.setMinimumSize(240, 180)
         self.resize(480, 320)
@@ -323,6 +329,13 @@ class EmbeddedChart(QWidget):
         except Exception:
             return False
 
+    def _on_legend_long_press(self):
+        """Timer fired — switch from chart drag to legend drag."""
+        self._legend_dragging = True
+        # Cancel the in-progress chart drag.
+        self._drag_origin = None
+        self._drag_widget_pos = None
+
     # ── Interactive label / axis editing ───────────────────────────
     _SPINE_MAP = {"Bottom": "bottom", "Top": "top",
                   "Left": "left", "Right": "right"}
@@ -543,11 +556,11 @@ class EmbeddedChart(QWidget):
                     self._drag_origin = event.globalPos()
                     self._drag_widget_pos = self.geometry()
                     return True   # consumed — resize only
-                # If click is on the legend, let matplotlib handle the
-                # drag — don't start a chart move.
+                # If click is on the legend, start a long-press timer.
+                # Short drag = move chart; long press = move legend.
                 if self._hit_legend(event.pos()):
-                    self._legend_dragging = True
-                    return False  # let mpl handle it
+                    self._legend_press_pos = event.globalPos()
+                    self._legend_long_press_timer.start()
                 # Record press for potential drag, but don't consume
                 # so matplotlib can detect double-clicks.
                 self._drag_origin = event.globalPos()
@@ -555,6 +568,11 @@ class EmbeddedChart(QWidget):
             return False  # let matplotlib see the press
 
         if etype == QEvent.MouseMove:
+            # If the long-press timer is still running and we moved,
+            # this is a chart drag — cancel the legend timer.
+            if self._legend_long_press_timer.isActive():
+                self._legend_long_press_timer.stop()
+                self._legend_press_pos = None
             # While legend is being dragged, let matplotlib handle it.
             if self._legend_dragging:
                 return False
@@ -599,6 +617,8 @@ class EmbeddedChart(QWidget):
             return False
 
         if etype == QEvent.MouseButtonRelease:
+            self._legend_long_press_timer.stop()
+            self._legend_press_pos = None
             if self._legend_dragging:
                 self._legend_dragging = False
                 return False  # let mpl finalize
