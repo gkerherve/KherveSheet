@@ -735,12 +735,30 @@ class MainWindow(QMainWindow):
                         if d.get('axis_props'):
                             cg.attrs['axis_props'] = json.dumps(
                                 d['axis_props'])
+                        # Secondary labels.
+                        cg.attrs['top_label'] = d.get(
+                            'top_label', '')
+                        cg.attrs['right_label'] = d.get(
+                            'right_label', '')
+                        # Source column mapping.
+                        if d.get('x_col') is not None:
+                            cg.attrs['x_col'] = d['x_col']
+                        if d.get('y_cols'):
+                            cg.attrs['y_cols'] = json.dumps(
+                                d['y_cols'])
                         for ki, s in enumerate(d['series']):
                             srg = cg.create_group(f"series_{ki}")
                             srg.create_dataset("x", data=s['x'])
                             srg.create_dataset("y", data=s['y'])
                             srg.attrs['label'] = s['label']
                             srg.attrs['plot_type'] = s['plot_type']
+                            # All extra visual / fill properties.
+                            props = {k: v for k, v in s.items()
+                                     if k not in ('x', 'y', 'label',
+                                                  'plot_type')}
+                            if props:
+                                srg.attrs['props'] = json.dumps(
+                                    props)
 
             self._status_msg(f"Saved to {path}", 5000)
         except Exception as e:
@@ -902,13 +920,19 @@ class MainWindow(QMainWindow):
                         series = []
                         for ki in range(series_count):
                             srg = cg[f"series_{ki}"]
-                            series.append({
+                            sd = {
                                 "x": list(srg["x"][:]),
                                 "y": list(srg["y"][:]),
                                 "label": srg.attrs['label'],
                                 "plot_type": srg.attrs[
                                     'plot_type'],
-                            })
+                            }
+                            # Restore visual / fill properties.
+                            props_json = srg.attrs.get(
+                                'props', '')
+                            if props_json:
+                                sd.update(json.loads(props_json))
+                            series.append(sd)
                         cd = {
                             "series": series,
                             "pos_x": int(cg.attrs['pos_x']),
@@ -926,11 +950,21 @@ class MainWindow(QMainWindow):
                                 'yscale', 'linear'),
                             "grid": bool(cg.attrs.get(
                                 'grid', False)),
+                            "top_label": cg.attrs.get(
+                                'top_label', ''),
+                            "right_label": cg.attrs.get(
+                                'right_label', ''),
                         }
                         # Axis properties (full dialog state).
                         ap_json = cg.attrs.get('axis_props', '')
                         if ap_json:
                             cd["axis_props"] = json.loads(ap_json)
+                        # Source column mapping.
+                        if 'x_col' in cg.attrs:
+                            cd["x_col"] = int(cg.attrs['x_col'])
+                        yc_json = cg.attrs.get('y_cols', '')
+                        if yc_json:
+                            cd["y_cols"] = json.loads(yc_json)
                         deferred_charts.append(cd)
                     if deferred_charts:
                         sheet._deferred_charts = deferred_charts
