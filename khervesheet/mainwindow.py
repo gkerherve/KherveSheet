@@ -807,7 +807,10 @@ class MainWindow(QMainWindow):
                 from PyQt5.QtWidgets import QTableWidgetItem
 
                 for si in range(sheet_count):
-                    sg = f[f"sheet_{si}"]
+                    sheet_key = f"sheet_{si}"
+                    if sheet_key not in f:
+                        continue
+                    sg = f[sheet_key]
                     name = sg.attrs['name']
                     n_rows = int(sg.attrs['rows'])
                     n_cols = int(sg.attrs['cols'])
