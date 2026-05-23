@@ -517,8 +517,19 @@ class SheetWidget(QWidget):
             self._clear_ref_highlights()
 
         if row < 0 or col < 0:
-            self._cell_ref_label.setText("")
-            self._formula_bar.clear()
+            if self._formula_entry_cell is None:
+                self._cell_ref_label.setText("")
+                self._formula_bar.clear()
+            return
+
+        # Don't overwrite formula bar when actively editing a formula
+        # (click-to-insert-ref or arrow-key nav).
+        if self._formula_entry_cell is not None:
+            return
+
+        # Also check for inline editor with "=" text.
+        editor = self._find_inline_editor()
+        if editor and editor.text().startswith("="):
             return
 
         ref = f"{col_index_to_letter(col)}{row + 1}"
@@ -692,6 +703,11 @@ class SheetWidget(QWidget):
         finally:
             self.table.blockSignals(False)
         self._on_cell_changed(row, col)
+
+        # Move to next row (Excel-style Enter behavior).
+        next_row = row + 1
+        if next_row < self.row_count():
+            self.table.setCurrentCell(next_row, col)
 
     # ── Formula reference highlighting ─────────────────────────────
     _REF_PATTERN = None  # compiled lazily
