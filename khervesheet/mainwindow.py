@@ -124,6 +124,8 @@ class MainWindow(QMainWindow):
         edit_menu.addAction("Cu&t", self._cut, "Ctrl+X")
         edit_menu.addAction("&Copy", self._copy, "Ctrl+C")
         edit_menu.addAction("&Paste", self._paste, "Ctrl+V")
+        edit_menu.addAction("Paste &Values Only",
+                            self._paste_values, "Ctrl+Shift+V")
         edit_menu.addAction("Cl&ear", self._clear, "Del")
 
         self._undo_stack.canUndoChanged.connect(self._undo_act.setEnabled)
@@ -1067,6 +1069,11 @@ class MainWindow(QMainWindow):
         else:
             s._paste_clipboard()
 
+    def _paste_values(self):
+        s = self._active_sheet()
+        if s:
+            s._paste_values_only()
+
     def _clear(self):
         s = self._active_sheet()
         if not s:
@@ -1101,8 +1108,49 @@ class MainWindow(QMainWindow):
         from .cellformat import CellFormat
         return sheet._cell_formats.setdefault((row, col), CellFormat())
 
+    def _selected_cell_keys(self):
+        """Return list of (row, col) for all selected cells."""
+        s = self._active_sheet()
+        if not s:
+            return []
+        keys = []
+        for rng in s.table.selectedRanges():
+            for r in range(rng.topRow(), rng.bottomRow() + 1):
+                for c in range(rng.leftColumn(), rng.rightColumn() + 1):
+                    keys.append((r, c))
+        if not keys:
+            r = s.table.currentRow()
+            c = s.table.currentColumn()
+            if r >= 0 and c >= 0:
+                keys.append((r, c))
+        return keys
+
+    def _push_format_undo(self, sheet, keys, label="Format"):
+        """Snapshot formats for *keys*, return old_fmts dict.
+
+        Call this BEFORE making changes.  After changes, call
+        ``_finish_format_undo`` with the returned old_fmts.
+        """
+        from .sheet import _snapshot_format
+        old = {}
+        for k in keys:
+            old[k] = _snapshot_format(sheet._cell_formats.get(k))
+        return old
+
+    def _finish_format_undo(self, sheet, old_fmts, label="Format"):
+        """Push undo command by comparing *old_fmts* to current state."""
+        from .sheet import _snapshot_format, FormatCellsCmd
+        new_fmts = {}
+        for k in old_fmts:
+            new_fmts[k] = _snapshot_format(sheet._cell_formats.get(k))
+        if self._undo_stack:
+            self._undo_stack.push(
+                FormatCellsCmd(sheet, old_fmts, new_fmts, label))
+
     def _apply_font_family(self, font):
         s = self._active_sheet()
+        keys = self._selected_cell_keys()
+        old = self._push_format_undo(s, keys) if s else None
         for it in self._selected_items():
             f = it.font()
             f.setFamily(font.family())
@@ -1110,6 +1158,8 @@ class MainWindow(QMainWindow):
             if s:
                 r, c = it.row(), it.column()
                 self._cell_fmt(s, r, c).font_family = font.family()
+        if s and old:
+            self._finish_format_undo(s, old, "Font Family")
 
     def _apply_font_size(self, size_text):
         try:
@@ -1119,6 +1169,8 @@ class MainWindow(QMainWindow):
         if size < 1:
             return
         s = self._active_sheet()
+        keys = self._selected_cell_keys()
+        old = self._push_format_undo(s, keys) if s else None
         for it in self._selected_items():
             f = it.font()
             f.setPointSizeF(size)
@@ -1126,10 +1178,14 @@ class MainWindow(QMainWindow):
             if s:
                 r, c = it.row(), it.column()
                 self._cell_fmt(s, r, c).font_size = size
+        if s and old:
+            self._finish_format_undo(s, old, "Font Size")
 
     def _toggle_bold(self):
         checked = self._bold_act.isChecked()
         s = self._active_sheet()
+        keys = self._selected_cell_keys()
+        old = self._push_format_undo(s, keys) if s else None
         for it in self._selected_items():
             f = it.font()
             f.setBold(checked)
@@ -1137,10 +1193,14 @@ class MainWindow(QMainWindow):
             if s:
                 r, c = it.row(), it.column()
                 self._cell_fmt(s, r, c).bold = checked
+        if s and old:
+            self._finish_format_undo(s, old, "Bold")
 
     def _toggle_italic(self):
         checked = self._italic_act.isChecked()
         s = self._active_sheet()
+        keys = self._selected_cell_keys()
+        old = self._push_format_undo(s, keys) if s else None
         for it in self._selected_items():
             f = it.font()
             f.setItalic(checked)
@@ -1148,10 +1208,14 @@ class MainWindow(QMainWindow):
             if s:
                 r, c = it.row(), it.column()
                 self._cell_fmt(s, r, c).italic = checked
+        if s and old:
+            self._finish_format_undo(s, old, "Italic")
 
     def _toggle_underline(self):
         checked = self._underline_act.isChecked()
         s = self._active_sheet()
+        keys = self._selected_cell_keys()
+        old = self._push_format_undo(s, keys) if s else None
         for it in self._selected_items():
             f = it.font()
             f.setUnderline(checked)
@@ -1159,6 +1223,8 @@ class MainWindow(QMainWindow):
             if s:
                 r, c = it.row(), it.column()
                 self._cell_fmt(s, r, c).underline = checked
+        if s and old:
+            self._finish_format_undo(s, old, "Underline")
 
     def _apply_alignment(self, alignment):
         # Update toggle state — only one alignment active at a time.
@@ -1167,11 +1233,15 @@ class MainWindow(QMainWindow):
         self._align_center_act.setChecked(bool(alignment & Qt.AlignHCenter))
         self._align_right_act.setChecked(bool(alignment & Qt.AlignRight))
         s = self._active_sheet()
+        keys = self._selected_cell_keys()
+        old = self._push_format_undo(s, keys) if s else None
         for it in self._selected_items():
             it.setTextAlignment(int(alignment))
             if s:
                 r, c = it.row(), it.column()
                 self._cell_fmt(s, r, c).alignment = int(alignment)
+        if s and old:
+            self._finish_format_undo(s, old, "Alignment")
 
     # ── Colour palette ────────────────────────────────────────────────
     _PALETTE = [
@@ -1276,21 +1346,27 @@ class MainWindow(QMainWindow):
         s = self._active_sheet()
         if not s:
             return
+        keys = self._selected_cell_keys()
+        old = self._push_format_undo(s, keys)
         for rng in s.table.selectedRanges():
             for r in range(rng.topRow(), rng.bottomRow() + 1):
                 for c in range(rng.leftColumn(),
                                rng.rightColumn() + 1):
                     s.set_cell_bg(r, c, color_hex)
+        self._finish_format_undo(s, old, "Fill Color")
 
     def _clear_fill_color(self):
         s = self._active_sheet()
         if not s:
             return
+        keys = self._selected_cell_keys()
+        old = self._push_format_undo(s, keys)
         for rng in s.table.selectedRanges():
             for r in range(rng.topRow(), rng.bottomRow() + 1):
                 for c in range(rng.leftColumn(),
                                rng.rightColumn() + 1):
                     s.set_cell_bg(r, c, None)
+        self._finish_format_undo(s, old, "Clear Fill")
 
     # ── Font colour ──────────────────────────────────────────────────
     def _apply_last_font_color(self):
@@ -1309,11 +1385,15 @@ class MainWindow(QMainWindow):
 
     def _apply_font_color(self, color_hex):
         s = self._active_sheet()
+        keys = self._selected_cell_keys()
+        old = self._push_format_undo(s, keys) if s else None
         for it in self._selected_items():
             it.setForeground(QColor(color_hex))
             if s:
                 r, c = it.row(), it.column()
                 self._cell_fmt(s, r, c).font_color = color_hex
+        if s and old:
+            self._finish_format_undo(s, old, "Font Color")
 
     # ── Borders ──────────────────────────────────────────────────────
     _BORDER_PRESETS = [
@@ -1354,6 +1434,9 @@ class MainWindow(QMainWindow):
         s = self._active_sheet()
         if not s:
             return
+
+        keys = self._selected_cell_keys()
+        old = self._push_format_undo(s, keys)
 
         thin = BorderSpec()              # solid black 1px
         thick = BorderSpec(width=2.0)     # solid black 2px
@@ -1414,6 +1497,8 @@ class MainWindow(QMainWindow):
 
                     if sides:
                         s.set_cell_borders(r, c, sides)
+
+        self._finish_format_undo(s, old, f"Border: {preset}")
 
     def _update_format_toolbar(self):
         """Sync toolbar widgets with the current cell's formatting."""
@@ -1660,6 +1745,15 @@ class MainWindow(QMainWindow):
 
     def _apply_format_cells_result(self, sheet, ranges, result):
         """Apply formatting result dict to all cells in *ranges*."""
+        # Collect keys and snapshot old formats for undo.
+        keys = []
+        for rng in ranges:
+            for r in range(rng.topRow(), rng.bottomRow() + 1):
+                for c in range(rng.leftColumn(), rng.rightColumn() + 1):
+                    keys.append((r, c))
+        old_fmts = self._push_format_undo(sheet, keys)
+
+        # Apply new formatting.
         for rng in ranges:
             for r in range(rng.topRow(), rng.bottomRow() + 1):
                 for c in range(rng.leftColumn(), rng.rightColumn() + 1):
@@ -1722,6 +1816,7 @@ class MainWindow(QMainWindow):
                     if cf.is_empty():
                         sheet._cell_formats.pop((r, c), None)
 
+        self._finish_format_undo(sheet, old_fmts, "Format Cells")
         sheet.table.viewport().update()
 
     # ── Formulas ─────────────────────────────────────────────────────

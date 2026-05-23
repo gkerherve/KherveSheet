@@ -175,6 +175,98 @@ class BulkCellEditCmd(QUndoCommand):
         self.sheet.table.blockSignals(False)
 
 
+class FormatCellsCmd(QUndoCommand):
+    """Undo/redo for cell formatting changes."""
+
+    def __init__(self, sheet, old_formats, new_formats,
+                 label="Format Cells"):
+        """
+        *old_formats* / *new_formats*: dict mapping (row, col) to a
+        CellFormat snapshot (deep copy) or None (meaning no format).
+        """
+        super().__init__(label)
+        self.sheet = sheet
+        self.old_formats = old_formats
+        self.new_formats = new_formats
+
+    def undo(self):
+        self._apply(self.old_formats)
+
+    def redo(self):
+        if not getattr(self, "_first_redo_done", False):
+            self._first_redo_done = True
+            return
+        self._apply(self.new_formats)
+
+    def _apply(self, fmts):
+        """Restore cell formats and visual state."""
+        from .cellformat import CellFormat
+        sheet = self.sheet
+        sheet.table.blockSignals(True)
+        for (r, c), cf in fmts.items():
+            if cf is None:
+                sheet._cell_formats.pop((r, c), None)
+                it = sheet.table.item(r, c)
+                if it:
+                    it.setBackground(QBrush())
+                    it.setForeground(QBrush())
+            else:
+                sheet._cell_formats[(r, c)] = cf
+                it = sheet.table.item(r, c)
+                if it is None:
+                    it = QTableWidgetItem("")
+                    sheet.table.setItem(r, c, it)
+                # Apply visual state.
+                if cf.bg_color:
+                    it.setBackground(QColor(cf.bg_color))
+                else:
+                    it.setBackground(QBrush())
+                if cf.font_color:
+                    it.setForeground(QColor(cf.font_color))
+                else:
+                    it.setForeground(QBrush())
+                if cf.alignment is not None:
+                    it.setTextAlignment(cf.alignment)
+                f = it.font()
+                if cf.bold is not None:
+                    f.setBold(cf.bold)
+                if cf.italic is not None:
+                    f.setItalic(cf.italic)
+                if cf.underline is not None:
+                    f.setUnderline(cf.underline)
+                if cf.font_family is not None:
+                    f.setFamily(cf.font_family)
+                if cf.font_size is not None:
+                    f.setPointSizeF(cf.font_size)
+                it.setFont(f)
+        sheet.table.blockSignals(False)
+        sheet.table.viewport().update()
+
+
+def _snapshot_format(cf):
+    """Deep-copy a CellFormat for undo snapshots."""
+    from .cellformat import CellFormat, BorderSpec
+    if cf is None:
+        return None
+    new = CellFormat()
+    new.bg_color = cf.bg_color
+    for side in ("top", "bottom", "left", "right"):
+        orig = getattr(cf, f"border_{side}")
+        if orig is not None:
+            setattr(new, f"border_{side}",
+                    BorderSpec(orig.style, orig.color, orig.width))
+    new.bold = cf.bold
+    new.italic = cf.italic
+    new.underline = cf.underline
+    new.font_family = cf.font_family
+    new.font_size = cf.font_size
+    new.font_color = cf.font_color
+    new.alignment = cf.alignment
+    new.number_format = cf.number_format
+    new.wrap_text = cf.wrap_text
+    return new
+
+
 def _format_number(value, decimals=3):
     """Format a numeric result for cell display.
 
@@ -348,6 +440,23 @@ class SheetWidget(QWidget):
     def column_display_name(self, col: int) -> str:
         return col_index_to_letter(col)
 
+    def _apply_cell_number_format(self, text: str, row: int,
+                                   col: int) -> str:
+        """Apply per-cell number format (Currency, Percentage, etc.)
+        to *text*.  Returns the formatted string."""
+        cf = self._cell_formats.get((row, col))
+        nf = cf.number_format if cf else None
+        if not nf:
+            nf = self._col_formats.get(col, "General")
+        if nf in ("General", "Text") or not text:
+            return text
+        # Only apply formats that go beyond decimal precision
+        # (those are handled by _format_number already).
+        if nf in ("Currency", "Percentage", "Scientific",
+                  "Date", "Time"):
+            return _format_value(text, nf)
+        return text
+
     # ── Cell formatting (fill + borders) ───────────────────────────
     def set_cell_bg(self, row: int, col: int,
                     color_hex: Optional[str]):
@@ -437,14 +546,18 @@ class SheetWidget(QWidget):
             self._cell_formulas[(row, col)] = new_text
             self._register_deps(row, col, new_text)
             result = self._evaluate_formula(new_text, row, col, dec)
+            display = str(result)
+            # Apply per-cell number format to the computed result.
+            display = self._apply_cell_number_format(
+                display, row, col)
             self.table.blockSignals(True)
             if it is None:
-                it = QTableWidgetItem(str(result))
+                it = QTableWidgetItem(display)
                 self.table.setItem(row, col, it)
             else:
-                it.setText(str(result))
+                it.setText(display)
             self.table.blockSignals(False)
-            new_text = str(result)
+            new_text = display
         else:
             self._cell_formulas.pop((row, col), None)
             self._unregister_deps(row, col)
@@ -460,6 +573,13 @@ class SheetWidget(QWidget):
                         new_text = formatted
                 except ValueError:
                     pass
+            # Apply per-cell number format.
+            new_text = self._apply_cell_number_format(
+                new_text, row, col)
+            if it and it.text() != new_text:
+                self.table.blockSignals(True)
+                it.setText(new_text)
+                self.table.blockSignals(False)
 
         self._shadow[(row, col)] = new_text
 
@@ -503,6 +623,8 @@ class SheetWidget(QWidget):
                 continue
             dec = self._cell_decimals(dr, dc)
             result = str(self._evaluate_formula(formula, dr, dc, dec))
+            # Apply per-cell number format to the result.
+            result = self._apply_cell_number_format(result, dr, dc)
             self.table.blockSignals(True)
             it = self.table.item(dr, dc)
             if it is None:
@@ -1124,6 +1246,7 @@ class SheetWidget(QWidget):
         menu.addAction("Cu&t", self._cut_selection)
         menu.addAction("&Copy", self._copy_selection)
         menu.addAction("&Paste", self._paste_clipboard)
+        menu.addAction("Paste &Values Only", self._paste_values_only)
         menu.addAction("Cl&ear", self._clear_selection)
 
         menu.addSeparator()
@@ -1180,10 +1303,61 @@ class SheetWidget(QWidget):
         for r in range(s.topRow(), s.bottomRow() + 1):
             row_data = []
             for c in range(s.leftColumn(), s.rightColumn() + 1):
-                it = self.table.item(r, c)
-                row_data.append(it.text() if it else "")
+                # Copy the formula if the cell has one, else display text.
+                formula = self._cell_formulas.get((r, c))
+                if formula:
+                    row_data.append(formula)
+                else:
+                    it = self.table.item(r, c)
+                    row_data.append(it.text() if it else "")
             rows.append("\t".join(row_data))
         QApplication.clipboard().setText("\n".join(rows))
+
+    def _paste_values_only(self):
+        """Paste clipboard content as plain values (no formulas)."""
+        text = QApplication.clipboard().text()
+        if not text:
+            return
+        row = self.table.currentRow()
+        col = self.table.currentColumn()
+        if row < 0 or col < 0:
+            return
+        changes = []
+        self.table.blockSignals(True)
+        try:
+            for dr, line in enumerate(text.split("\n")):
+                if not line:
+                    continue
+                for dc, val in enumerate(line.split("\t")):
+                    r, c = row + dr, col + dc
+                    if r >= self.row_count() or c >= self.column_count():
+                        continue
+                    # Strip formula prefix — paste as plain value.
+                    if val.startswith("="):
+                        # Evaluate inline if possible, otherwise strip.
+                        try:
+                            result = self._evaluate_formula(val, r, c)
+                            val = str(result)
+                        except Exception:
+                            pass
+                    it = self.table.item(r, c)
+                    old = it.text() if it else ""
+                    if it is None:
+                        it = QTableWidgetItem(val)
+                        self.table.setItem(r, c, it)
+                    else:
+                        it.setText(val)
+                    self._shadow[(r, c)] = val
+                    # Remove any formula association for this cell.
+                    self._cell_formulas.pop((r, c), None)
+                    self._unregister_deps(r, c)
+                    if old != val:
+                        changes.append((r, c, old, val))
+        finally:
+            self.table.blockSignals(False)
+        if changes and self._undo_stack:
+            self._undo_stack.push(
+                BulkCellEditCmd(self, changes, "Paste Values"))
 
     def _paste_clipboard(self):
         text = QApplication.clipboard().text()

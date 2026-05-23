@@ -52,8 +52,25 @@ into a new module and import.
 - **Embedded charts**: movable/resizable matplotlib plots overlaid on grid.
 - **Single chart layer** (unlike KhervePlot's multi-layer system).
 - **Number formats**: General, Number (0.0 through 0.0000), Scientific,
-  Date, Time, Text.
+  Percentage, Currency, Date, Time, Text.
 - **Window style**: Fusion as default.
+
+## Undo / redo policy
+
+**Every user-visible change must be undoable.** Cell edits, formatting
+changes (fill, font, borders, alignment, number format), paste, clear,
+and drag-fill all push `QUndoCommand` instances onto the shared undo
+stack.  When adding a new action that modifies cell content or
+formatting, always create or reuse an undo command for it.
+
+## Persistence policy
+
+**All cell and chart properties must be saved and restored.** Every
+field on `CellFormat` (font, fill, borders, alignment, number format,
+wrap text) and every chart axis property must round-trip through the
+`.ksheet` (HDF5) format.  When adding a new property, update both
+`to_dict()`/`from_dict()` in the data class and the save/load code in
+`mainwindow.py`.
 
 ## Commit / push policy
 
