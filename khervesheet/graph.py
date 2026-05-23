@@ -389,10 +389,8 @@ class EmbeddedChart(QWidget):
         xm.addAction("Log\u2081\u2080",
                       lambda: self._set_scale("x", "log"))
         xm.addSeparator()
-        xm.addAction("Bottom Axis\u2026",
+        xm.addAction("Axis Properties\u2026",
                       lambda: self._open_axis_dialog("Bottom"))
-        xm.addAction("Top Axis\u2026",
-                      lambda: self._open_axis_dialog("Top"))
 
         # Y Axis submenu
         ym = menu.addMenu("Y Axis")
@@ -400,10 +398,8 @@ class EmbeddedChart(QWidget):
         ym.addAction("Log\u2081\u2080",
                       lambda: self._set_scale("y", "log"))
         ym.addSeparator()
-        ym.addAction("Left Axis\u2026",
+        ym.addAction("Axis Properties\u2026",
                       lambda: self._open_axis_dialog("Left"))
-        ym.addAction("Right Axis\u2026",
-                      lambda: self._open_axis_dialog("Right"))
 
         menu.addSeparator()
         menu.addAction("Pop Out to Window", self._pop_out)

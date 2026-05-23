@@ -1,7 +1,9 @@
 """Axis properties dialog — comprehensive per-axis configuration.
 
-Provides full control over each axis side (Bottom, Top, Left, Right):
-scale, title, tick labels, line & ticks, and grids.
+Two main tabs: Bottom (X) and Left (Y).  Each contains property sub-tabs
+for scale, title, tick labels, line & ticks, grids, plus a secondary-side
+tab (Top / Right) exposing only the properties that matplotlib allows to
+be controlled independently on the opposite side of the same axis.
 
 Copyright (C) 2026 Gwilherm Kerherve
 
@@ -17,7 +19,7 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
     QLabel, QPushButton, QComboBox, QLineEdit, QCheckBox,
     QSpinBox, QDoubleSpinBox, QTabWidget, QWidget, QGroupBox,
-    QDialogButtonBox, QColorDialog, QSizePolicy,
+    QDialogButtonBox, QColorDialog, QSizePolicy, QScrollArea,
 )
 
 import matplotlib.ticker as mticker
@@ -61,7 +63,7 @@ class _ColorButton(QPushButton):
 
 _SIDE_TAB_STYLE = """
 QTabBar::tab {
-    min-width: 80px;
+    min-width: 100px;
     padding: 6px 16px;
     font-weight: bold;
     color: #555;
@@ -113,31 +115,28 @@ _FONTS = ["Default", "Arial", "Times New Roman", "Courier New",
 
 
 class AxisPropertiesDialog(QDialog):
-    """Comprehensive per-axis dialog: scale, title, tick labels,
-    line & ticks, grids — for Bottom, Top, Left, or Right."""
+    """Two-tab axis dialog: Bottom (X) and Left (Y).
 
-    _AXIS_LABEL = {
-        "Bottom": "Axis Properties — Bottom (X)",
-        "Top": "Axis Properties — Top (X)",
-        "Left": "Axis Properties — Left (Y)",
-        "Right": "Axis Properties — Right (Y)",
-    }
+    Each main tab contains property sub-tabs for scale, title,
+    tick labels, line & ticks, grids — plus a secondary-side tab
+    (Top Axis / Right Axis) with the subset of properties that
+    matplotlib allows to be controlled independently.
+    """
 
     def __init__(self, chart, side, parent=None):
         super().__init__(parent or chart)
         self._chart = chart
-        self._side = side
         self._ax = chart._ax
 
-        self.setWindowTitle(self._AXIS_LABEL.get(side, side))
-        self.resize(460, 520)
+        self.setWindowTitle("Axis Properties")
+        self.resize(480, 560)
 
         outer = QVBoxLayout(self)
 
-        # Side notebook (Bottom / Top / Left / Right).
+        # ── Side notebook: Bottom (X) | Left (Y) ──────────────────
         self._side_tabs = QTabWidget()
         self._side_tabs.setStyleSheet(_SIDE_TAB_STYLE)
-        for label in ("Bottom", "Top", "Left", "Right"):
+        for label in ("Bottom (X)", "Left (Y)"):
             placeholder = QWidget()
             placeholder.setMaximumHeight(0)
             self._side_tabs.addTab(placeholder, label)
@@ -146,7 +145,7 @@ class AxisPropertiesDialog(QDialog):
         self._side_tabs.currentChanged.connect(self._on_side_tab)
         outer.addWidget(self._side_tabs)
 
-        # Property tabs.
+        # ── Property sub-tabs ─────────────────────────────────────
         self._tabs = QTabWidget()
         outer.addWidget(self._tabs, stretch=1)
 
@@ -155,8 +154,9 @@ class AxisPropertiesDialog(QDialog):
         self._build_tick_labels_tab()
         self._build_line_ticks_tab()
         self._build_grids_tab()
+        self._build_secondary_tab()
 
-        # Footer.
+        # ── Footer ────────────────────────────────────────────────
         bb = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Apply
             | QDialogButtonBox.Cancel)
@@ -166,26 +166,26 @@ class AxisPropertiesDialog(QDialog):
             self._apply_current)
         outer.addWidget(bb)
 
-        # Per-side state cache.
-        self._side_states = {}
-        self._current_side = None
+        # ── Per-direction state cache ─────────────────────────────
+        self._dir_states = {}     # "x" -> dict, "y" -> dict
+        self._current_dir = None
 
-        # Populate from current side.
-        side_index = ["Bottom", "Top", "Left", "Right"].index(side)
-        self._side_tabs.setCurrentIndex(side_index)
-        self._switch_side(side)
+        # ── Initial selection ─────────────────────────────────────
+        open_secondary = side in ("Top", "Right")
+        if side in ("Bottom", "Top"):
+            self._side_tabs.setCurrentIndex(0)
+            self._switch_dir("x")
+        else:
+            self._side_tabs.setCurrentIndex(1)
+            self._switch_dir("y")
+        if open_secondary:
+            self._tabs.setCurrentIndex(5)   # secondary tab
 
     # ── Tab builders ────────────────────────────────────────────────
 
     def _build_scale_tab(self):
         w = QWidget()
         form = QFormLayout(w)
-
-        self._scale_note = QLabel(
-            "<i>Scale and limits are shared with the opposite side "
-            "(Bottom\u2194Top, Left\u2194Right).</i>")
-        self._scale_note.setWordWrap(True)
-        form.addRow(self._scale_note)
 
         self.scale_combo = QComboBox()
         self.scale_combo.addItems(
@@ -456,6 +456,103 @@ class AxisPropertiesDialog(QDialog):
 
         self._tabs.addTab(w, "Grids")
 
+    # ── Secondary axis tab (Top / Right) ───────────────────────────
+
+    def _build_secondary_tab(self):
+        """Properties independently controllable on the opposite side.
+
+        matplotlib shares scale, limits, locators, formatters, tick
+        styling (direction / width / color / length), and grids between
+        both sides of an axis.  Only the spine, per-side tick & label
+        visibility, and a secondary title can be set independently.
+        """
+        w = QWidget()
+        layout = QVBoxLayout(w)
+
+        note = QLabel(
+            "<i>Only properties that matplotlib allows to be set "
+            "independently on the secondary side are shown here. "
+            "Scale, limits, tick styling and grids are shared with "
+            "the primary side.</i>")
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        # ── Spine ──────────────────────────────────────────────────
+        spine_grp = QGroupBox("Spine")
+        sf = QFormLayout(spine_grp)
+
+        self.sec_spine_show = QCheckBox("Show")
+        sf.addRow(self.sec_spine_show)
+
+        self.sec_spine_color = _ColorButton("#000000")
+        sf.addRow("Color:", self.sec_spine_color)
+
+        self.sec_spine_width = QDoubleSpinBox()
+        self.sec_spine_width.setRange(0.0, 20.0)
+        self.sec_spine_width.setSingleStep(0.5)
+        self.sec_spine_width.setValue(1.0)
+        sf.addRow("Width:", self.sec_spine_width)
+
+        self.sec_spine_style = QComboBox()
+        for name, _ in _LINE_STYLES:
+            self.sec_spine_style.addItem(name)
+        sf.addRow("Style:", self.sec_spine_style)
+
+        layout.addWidget(spine_grp)
+
+        # ── Ticks & labels visibility ──────────────────────────────
+        vis_grp = QGroupBox("Ticks && Labels")
+        vf = QFormLayout(vis_grp)
+
+        self.sec_tick_show = QCheckBox("Show ticks")
+        vf.addRow(self.sec_tick_show)
+
+        self.sec_label_show = QCheckBox("Show tick labels")
+        vf.addRow(self.sec_label_show)
+
+        layout.addWidget(vis_grp)
+
+        # ── Title ──────────────────────────────────────────────────
+        title_grp = QGroupBox("Title")
+        tf = QFormLayout(title_grp)
+
+        self.sec_title_show = QCheckBox("Show title")
+        tf.addRow(self.sec_title_show)
+
+        self.sec_title_text = QLineEdit()
+        tf.addRow("Text:", self.sec_title_text)
+
+        self.sec_title_color = _ColorButton("#000000")
+        tf.addRow("Color:", self.sec_title_color)
+
+        self.sec_title_font = QComboBox()
+        self.sec_title_font.addItems(_FONTS)
+        tf.addRow("Font:", self.sec_title_font)
+
+        self.sec_title_size = QSpinBox()
+        self.sec_title_size.setRange(4, 96)
+        self.sec_title_size.setValue(10)
+        tf.addRow("Size:", self.sec_title_size)
+
+        self.sec_title_bold = QCheckBox("Bold")
+        self.sec_title_italic = QCheckBox("Italic")
+        style_row = QHBoxLayout()
+        style_row.addWidget(self.sec_title_bold)
+        style_row.addWidget(self.sec_title_italic)
+        style_row.addStretch()
+        tf.addRow("Style:", style_row)
+
+        self.sec_title_rotation = QComboBox()
+        self.sec_title_rotation.addItems(["0", "90", "180", "270"])
+        self.sec_title_rotation.setEditable(True)
+        tf.addRow("Rotation:", self.sec_title_rotation)
+
+        layout.addWidget(title_grp)
+        layout.addStretch()
+
+        # Tab label updated dynamically in _switch_dir.
+        self._tabs.addTab(w, "Top Axis")
+
     # ── Auto limits toggle ─────────────────────────────────────────
     def _on_auto_limits(self, auto):
         self.limit_min.setEnabled(not auto)
@@ -464,23 +561,25 @@ class AxisPropertiesDialog(QDialog):
     # ── Side switching ─────────────────────────────────────────────
 
     def _on_side_tab(self, index):
-        """Called when the side notebook tab changes."""
-        side = ["Bottom", "Top", "Left", "Right"][index]
-        self._switch_side(side)
+        """Called when the top-level side tab changes."""
+        direction = "x" if index == 0 else "y"
+        self._switch_dir(direction)
 
-    def _switch_side(self, side):
-        """Save current side state, load new side state."""
-        if self._current_side:
-            self._side_states[self._current_side] = \
+    def _switch_dir(self, direction):
+        """Save current direction state, load new direction state."""
+        if self._current_dir:
+            self._dir_states[self._current_dir] = \
                 self._capture_widgets()
-        self._current_side = side
-        self._side = side
-        self.setWindowTitle(self._AXIS_LABEL.get(side, side))
+        self._current_dir = direction
 
-        if side in self._side_states:
-            self._restore_widgets(self._side_states[side])
+        # Update secondary tab label.
+        sec_label = "Top Axis" if direction == "x" else "Right Axis"
+        self._tabs.setTabText(5, sec_label)
+
+        if direction in self._dir_states:
+            self._restore_widgets(self._dir_states[direction])
         else:
-            self._refresh_from_axes(side)
+            self._refresh_from_axes(direction)
 
     def _capture_widgets(self):
         """Snapshot all widget values into a dict."""
@@ -491,7 +590,7 @@ class AxisPropertiesDialog(QDialog):
             "limit_min": self.limit_min.value(),
             "limit_max": self.limit_max.value(),
             "invert": self.invert_check.isChecked(),
-            # Title
+            # Title (primary: Bottom / Left)
             "title_show": self.title_show.isChecked(),
             "title_text": self.title_text.text(),
             "title_color": self.title_color.color(),
@@ -500,7 +599,7 @@ class AxisPropertiesDialog(QDialog):
             "title_bold": self.title_bold.isChecked(),
             "title_italic": self.title_italic.isChecked(),
             "title_rotation": self.title_rotation.currentText(),
-            # Tick labels
+            # Tick labels (shared styling, primary-side visibility)
             "tl_show": self.tl_show.isChecked(),
             "tl_format": self.tl_format.currentIndex(),
             "tl_decimals": self.tl_decimals.value(),
@@ -509,7 +608,7 @@ class AxisPropertiesDialog(QDialog):
             "tl_color": self.tl_color.color(),
             "tl_size": self.tl_size.value(),
             "tl_rotation": self.tl_rotation.value(),
-            # Spine
+            # Spine (primary)
             "spine_show": self.spine_show.isChecked(),
             "spine_color": self.spine_color.color(),
             "spine_width": self.spine_width.value(),
@@ -538,6 +637,22 @@ class AxisPropertiesDialog(QDialog):
             "grid_minor_alpha": self.grid_minor_alpha.value(),
             "grid_minor_style": self.grid_minor_style.currentIndex(),
             "grid_minor_width": self.grid_minor_width.value(),
+            # Secondary side (Top / Right)
+            "sec_spine_show": self.sec_spine_show.isChecked(),
+            "sec_spine_color": self.sec_spine_color.color(),
+            "sec_spine_width": self.sec_spine_width.value(),
+            "sec_spine_style": self.sec_spine_style.currentIndex(),
+            "sec_tick_show": self.sec_tick_show.isChecked(),
+            "sec_label_show": self.sec_label_show.isChecked(),
+            "sec_title_show": self.sec_title_show.isChecked(),
+            "sec_title_text": self.sec_title_text.text(),
+            "sec_title_color": self.sec_title_color.color(),
+            "sec_title_font": self.sec_title_font.currentText(),
+            "sec_title_size": self.sec_title_size.value(),
+            "sec_title_bold": self.sec_title_bold.isChecked(),
+            "sec_title_italic": self.sec_title_italic.isChecked(),
+            "sec_title_rotation":
+                self.sec_title_rotation.currentText(),
         }
 
     def _restore_widgets(self, st):
@@ -596,17 +711,37 @@ class AxisPropertiesDialog(QDialog):
         self.grid_minor_style.setCurrentIndex(st["grid_minor_style"])
         self.grid_minor_width.setValue(st["grid_minor_width"])
 
+        # Secondary side.
+        self.sec_spine_show.setChecked(st["sec_spine_show"])
+        self.sec_spine_color.set_color(st["sec_spine_color"])
+        self.sec_spine_width.setValue(st["sec_spine_width"])
+        self.sec_spine_style.setCurrentIndex(st["sec_spine_style"])
+        self.sec_tick_show.setChecked(st["sec_tick_show"])
+        self.sec_label_show.setChecked(st["sec_label_show"])
+        self.sec_title_show.setChecked(st["sec_title_show"])
+        self.sec_title_text.setText(st["sec_title_text"])
+        self.sec_title_color.set_color(st["sec_title_color"])
+        self.sec_title_font.setCurrentText(st["sec_title_font"])
+        self.sec_title_size.setValue(st["sec_title_size"])
+        self.sec_title_bold.setChecked(st["sec_title_bold"])
+        self.sec_title_italic.setChecked(st["sec_title_italic"])
+        self.sec_title_rotation.setCurrentText(
+            st["sec_title_rotation"])
+
     # ── Read current axes state ────────────────────────────────────
 
-    def _refresh_from_axes(self, side):
-        """Read the matplotlib axes and populate widgets for *side*."""
+    def _refresh_from_axes(self, direction):
+        """Read matplotlib axes and populate widgets for *direction*.
+
+        direction is "x" (Bottom + Top) or "y" (Left + Right).
+        """
         ax = self._ax
-        is_x = side in ("Bottom", "Top")
-        spine_key = {"Bottom": "bottom", "Top": "top",
-                     "Left": "left", "Right": "right"}[side]
+        is_x = (direction == "x")
+        pri_key = "bottom" if is_x else "left"      # primary spine
+        sec_key = "top" if is_x else "right"         # secondary spine
         mpl_axis = ax.xaxis if is_x else ax.yaxis
 
-        # Scale.
+        # ── Scale ──────────────────────────────────────────────────
         cur_scale = ax.get_xscale() if is_x else ax.get_yscale()
         self.scale_combo.setCurrentText(cur_scale)
         lims = ax.get_xlim() if is_x else ax.get_ylim()
@@ -618,27 +753,15 @@ class AxisPropertiesDialog(QDialog):
                     else ax.yaxis_inverted())
         self.invert_check.setChecked(bool(inverted))
 
-        # Title — for Bottom/Left use native label; for Top/Right
-        # check for stored secondary labels on the chart.
-        if side == "Bottom":
+        # ── Primary title (Bottom / Left) ──────────────────────────
+        if is_x:
             label_text = ax.get_xlabel()
-        elif side == "Left":
+        else:
             label_text = ax.get_ylabel()
-        elif side == "Top":
-            label_text = getattr(
-                self._chart, '_top_label_text', '')
-        else:  # Right
-            label_text = getattr(
-                self._chart, '_right_label_text', '')
-
         self.title_show.setChecked(bool(label_text))
         self.title_text.setText(label_text)
 
-        # Read label font properties from the native label artist.
-        if side in ("Bottom", "Top"):
-            label_art = ax.xaxis.label
-        else:
-            label_art = ax.yaxis.label
+        label_art = mpl_axis.label
         try:
             from matplotlib.colors import to_hex
             self.title_color.set_color(to_hex(label_art.get_color()))
@@ -653,36 +776,24 @@ class AxisPropertiesDialog(QDialog):
             fp.get_style() in ("italic", "oblique"))
         self.title_rotation.setCurrentText(
             str(int(label_art.get_rotation())))
-
-        # Font family.
         fam = fp.get_name()
         idx = self.title_font.findText(fam)
         self.title_font.setCurrentIndex(max(0, idx))
 
-        # Tick labels — read visibility from tick params.
-        _side_show = {
-            "Bottom": "labelbottom", "Top": "labeltop",
-            "Left": "labelleft", "Right": "labelright",
-        }
-        # Default visibility: Bottom/Left on, Top/Right off.
-        tl_vis = side in ("Bottom", "Left")
+        # ── Tick labels (primary side visibility) ──────────────────
+        tl_vis = True
         major_ticks = mpl_axis.get_major_ticks()
         if major_ticks:
-            tk = major_ticks[0]
-            if side in ("Bottom", "Left"):
-                tl_vis = tk.label1.get_visible()
-            else:
-                tl_vis = tk.label2.get_visible()
+            tl_vis = major_ticks[0].label1.get_visible()
         self.tl_show.setChecked(tl_vis)
-        self.tl_format.setCurrentIndex(0)  # Auto
+        self.tl_format.setCurrentIndex(0)
         self.tl_decimals.setValue(2)
         self.tl_prefix.setText("")
         self.tl_suffix.setText("")
         try:
             from matplotlib.colors import to_hex
             if major_ticks:
-                lbl = (major_ticks[0].label1 if side in
-                       ("Bottom", "Left") else major_ticks[0].label2)
+                lbl = major_ticks[0].label1
                 self.tl_color.set_color(to_hex(lbl.get_color()))
                 self.tl_size.setValue(int(lbl.get_fontsize()))
                 self.tl_rotation.setValue(int(lbl.get_rotation()))
@@ -695,28 +806,27 @@ class AxisPropertiesDialog(QDialog):
             self.tl_size.setValue(10)
             self.tl_rotation.setValue(0)
 
-        # Spine — default to black / 1.0 for clean initial display.
-        spine = ax.spines[spine_key]
+        # ── Primary spine ──────────────────────────────────────────
+        spine = ax.spines[pri_key]
         self.spine_show.setChecked(spine.get_visible())
         self.spine_color.set_color("#000000")
         self.spine_width.setValue(1.0)
 
-        # Major ticks.
+        # ── Major ticks ────────────────────────────────────────────
         self.major_show.setChecked(True)
         if major_ticks:
             tk = major_ticks[0]
             vis = (tk.tick1line.get_visible()
                    if hasattr(tk, 'tick1line') else True)
             self.major_show.setChecked(vis)
-        self.major_direction.setCurrentIndex(0)  # out
+        self.major_direction.setCurrentIndex(0)
         try:
-            tp = ax.yaxis.get_tick_params() if not is_x \
-                else ax.xaxis.get_tick_params()
+            tp = mpl_axis.get_tick_params()
         except Exception:
             tp = {}
-        direction = tp.get('tickdir', 'out')
+        direction_str = tp.get('tickdir', 'out')
         for i, (_, code) in enumerate(_TICK_DIRECTIONS):
-            if code == direction:
+            if code == direction_str:
                 self.major_direction.setCurrentIndex(i)
                 break
         self.major_length.setValue(
@@ -727,7 +837,7 @@ class AxisPropertiesDialog(QDialog):
         n_major = len(mpl_axis.get_majorticklocs())
         self.major_count.setValue(max(2, n_major))
 
-        # Minor ticks.
+        # ── Minor ticks ────────────────────────────────────────────
         loc = mpl_axis.get_minor_locator()
         minor_on = not isinstance(loc, mticker.NullLocator)
         self.minor_show.setChecked(minor_on)
@@ -738,7 +848,7 @@ class AxisPropertiesDialog(QDialog):
         self.minor_color.set_color("#000000")
         self.minor_count.setValue(5)
 
-        # Grids.
+        # ── Grids ──────────────────────────────────────────────────
         major_grid = any(gl.get_visible()
                          for gl in mpl_axis.get_gridlines())
         self.grid_major_show.setChecked(major_grid)
@@ -759,34 +869,65 @@ class AxisPropertiesDialog(QDialog):
             self.grid_major_width.setValue(gl.get_linewidth())
         self.grid_minor_show.setChecked(False)
 
+        # ── Secondary side (Top / Right) ───────────────────────────
+        sec_spine = ax.spines[sec_key]
+        self.sec_spine_show.setChecked(sec_spine.get_visible())
+        self.sec_spine_color.set_color("#000000")
+        self.sec_spine_width.setValue(1.0)
+        self.sec_spine_style.setCurrentIndex(0)
+
+        # Secondary tick / label visibility.
+        sec_tick_vis = False
+        sec_label_vis = False
+        if major_ticks:
+            tk = major_ticks[0]
+            sec_tick_vis = (tk.tick2line.get_visible()
+                           if hasattr(tk, 'tick2line') else False)
+            sec_label_vis = tk.label2.get_visible()
+        self.sec_tick_show.setChecked(sec_tick_vis)
+        self.sec_label_show.setChecked(sec_label_vis)
+
+        # Secondary title.
+        if is_x:
+            sec_text = getattr(self._chart, '_top_label_text', '')
+        else:
+            sec_text = getattr(self._chart, '_right_label_text', '')
+        self.sec_title_show.setChecked(bool(sec_text))
+        self.sec_title_text.setText(sec_text)
+        self.sec_title_color.set_color("#000000")
+        self.sec_title_font.setCurrentIndex(0)
+        self.sec_title_size.setValue(10)
+        self.sec_title_bold.setChecked(False)
+        self.sec_title_italic.setChecked(False)
+        self.sec_title_rotation.setCurrentText("0")
+
     # ── Apply ──────────────────────────────────────────────────────
 
     def _apply_current(self):
-        """Apply current side to the chart without closing."""
-        self._side_states[self._current_side] = \
+        """Apply current direction to the chart without closing."""
+        self._dir_states[self._current_dir] = \
             self._capture_widgets()
-        self._apply_side(self._current_side)
+        self._apply_dir(self._current_dir)
 
     def apply_to_chart(self, chart):
-        """Apply all modified sides to the chart (called on OK)."""
-        self._side_states[self._current_side] = \
+        """Apply all modified directions to the chart (called on OK)."""
+        self._dir_states[self._current_dir] = \
             self._capture_widgets()
-        for side, st in self._side_states.items():
-            self._apply_side(side, st)
+        for d, st in self._dir_states.items():
+            self._apply_dir(d, st)
 
-    def _apply_side(self, side, st=None):
-        """Apply one side's state to the chart axes."""
+    def _apply_dir(self, direction, st=None):
+        """Apply one direction's state (primary + secondary) to axes."""
         if st is None:
-            st = self._side_states.get(side)
+            st = self._dir_states.get(direction)
         if st is None:
             return
         ax = self._ax
-        is_x = side in ("Bottom", "Top")
-        spine_key = {"Bottom": "bottom", "Top": "top",
-                     "Left": "left", "Right": "right"}[side]
+        is_x = (direction == "x")
+        pri_key = "bottom" if is_x else "left"
+        sec_key = "top" if is_x else "right"
         mpl_axis = ax.xaxis if is_x else ax.yaxis
-        _side_param = {"Bottom": "bottom", "Top": "top",
-                       "Left": "left", "Right": "right"}[side]
+        ax_str = 'x' if is_x else 'y'
 
         # ── Scale ──────────────────────────────────────────────────
         try:
@@ -803,7 +944,6 @@ class AxisPropertiesDialog(QDialog):
             else:
                 ax.set_ylim(st["limit_min"], st["limit_max"])
 
-        # Invert.
         currently_inverted = (ax.xaxis_inverted() if is_x
                               else ax.yaxis_inverted())
         if st["invert"] != currently_inverted:
@@ -812,7 +952,7 @@ class AxisPropertiesDialog(QDialog):
             else:
                 ax.invert_yaxis()
 
-        # ── Title ──────────────────────────────────────────────────
+        # ── Primary title ──────────────────────────────────────────
         text = st["title_text"] if st["title_show"] else ""
         weight = "bold" if st["title_bold"] else "normal"
         style = "italic" if st["title_italic"] else "normal"
@@ -833,39 +973,26 @@ class AxisPropertiesDialog(QDialog):
             rotation=rotation,
         )
 
-        if side == "Bottom":
+        if is_x:
             ax.set_xlabel(text, **title_kw)
-        elif side == "Left":
+        else:
             ax.set_ylabel(text, **title_kw)
-        elif side == "Top":
-            self._chart._top_label_text = text
-            self._set_secondary_label(
-                self._chart, "top", text, title_kw)
-        else:  # Right
-            self._chart._right_label_text = text
-            self._set_secondary_label(
-                self._chart, "right", text, title_kw)
 
-        # ── Spine ──────────────────────────────────────────────────
-        spine = ax.spines[spine_key]
+        # ── Primary spine ──────────────────────────────────────────
+        spine = ax.spines[pri_key]
         spine.set_visible(st["spine_show"])
         spine.set_edgecolor(st["spine_color"])
         spine.set_linewidth(st["spine_width"])
 
-        # ── Tick labels (per-side) ─────────────────────────────────
-        # Use only the specific side kwarg so the opposite side is
-        # not affected.
+        # ── Tick labels (primary side) ─────────────────────────────
         ax.tick_params(
-            axis='x' if is_x else 'y', which='both',
-            **{_side_param: st["tl_show"],
-               f"label{_side_param}": st["tl_show"]})
+            axis=ax_str, which='both',
+            **{pri_key: st["tl_show"],
+               f"label{pri_key}": st["tl_show"]})
 
         if st["tl_show"]:
-            # Label styling applies to the whole axis (matplotlib
-            # limitation), but visibility is per-side above.
             ax.tick_params(
-                axis='x' if is_x else 'y',
-                which='major',
+                axis=ax_str, which='major',
                 labelcolor=st["tl_color"],
                 labelsize=st["tl_size"],
                 labelrotation=st["tl_rotation"],
@@ -876,56 +1003,45 @@ class AxisPropertiesDialog(QDialog):
                 mpl_axis, fmt_code, st["tl_decimals"],
                 st["tl_prefix"], st["tl_suffix"])
 
-        # ── Major ticks (per-side visibility) ──────────────────────
+        # ── Major ticks ────────────────────────────────────────────
         tick_dir = _TICK_DIRECTIONS[st["major_dir"]][1]
         if st["major_show"]:
             mpl_axis.set_major_locator(
                 mticker.MaxNLocator(nbins=st["major_count"]))
             ax.tick_params(
-                axis='x' if is_x else 'y',
-                which='major',
+                axis=ax_str, which='major',
                 direction=tick_dir,
                 length=st["major_length"],
                 width=st["major_width"],
                 color=st["major_color"],
-                **{_side_param: True},
+                **{pri_key: True},
             )
         else:
-            # Only hide ticks on this specific side.
             ax.tick_params(
-                axis='x' if is_x else 'y',
-                which='major',
-                **{_side_param: False},
+                axis=ax_str, which='major',
+                **{pri_key: False},
             )
 
-        # ── Minor ticks (per-side visibility) ──────────────────────
+        # ── Minor ticks ────────────────────────────────────────────
         minor_dir = _TICK_DIRECTIONS[st["minor_dir"]][1]
         if st["minor_show"]:
             mpl_axis.set_minor_locator(
                 mticker.AutoMinorLocator(st["minor_count"]))
             ax.tick_params(
-                axis='x' if is_x else 'y',
-                which='minor',
+                axis=ax_str, which='minor',
                 direction=minor_dir,
                 length=st["minor_length"],
                 width=st["minor_width"],
                 color=st["minor_color"],
-                **{_side_param: True},
+                **{pri_key: True},
             )
         else:
             ax.tick_params(
-                axis='x' if is_x else 'y',
-                which='minor',
-                **{_side_param: False},
+                axis=ax_str, which='minor',
+                **{pri_key: False},
             )
 
         # ── Grids ──────────────────────────────────────────────────
-        # Grid is per-axis (x or y), not per-side. Disable first,
-        # then re-enable with styling if requested. This avoids the
-        # matplotlib quirk where passing kwargs implies visible=True.
-        ax_str = 'x' if is_x else 'y'
-
-        # Explicitly set visibility on every gridline artist.
         for gl in mpl_axis.get_gridlines():
             gl.set_visible(st["grid_major_show"])
         if st["grid_major_show"]:
@@ -948,6 +1064,49 @@ class AxisPropertiesDialog(QDialog):
         else:
             ax.grid(False, axis=ax_str, which='minor')
 
+        # ── Secondary spine ────────────────────────────────────────
+        sec_spine = ax.spines[sec_key]
+        sec_spine.set_visible(st["sec_spine_show"])
+        sec_spine.set_edgecolor(st["sec_spine_color"])
+        sec_spine.set_linewidth(st["sec_spine_width"])
+        sec_ls = _LINE_STYLES[st["sec_spine_style"]][1]
+        sec_spine.set_linestyle(sec_ls)
+
+        # ── Secondary ticks & labels ──────────────────────────────
+        ax.tick_params(
+            axis=ax_str, which='both',
+            **{sec_key: st["sec_tick_show"],
+               f"label{sec_key}": st["sec_label_show"]})
+
+        # ── Secondary title ────────────────────────────────────────
+        sec_text = (st["sec_title_text"]
+                    if st["sec_title_show"] else "")
+        sec_weight = "bold" if st["sec_title_bold"] else "normal"
+        sec_style = "italic" if st["sec_title_italic"] else "normal"
+        sec_font = st["sec_title_font"]
+        if sec_font == "Default":
+            sec_font = "sans-serif"
+        try:
+            sec_rot = int(st["sec_title_rotation"])
+        except (ValueError, TypeError):
+            sec_rot = 0
+
+        sec_title_kw = dict(
+            fontsize=st["sec_title_size"],
+            color=st["sec_title_color"],
+            fontweight=sec_weight,
+            fontstyle=sec_style,
+            fontfamily=sec_font,
+            rotation=sec_rot,
+        )
+        loc = "top" if is_x else "right"
+        if is_x:
+            self._chart._top_label_text = sec_text
+        else:
+            self._chart._right_label_text = sec_text
+        self._set_secondary_label(
+            self._chart, loc, sec_text, sec_title_kw)
+
         self._chart._canvas.draw_idle()
 
     # ── Helpers ────────────────────────────────────────────────────
@@ -960,7 +1119,6 @@ class AxisPropertiesDialog(QDialog):
             mpl_axis.set_major_formatter(
                 mticker.ScalarFormatter())
         elif fmt_code == "decimal":
-            fmt_str = f"{{:{prefix},.{decimals}f}}{suffix}"
             mpl_axis.set_major_formatter(
                 mticker.FuncFormatter(
                     lambda v, _: f"{prefix}{v:,.{decimals}f}"
