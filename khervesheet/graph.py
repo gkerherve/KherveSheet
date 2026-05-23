@@ -257,8 +257,8 @@ class EmbeddedChart(QWidget):
             if side is not None:
                 self._open_axis_dialog(side)
                 return
-            # Double-click elsewhere opens plot details.
-            self._open_plot_details()
+            # Double-click elsewhere opens axis properties (Bottom X).
+            self._open_axis_dialog("Bottom")
 
     def _try_edit_axis_label(self, event):
         """If *event* hit xlabel, ylabel, or title, open QInputDialog
@@ -368,7 +368,7 @@ class EmbeddedChart(QWidget):
 
     # ── Properties dialog ───────────────────────────────────────────
     def mouseDoubleClickEvent(self, event):
-        self._open_plot_details()
+        self._open_axis_dialog("Bottom")
 
     def _open_properties(self):
         dlg = ChartPropertiesDialog(self)
