@@ -313,6 +313,18 @@ class SheetWidget(QWidget):
         it = self.table.item(row, col)
         return it.text() if it else ""
 
+    def _cell_decimals(self, row, col):
+        """Return decimal precision for a cell based on its format."""
+        cf = self._cell_formats.get((row, col))
+        nf = None
+        if cf:
+            nf = getattr(cf, 'number_format', None)
+        if not nf:
+            nf = self._col_formats.get(col, self._default_format)
+        # Map format string to decimal count.
+        fmt_map = {"0": 0, "0.0": 1, "0.00": 2, "0.000": 3, "0.0000": 4}
+        return fmt_map.get(nf, 3)  # default 3
+
     def numeric_column(self, col: int) -> np.ndarray:
         """Return column data as a float array (NaN for non-numeric)."""
         vals = []
@@ -420,10 +432,11 @@ class SheetWidget(QWidget):
         old_text = self._shadow.get((row, col), "")
 
         # Detect formula
+        dec = self._cell_decimals(row, col)
         if new_text.startswith("="):
             self._cell_formulas[(row, col)] = new_text
             self._register_deps(row, col, new_text)
-            result = self._evaluate_formula(new_text, row, col)
+            result = self._evaluate_formula(new_text, row, col, dec)
             self.table.blockSignals(True)
             if it is None:
                 it = QTableWidgetItem(str(result))
@@ -439,7 +452,7 @@ class SheetWidget(QWidget):
             if new_text:
                 try:
                     v = float(new_text)
-                    formatted = str(_format_number(v))
+                    formatted = str(_format_number(v, dec))
                     if formatted != new_text:
                         self.table.blockSignals(True)
                         it.setText(formatted)
@@ -488,7 +501,8 @@ class SheetWidget(QWidget):
             formula = self._cell_formulas.get((dr, dc))
             if not formula:
                 continue
-            result = str(self._evaluate_formula(formula, dr, dc))
+            dec = self._cell_decimals(dr, dc)
+            result = str(self._evaluate_formula(formula, dr, dc, dec))
             self.table.blockSignals(True)
             it = self.table.item(dr, dc)
             if it is None:
@@ -614,7 +628,8 @@ class SheetWidget(QWidget):
             self.table.update(idx)
 
     # ── Formula evaluation (basic) ───────────────────────────────────
-    def _evaluate_formula(self, formula: str, row: int, col: int):
+    def _evaluate_formula(self, formula: str, row: int, col: int,
+                          decimals: int = 3):
         """Evaluate a cell formula.
 
         Supports:
@@ -934,7 +949,7 @@ class SheetWidget(QWidget):
             expr = expr.replace("^", "**")
 
             result = eval(expr, ns)  # noqa: S307
-            return _format_number(result)
+            return _format_number(result, decimals)
         except Exception:
             return "#ERROR"
 

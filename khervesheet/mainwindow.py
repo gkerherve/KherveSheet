@@ -818,14 +818,19 @@ class MainWindow(QMainWindow):
                             idx += 1
                     # Second pass: evaluate formulas now that all
                     # plain values are in place, and register deps.
-                    for r, c, formula in pending_formulas:
-                        sheet._register_deps(r, c, formula)
-                        result = sheet._evaluate_formula(
-                            formula, r, c)
-                        it = sheet.table.item(r, c)
-                        if it:
-                            it.setText(str(result))
-                        sheet._shadow[(r, c)] = str(result)
+                    # Run twice so formulas referencing other formula
+                    # cells (e.g. max(E) where E has formulas) pick
+                    # up results from the first pass.
+                    for _pass in range(2):
+                        for r, c, formula in pending_formulas:
+                            if _pass == 0:
+                                sheet._register_deps(r, c, formula)
+                            result = sheet._evaluate_formula(
+                                formula, r, c)
+                            it = sheet.table.item(r, c)
+                            if it:
+                                it.setText(str(result))
+                            sheet._shadow[(r, c)] = str(result)
                     sheet.table.blockSignals(False)
 
                     # Column designations.
