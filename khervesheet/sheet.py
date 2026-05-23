@@ -461,9 +461,210 @@ class SheetWidget(QWidget):
             import math
             import re
 
+            import datetime as _dt
+
             def _mean(vals):
                 v = list(vals)
                 return sum(v) / len(v) if v else 0
+
+            # ── Date & Time helpers ──────────────────────────────
+            def _DATE(y, m, d):
+                return _dt.date(int(y), int(m), int(d)).isoformat()
+
+            def _TODAY():
+                return _dt.date.today().isoformat()
+
+            def _NOW():
+                return _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+            def _TIME(h, m, s=0):
+                return _dt.time(int(h), int(m), int(s)).isoformat()
+
+            def _YEAR(d):
+                return _dt.date.fromisoformat(str(d)).year
+
+            def _MONTH(d):
+                return _dt.date.fromisoformat(str(d)).month
+
+            def _DAY(d):
+                return _dt.date.fromisoformat(str(d)).day
+
+            def _HOUR(t):
+                return _dt.time.fromisoformat(str(t)).hour
+
+            def _MINUTE(t):
+                return _dt.time.fromisoformat(str(t)).minute
+
+            def _SECOND(t):
+                return _dt.time.fromisoformat(str(t)).second
+
+            def _DAYS(end, start):
+                a = _dt.date.fromisoformat(str(end))
+                b = _dt.date.fromisoformat(str(start))
+                return (a - b).days
+
+            def _WEEKDAY(d):
+                return _dt.date.fromisoformat(str(d)).isoweekday()
+
+            # ── Text helpers ─────────────────────────────────────
+            def _LEFT(t, n=1):
+                return str(t)[:int(n)]
+
+            def _RIGHT(t, n=1):
+                return str(t)[-int(n):]
+
+            def _MID(t, start, n):
+                s = str(t)
+                return s[int(start) - 1:int(start) - 1 + int(n)]
+
+            def _LEN(t):
+                return len(str(t))
+
+            def _LOWER(t):
+                return str(t).lower()
+
+            def _UPPER(t):
+                return str(t).upper()
+
+            def _PROPER(t):
+                return str(t).title()
+
+            def _TRIM(t):
+                return " ".join(str(t).split())
+
+            def _CONCAT(*args):
+                return "".join(str(a) for a in args)
+
+            def _SUBSTITUTE(t, old, new, instance=None):
+                s = str(t)
+                if instance is None:
+                    return s.replace(str(old), str(new))
+                # Replace only the n-th occurrence.
+                count = 0
+                idx = 0
+                old_s, new_s = str(old), str(new)
+                while True:
+                    pos = s.find(old_s, idx)
+                    if pos == -1:
+                        return s
+                    count += 1
+                    if count == int(instance):
+                        return s[:pos] + new_s + s[pos + len(old_s):]
+                    idx = pos + 1
+
+            def _REPT(t, n):
+                return str(t) * int(n)
+
+            def _FIND(find, within, start=1):
+                pos = str(within).find(str(find), int(start) - 1)
+                return pos + 1 if pos >= 0 else "#VALUE!"
+
+            def _REPLACE(old, start, n, new):
+                s = str(old)
+                i = int(start) - 1
+                return s[:i] + str(new) + s[i + int(n):]
+
+            def _EXACT(a, b):
+                return str(a) == str(b)
+
+            def _VALUE(t):
+                return float(str(t))
+
+            def _TEXT(v, fmt):
+                return format(float(v), str(fmt))
+
+            # ── Logical helpers ──────────────────────────────────
+            def _IF(cond, true_val, false_val=""):
+                return true_val if cond else false_val
+
+            def _AND(*args):
+                return all(args)
+
+            def _OR(*args):
+                return any(args)
+
+            def _NOT(val):
+                return not val
+
+            def _IFERROR(val, fallback):
+                # Evaluated eagerly so errors in val are already
+                # caught by the outer try/except — use as best-effort.
+                return val if val != "#ERROR" else fallback
+
+            def _XOR(*args):
+                return sum(bool(a) for a in args) % 2 == 1
+
+            # ── Math extras ──────────────────────────────────────
+            def _MOD(n, d):
+                return float(n) % float(d)
+
+            def _POWER(n, p):
+                return float(n) ** float(p)
+
+            def _QUOTIENT(n, d):
+                return int(float(n) // float(d))
+
+            def _SIGN(n):
+                n = float(n)
+                return 1 if n > 0 else (-1 if n < 0 else 0)
+
+            def _EVEN(n):
+                n = math.ceil(abs(float(n)))
+                return n + (n % 2) if float(n) >= 0 else -(n + (n % 2))  # noqa: E501
+
+            def _ODD(n):
+                n = math.ceil(abs(float(n)))
+                if n % 2 == 0:
+                    n += 1
+                return n if float(n) >= 0 else -n
+
+            def _FACT(n):
+                return math.factorial(int(n))
+
+            def _GCD(*args):
+                from math import gcd
+                result = int(args[0])
+                for a in args[1:]:
+                    result = gcd(result, int(a))
+                return result
+
+            def _LCM(*args):
+                from math import gcd
+                result = int(args[0])
+                for a in args[1:]:
+                    result = result * int(a) // gcd(result, int(a))
+                return result
+
+            def _RAND():
+                import random
+                return random.random()
+
+            def _RANDBETWEEN(lo, hi):
+                import random
+                return random.randint(int(lo), int(hi))
+
+            def _ROUNDDOWN(n, d):
+                m = 10 ** int(d)
+                return math.trunc(float(n) * m) / m
+
+            def _ROUNDUP(n, d):
+                m = 10 ** int(d)
+                v = float(n) * m
+                return (math.ceil(v) if v >= 0
+                        else math.floor(v)) / m
+
+            def _TRUNC(n, d=0):
+                m = 10 ** int(d)
+                return math.trunc(float(n) * m) / m
+
+            def _COMBIN(n, k):
+                return math.comb(int(n), int(k))
+
+            def _DEGREES(r):
+                return math.degrees(float(r))
+
+            def _RADIANS(d):
+                return math.radians(float(d))
 
             ns = {"__builtins__": {}, "math": math, "np": np,
                   "abs": abs, "round": round, "int": int, "float": float,
@@ -472,7 +673,39 @@ class SheetWidget(QWidget):
                   "PI": math.pi, "pi": math.pi,
                   "sqrt": math.sqrt, "log": math.log,
                   "log10": math.log10, "exp": math.exp,
-                  "sin": math.sin, "cos": math.cos, "tan": math.tan}
+                  "sin": math.sin, "cos": math.cos, "tan": math.tan,
+                  "asin": math.asin, "acos": math.acos, "atan": math.atan,
+                  "atan2": math.atan2,
+                  "sinh": math.sinh, "cosh": math.cosh, "tanh": math.tanh,
+                  "asinh": math.asinh, "acosh": math.acosh, "atanh": math.atanh,
+                  # Date & Time
+                  "DATE": _DATE, "TODAY": _TODAY, "NOW": _NOW,
+                  "TIME": _TIME, "YEAR": _YEAR, "MONTH": _MONTH,
+                  "DAY": _DAY, "HOUR": _HOUR, "MINUTE": _MINUTE,
+                  "SECOND": _SECOND, "DAYS": _DAYS, "WEEKDAY": _WEEKDAY,
+                  # Text
+                  "LEFT": _LEFT, "RIGHT": _RIGHT, "MID": _MID,
+                  "LEN": _LEN, "LOWER": _LOWER, "UPPER": _UPPER,
+                  "PROPER": _PROPER, "TRIM": _TRIM,
+                  "CONCAT": _CONCAT, "CONCATENATE": _CONCAT,
+                  "SUBSTITUTE": _SUBSTITUTE, "REPT": _REPT,
+                  "FIND": _FIND, "REPLACE": _REPLACE,
+                  "EXACT": _EXACT, "VALUE": _VALUE, "TEXT": _TEXT,
+                  # Logical
+                  "IF": _IF, "AND": _AND, "OR": _OR, "NOT": _NOT,
+                  "IFERROR": _IFERROR, "XOR": _XOR,
+                  "TRUE": True, "FALSE": False,
+                  # Math extras
+                  "MOD": _MOD, "POWER": _POWER,
+                  "QUOTIENT": _QUOTIENT, "SIGN": _SIGN,
+                  "EVEN": _EVEN, "ODD": _ODD, "FACT": _FACT,
+                  "GCD": _GCD, "LCM": _LCM,
+                  "RAND": _RAND, "RANDBETWEEN": _RANDBETWEEN,
+                  "ROUNDDOWN": _ROUNDDOWN, "ROUNDUP": _ROUNDUP,
+                  "TRUNC": _TRUNC, "COMBIN": _COMBIN,
+                  "DEGREES": _DEGREES, "RADIANS": _RADIANS,
+                  "LN": math.log, "PRODUCT": math.prod,
+                  }
 
             # 1. Expand range functions: SUM(A1:A10)
             expr = self._expand_range_functions(expr)
@@ -498,7 +731,26 @@ class SheetWidget(QWidget):
             _SKIP = {"log", "exp", "sin", "cos", "tan", "sqrt",
                      "abs", "int", "sum", "min", "max", "len",
                      "avg", "mean", "count", "stdev", "round",
-                     "float", "math", "PI", "pi", "np"}
+                     "float", "math", "PI", "pi", "np",
+                     "asin", "acos", "atan",
+                     "sinh", "cosh", "tanh",
+                     "asinh", "acosh", "atanh",
+                     "DATE", "TODAY", "NOW", "TIME",
+                     "YEAR", "MONTH", "DAY", "HOUR",
+                     "MINUTE", "SECOND", "DAYS", "WEEKDAY",
+                     "LEFT", "RIGHT", "MID", "LEN",
+                     "LOWER", "UPPER", "PROPER", "TRIM",
+                     "CONCAT", "CONCATENATE", "SUBSTITUTE",
+                     "REPT", "FIND", "REPLACE", "EXACT",
+                     "VALUE", "TEXT",
+                     "IF", "AND", "OR", "NOT",
+                     "IFERROR", "XOR", "TRUE", "FALSE",
+                     "MOD", "POWER", "QUOTIENT", "SIGN",
+                     "EVEN", "ODD", "FACT", "GCD", "LCM",
+                     "RAND", "RANDBETWEEN",
+                     "ROUNDDOWN", "ROUNDUP", "TRUNC",
+                     "COMBIN", "DEGREES", "RADIANS",
+                     "LN", "PRODUCT"}
 
             def _safe_cell_ref(m):
                 name = m.group(1)
