@@ -438,13 +438,12 @@ class EmbeddedChart(QWidget):
             return
         self._legend_dragging = True
         self._legend_drag_origin = global_pos
-        # Snapshot the legend bbox in axes fraction coords.
-        bbox = leg.get_bbox_to_anchor()
-        if bbox is not None:
-            inv = self._ax.transAxes.inverted()
-            x0, y0 = inv.transform((bbox.x0, bbox.y0))
-            self._legend_anchor_start = (x0, y0)
-        else:
+        # Snapshot the legend's current position in display (pixel) coords.
+        try:
+            renderer = self._canvas.get_renderer()
+            bbox = leg.get_window_extent(renderer)
+            self._legend_anchor_start = (bbox.x0, bbox.y0)
+        except Exception:
             self._legend_anchor_start = (0, 0)
         self.setCursor(Qt.ClosedHandCursor)
 
@@ -453,24 +452,16 @@ class EmbeddedChart(QWidget):
         leg = self._ax.get_legend()
         if leg is None or self._legend_drag_origin is None:
             return
-        # Compute pixel delta and convert to axes-fraction delta.
+        # Compute pixel delta (Qt coords: Y down, mpl: Y up).
         delta = global_pos - self._legend_drag_origin
-        dx_px, dy_px = delta.x(), delta.y()
-        # Get axes bbox in display (pixel) coords.
-        ax_bbox = self._ax.get_position().transformed(
-            self._figure.transFigure)
-        fig_w, fig_h = self._figure.get_size_inches()
-        dpi = self._figure.dpi
-        ax_w = ax_bbox.width * fig_w * dpi
-        ax_h = ax_bbox.height * fig_h * dpi
-        if ax_w == 0 or ax_h == 0:
-            return
-        dx_frac = dx_px / ax_w
-        dy_frac = -dy_px / ax_h  # Qt Y is inverted vs mpl
+        dx_px, dy_px = delta.x(), -delta.y()
+        # New position in display coords.
         x0, y0 = self._legend_anchor_start
-        leg.set_bbox_to_anchor(
-            (x0 + dx_frac, y0 + dy_frac),
-            transform=self._ax.transAxes)
+        new_x, new_y = x0 + dx_px, y0 + dy_px
+        # Convert display coords to axes fraction.
+        inv = self._ax.transAxes.inverted()
+        fx, fy = inv.transform((new_x, new_y))
+        leg.set_bbox_to_anchor((fx, fy), transform=self._ax.transAxes)
         self._canvas.draw_idle()
 
     # ── Interactive label / axis editing ───────────────────────────
