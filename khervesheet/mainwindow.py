@@ -671,14 +671,21 @@ class MainWindow(QMainWindow):
                     n_rows = sheet.row_count()
                     n_cols = sheet.column_count()
                     data = []
+                    formulas = sheet._cell_formulas
                     for r in range(n_rows):
                         self._progress.setValue(
                             int(100 * (si * n_rows + r)
                                 / max(1, wb.tabs.count() * n_rows)))
                         QApplication.processEvents()
                         for c in range(n_cols):
-                            it = sheet.table.item(r, c)
-                            data.append(it.text() if it else "")
+                            # Save formula text if cell has one,
+                            # otherwise save display value.
+                            f = formulas.get((r, c))
+                            if f:
+                                data.append(f)
+                            else:
+                                it = sheet.table.item(r, c)
+                                data.append(it.text() if it else "")
                     dt = h5py.string_dtype()
                     sg.create_dataset("cells", data=data, dtype=dt)
 
@@ -777,8 +784,10 @@ class MainWindow(QMainWindow):
                     sheet.table.setColumnCount(n_cols)
                     sheet._refresh_headers()
 
-                    # Restore cells.
+                    # Restore cells — first pass: load values and
+                    # record formulas for a second evaluation pass.
                     cells = sg["cells"][:]
+                    pending_formulas = []
                     idx = 0
                     for r in range(n_rows):
                         self._progress.setValue(
@@ -790,10 +799,27 @@ class MainWindow(QMainWindow):
                             if isinstance(val, bytes):
                                 val = val.decode('utf-8')
                             if val:
-                                sheet.table.setItem(
-                                    r, c, QTableWidgetItem(val))
-                                sheet._shadow[(r, c)] = val
+                                if val.startswith("="):
+                                    # Store formula; set placeholder.
+                                    sheet._cell_formulas[(r, c)] = val
+                                    sheet.table.setItem(
+                                        r, c, QTableWidgetItem(""))
+                                    pending_formulas.append((r, c, val))
+                                else:
+                                    sheet.table.setItem(
+                                        r, c, QTableWidgetItem(val))
+                                    sheet._shadow[(r, c)] = val
                             idx += 1
+                    # Second pass: evaluate formulas now that all
+                    # plain values are in place, and register deps.
+                    for r, c, formula in pending_formulas:
+                        sheet._register_deps(r, c, formula)
+                        result = sheet._evaluate_formula(
+                            formula, r, c)
+                        it = sheet.table.item(r, c)
+                        if it:
+                            it.setText(str(result))
+                        sheet._shadow[(r, c)] = str(result)
                     sheet.table.blockSignals(False)
 
                     # Column designations.
@@ -805,6 +831,8 @@ class MainWindow(QMainWindow):
 
                     # Cell formats (fill, borders, font).
                     fmt_json = sg.attrs.get('cell_formats', '')
+                    if isinstance(fmt_json, bytes):
+                        fmt_json = fmt_json.decode('utf-8')
                     if fmt_json:
                         from .cellformat import formats_from_json
                         sheet._cell_formats.update(
@@ -922,6 +950,8 @@ class MainWindow(QMainWindow):
             self._status_msg(
                 f"Loaded {path}", 5000)
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             QMessageBox.warning(self, "Load Error", str(e))
         finally:
             self._show_progress(False)

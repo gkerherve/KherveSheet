@@ -248,6 +248,7 @@ class SheetWidget(QWidget):
         # ── Internal state ───────────────────────────────────────────
         self._shadow: dict = {}          # (row, col) → last-known text
         self._cell_formulas: dict = {}   # (row, col) → "=formula"
+        self._dependents: dict = {}      # (row, col) → set of (r, c) that depend on it
         self._col_formats: dict = {}     # col → format string
         self._col_designations: dict = {}  # col → "X" or "Y"
 
@@ -387,6 +388,7 @@ class SheetWidget(QWidget):
         # Detect formula
         if new_text.startswith("="):
             self._cell_formulas[(row, col)] = new_text
+            self._register_deps(row, col, new_text)
             result = self._evaluate_formula(new_text, row, col)
             self.table.blockSignals(True)
             if it is None:
@@ -398,6 +400,7 @@ class SheetWidget(QWidget):
             new_text = str(result)
         else:
             self._cell_formulas.pop((row, col), None)
+            self._unregister_deps(row, col)
 
         self._shadow[(row, col)] = new_text
 
@@ -406,6 +409,51 @@ class SheetWidget(QWidget):
             self._undo_stack.push(cmd)
 
         self.data_changed.emit(col)
+
+        # Recalculate any cells that depend on this one.
+        self._recalc_dependents(row, col)
+
+    # ── Dependency tracking ──────────────────────────────────────────
+    def _register_deps(self, row, col, formula):
+        """Parse *formula* for cell refs and register (row, col) as
+        a dependent of each referenced cell."""
+        self._unregister_deps(row, col)
+        refs = self._parse_cell_refs(formula)
+        for ref_key in refs:
+            self._dependents.setdefault(ref_key, set()).add((row, col))
+
+    def _unregister_deps(self, row, col):
+        """Remove (row, col) from all dependency sets."""
+        key = (row, col)
+        for deps in self._dependents.values():
+            deps.discard(key)
+
+    def _recalc_dependents(self, row, col, visited=None):
+        """Re-evaluate cells that depend on (row, col), recursively."""
+        if visited is None:
+            visited = set()
+        deps = self._dependents.get((row, col))
+        if not deps:
+            return
+        for (dr, dc) in list(deps):
+            if (dr, dc) in visited:
+                continue
+            visited.add((dr, dc))
+            formula = self._cell_formulas.get((dr, dc))
+            if not formula:
+                continue
+            result = str(self._evaluate_formula(formula, dr, dc))
+            self.table.blockSignals(True)
+            it = self.table.item(dr, dc)
+            if it is None:
+                it = QTableWidgetItem(result)
+                self.table.setItem(dr, dc, it)
+            else:
+                it.setText(result)
+            self._shadow[(dr, dc)] = result
+            self.table.blockSignals(False)
+            # Cascade: recalc cells that depend on this one too.
+            self._recalc_dependents(dr, dc, visited)
 
     def _set_cell_quiet(self, row, col, text):
         """Set cell text without triggering signals."""
