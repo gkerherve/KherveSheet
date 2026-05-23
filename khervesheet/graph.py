@@ -81,10 +81,7 @@ class EmbeddedChart(QWidget):
         # letting matplotlib handle clicks inside the axes area.
         self._canvas.installEventFilter(self)
 
-        # Interactive label/axis editing — hover highlight + double-click.
-        self._hover_highlight_artist = None
-        self._hover_spine = None          # (spine_obj, orig_color, orig_lw)
-        self._canvas.mpl_connect("motion_notify_event", self._on_label_hover)
+        # Double-click on labels/spines opens edit dialogs.
         self._canvas.mpl_connect("button_press_event", self._on_canvas_click)
 
         # Add the initial series.
@@ -246,74 +243,20 @@ class EmbeddedChart(QWidget):
                   "Left": "left", "Right": "right"}
 
     def _on_label_hover(self, event):
-        """Highlight xlabel, ylabel, or title on hover; highlight axis
-        spine when cursor is near an edge."""
-        ax = self._ax
-        hit_artist = None
-        for artist in (ax.xaxis.label, ax.yaxis.label, ax.title):
-            try:
-                inside, _ = artist.contains(event)
-            except Exception:
-                inside = False
-            if inside and artist.get_text():
-                hit_artist = artist
-                break
-
-        prev = self._hover_highlight_artist
-        changed = False
-        if hit_artist is not prev:
-            if prev is not None:
-                prev.set_bbox(None)
-                self._hover_highlight_artist = None
-                changed = True
-            if hit_artist is not None:
-                hit_artist.set_bbox(dict(
-                    boxstyle="round,pad=0.15", facecolor="#d0e8ff",
-                    edgecolor="#4a90d9", alpha=0.6, linewidth=1.0))
-                self._hover_highlight_artist = hit_artist
-                changed = True
-
-        # Spine highlight.
-        side = self._hit_axis_spine(event)
-        new_spine = None
-        if side is not None and hit_artist is None:
-            key = self._SPINE_MAP.get(side)
-            if key:
-                new_spine = ax.spines[key]
-        prev_sp = self._hover_spine
-        prev_spine_obj = prev_sp[0] if prev_sp else None
-        if new_spine is not prev_spine_obj:
-            if prev_sp is not None:
-                sp, orig_c, orig_lw = prev_sp
-                try:
-                    sp.set_edgecolor(orig_c)
-                    sp.set_linewidth(orig_lw)
-                except Exception:
-                    pass
-                self._hover_spine = None
-                changed = True
-            if new_spine is not None:
-                try:
-                    orig_c = new_spine.get_edgecolor()
-                    orig_lw = new_spine.get_linewidth()
-                    self._hover_spine = (new_spine, orig_c, orig_lw)
-                    new_spine.set_edgecolor("#4a90d9")
-                    new_spine.set_linewidth(2.5)
-                except Exception:
-                    self._hover_spine = None
-                changed = True
-
-        if changed:
-            self._canvas.draw_idle()
+        """No-op — kept for mpl_connect compatibility."""
+        pass
 
     def _on_canvas_click(self, event):
-        """Handle double-click on labels or axis spines."""
+        """Handle double-click: label edit or axis properties."""
         if event.dblclick:
             if self._try_edit_axis_label(event):
                 return
             side = self._hit_axis_spine(event)
             if side is not None:
                 self._open_axis_dialog(side)
+                return
+            # Double-click elsewhere opens plot details.
+            self._open_plot_details()
 
     def _try_edit_axis_label(self, event):
         """If *event* hit xlabel, ylabel, or title, open QInputDialog
@@ -514,13 +457,12 @@ class EmbeddedChart(QWidget):
                     self._resize_edge = edge
                     self._drag_origin = event.globalPos()
                     self._drag_widget_pos = self.geometry()
-                    return True   # consumed
-                if not self._in_axes_area(wpos):
-                    self._drag_origin = event.globalPos()
-                    self._drag_widget_pos = self.pos()
-                    self.setCursor(Qt.SizeAllCursor)
-                    return True
-            return False  # let canvas handle (matplotlib)
+                    return True   # consumed — resize only
+                # Record press for potential drag, but don't consume
+                # so matplotlib can detect double-clicks.
+                self._drag_origin = event.globalPos()
+                self._drag_widget_pos = self.pos()
+            return False  # let matplotlib see the press
 
         if etype == QEvent.MouseMove:
             if self._resizing and self._drag_origin is not None:
@@ -557,10 +499,7 @@ class EmbeddedChart(QWidget):
                 }
                 self.setCursor(cursors.get(edge, Qt.ArrowCursor))
                 return True
-            if not self._in_axes_area(wpos):
-                self.setCursor(Qt.SizeAllCursor)
-                return False  # let matplotlib also see it
-            self.unsetCursor()
+            self.setCursor(Qt.SizeAllCursor)
             return False
 
         if etype == QEvent.MouseButtonRelease:
@@ -596,7 +535,6 @@ class EmbeddedChart(QWidget):
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
             self._select()
-
             edge = self._hit_edge(event.pos())
             if edge:
                 self._resizing = True
@@ -605,13 +543,12 @@ class EmbeddedChart(QWidget):
                 self._drag_widget_pos = self.geometry()
                 event.accept()
                 return
-            # Drag from anywhere outside the axes area (margins/border).
-            if not self._in_axes_area(event.pos()):
-                self._drag_origin = event.globalPos()
-                self._drag_widget_pos = self.pos()
-                self.setCursor(Qt.SizeAllCursor)
-                event.accept()
-                return
+            # Drag from anywhere on the border.
+            self._drag_origin = event.globalPos()
+            self._drag_widget_pos = self.pos()
+            self.setCursor(Qt.SizeAllCursor)
+            event.accept()
+            return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
@@ -640,8 +577,7 @@ class EmbeddedChart(QWidget):
             event.accept()
             return
 
-        # Update cursor: resize edges → resize cursors,
-        # outside axes → move cursor, inside axes → default.
+        # Cursor feedback: resize edges or move.
         edge = self._hit_edge(event.pos())
         if edge:
             cursors = {
@@ -653,10 +589,8 @@ class EmbeddedChart(QWidget):
                 'lt': Qt.SizeFDiagCursor, 'tl': Qt.SizeFDiagCursor,
             }
             self.setCursor(cursors.get(edge, Qt.ArrowCursor))
-        elif not self._in_axes_area(event.pos()):
-            self.setCursor(Qt.SizeAllCursor)
         else:
-            self.unsetCursor()
+            self.setCursor(Qt.SizeAllCursor)
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event):
