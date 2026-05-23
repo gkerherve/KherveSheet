@@ -679,9 +679,9 @@ class MainWindow(QMainWindow):
                         for c in range(n_cols):
                             # Save formula text if cell has one,
                             # otherwise save display value.
-                            f = formulas.get((r, c))
-                            if f:
-                                data.append(f)
+                            fm = formulas.get((r, c))
+                            if fm:
+                                data.append(fm)
                             else:
                                 it = sheet.table.item(r, c)
                                 data.append(it.text() if it else "")
@@ -856,18 +856,18 @@ class MainWindow(QMainWindow):
                                          or cf.font_family is not None
                                          or cf.font_size is not None)
                             if need_font:
-                                f = it.font()
+                                ft = it.font()
                                 if cf.bold is not None:
-                                    f.setBold(cf.bold)
+                                    ft.setBold(cf.bold)
                                 if cf.italic is not None:
-                                    f.setItalic(cf.italic)
+                                    ft.setItalic(cf.italic)
                                 if cf.underline is not None:
-                                    f.setUnderline(cf.underline)
+                                    ft.setUnderline(cf.underline)
                                 if cf.font_family is not None:
-                                    f.setFamily(cf.font_family)
+                                    ft.setFamily(cf.font_family)
                                 if cf.font_size is not None:
-                                    f.setPointSizeF(cf.font_size)
-                                it.setFont(f)
+                                    ft.setPointSizeF(cf.font_size)
+                                it.setFont(ft)
 
                     # Column widths.
                     if "col_widths" in sg:
