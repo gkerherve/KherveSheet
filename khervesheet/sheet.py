@@ -204,7 +204,6 @@ class SheetWidget(QWidget):
             "Value or =formula  (e.g. =SUM(A1:A10), =B1+C1)")
         self._formula_bar.returnPressed.connect(self._apply_formula_bar)
         self._formula_bar.textChanged.connect(self._on_formula_bar_text)
-        self._formula_bar.installEventFilter(self)
 
         fbar.addWidget(cell_lbl)
         fbar.addWidget(self._cell_ref_label)
@@ -273,6 +272,7 @@ class SheetWidget(QWidget):
         self.table.viewport().setMouseTracking(True)
         self.table.viewport().installEventFilter(self)
         self.table.installEventFilter(self)
+        self._formula_bar.installEventFilter(self)
 
     # ── Public API ───────────────────────────────────────────────────
     def column_count(self) -> int:

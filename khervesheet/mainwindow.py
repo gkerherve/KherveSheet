@@ -306,14 +306,10 @@ class MainWindow(QMainWindow):
         self._fill_btn.setToolTip("Fill Color")
         self._fill_btn.setPopupMode(QToolButton.MenuButtonPopup)
         self._fill_btn.clicked.connect(self._apply_last_fill_color)
-        fill_menu = QMenu(self._fill_btn)
-        fill_menu.addAction(
-            self._build_color_palette(fill_menu, self._on_fill_palette))
-        fill_menu.addSeparator()
-        fill_menu.addAction("No Fill", self._clear_fill_color)
-        fill_menu.addAction("Choose Color\u2026",
-                            self._pick_fill_color)
-        self._fill_btn.setMenu(fill_menu)
+        self._fill_menu = QMenu(self._fill_btn)
+        self._fill_menu_built = False
+        self._fill_menu.aboutToShow.connect(self._ensure_fill_palette)
+        self._fill_btn.setMenu(self._fill_menu)
         fmt.addWidget(self._fill_btn)
 
         # ── Font colour button with dropdown ──────────────────────
@@ -325,13 +321,10 @@ class MainWindow(QMainWindow):
         self._font_color_btn.setPopupMode(QToolButton.MenuButtonPopup)
         self._font_color_btn.clicked.connect(
             self._apply_last_font_color)
-        fc_menu = QMenu(self._font_color_btn)
-        fc_menu.addAction(
-            self._build_color_palette(fc_menu, self._on_font_palette))
-        fc_menu.addSeparator()
-        fc_menu.addAction("Choose Color\u2026",
-                          self._pick_font_color)
-        self._font_color_btn.setMenu(fc_menu)
+        self._fc_menu = QMenu(self._font_color_btn)
+        self._fc_menu_built = False
+        self._fc_menu.aboutToShow.connect(self._ensure_font_palette)
+        self._font_color_btn.setMenu(self._fc_menu)
         fmt.addWidget(self._font_color_btn)
 
         # ── Border button with dropdown ───────────────────────────
@@ -1216,6 +1209,29 @@ class MainWindow(QMainWindow):
         wa = QWidgetAction(parent_menu)
         wa.setDefaultWidget(container)
         return wa
+
+    def _ensure_fill_palette(self):
+        if self._fill_menu_built:
+            return
+        self._fill_menu_built = True
+        self._fill_menu.addAction(
+            self._build_color_palette(self._fill_menu,
+                                      self._on_fill_palette))
+        self._fill_menu.addSeparator()
+        self._fill_menu.addAction("No Fill", self._clear_fill_color)
+        self._fill_menu.addAction("Choose Color\u2026",
+                                  self._pick_fill_color)
+
+    def _ensure_font_palette(self):
+        if self._fc_menu_built:
+            return
+        self._fc_menu_built = True
+        self._fc_menu.addAction(
+            self._build_color_palette(self._fc_menu,
+                                      self._on_font_palette))
+        self._fc_menu.addSeparator()
+        self._fc_menu.addAction("Choose Color\u2026",
+                                self._pick_font_color)
 
     def _on_fill_palette(self, color):
         self._last_fill_color = color
