@@ -77,6 +77,10 @@ class EmbeddedChart(QWidget):
 
         # No toolbar — right-click menu provides all actions.
 
+        # Intercept mouse events on canvas for drag/resize while
+        # letting matplotlib handle clicks inside the axes area.
+        self._canvas.installEventFilter(self)
+
         # Interactive label/axis editing — hover highlight + double-click.
         self._hover_highlight_artist = None
         self._hover_spine = None          # (spine_obj, orig_color, orig_lw)
@@ -94,12 +98,10 @@ class EmbeddedChart(QWidget):
             except Exception:
                 pass
 
-        # Style the frame.
+        # Style the frame — no border by default; paintEvent draws
+        # selection border only when chart is selected.
         self.setStyleSheet(
-            "EmbeddedChart { "
-            "  border: 1px solid #90a4b8; "
-            "  background: white; "
-            "}")
+            "EmbeddedChart { background: white; }")
         self.setAutoFillBackground(True)
 
         self.show()
@@ -480,6 +482,93 @@ class EmbeddedChart(QWidget):
                 keep.append((idx, artist))
         self._fill_artists = keep
 
+    # ── Event filter on canvas ─────────────────────────────────────
+    def eventFilter(self, obj, event):
+        """Intercept mouse events on the canvas for drag / resize.
+
+        Events inside the matplotlib axes area are forwarded to the
+        canvas (matplotlib interaction).  Events in the margin area
+        (outside the axes) are handled here for drag / resize.
+        """
+        if obj is not self._canvas:
+            return super().eventFilter(obj, event)
+
+        from PyQt5.QtCore import QEvent
+        etype = event.type()
+
+        # Map canvas-local pos to chart-widget coords for hit testing.
+        wpos = self._canvas.mapToParent(event.pos())
+
+        if etype == QEvent.MouseButtonPress:
+            if event.button() == Qt.LeftButton:
+                self._select()
+                edge = self._hit_edge(wpos)
+                if edge:
+                    self._resizing = True
+                    self._resize_edge = edge
+                    self._drag_origin = event.globalPos()
+                    self._drag_widget_pos = self.geometry()
+                    return True   # consumed
+                if not self._in_axes_area(wpos):
+                    self._drag_origin = event.globalPos()
+                    self._drag_widget_pos = self.pos()
+                    self.setCursor(Qt.SizeAllCursor)
+                    return True
+            return False  # let canvas handle (matplotlib)
+
+        if etype == QEvent.MouseMove:
+            if self._resizing and self._drag_origin is not None:
+                delta = event.globalPos() - self._drag_origin
+                geo = QRect(self._drag_widget_pos)
+                edge = self._resize_edge
+                if 'r' in edge:
+                    geo.setRight(geo.right() + delta.x())
+                if 'b' in edge:
+                    geo.setBottom(geo.bottom() + delta.y())
+                if 'l' in edge:
+                    geo.setLeft(geo.left() + delta.x())
+                if 't' in edge:
+                    geo.setTop(geo.top() + delta.y())
+                if (geo.width() >= self.minimumWidth() and
+                        geo.height() >= self.minimumHeight()):
+                    self.setGeometry(geo)
+                return True
+            if self._drag_origin is not None and not self._resizing:
+                delta = event.globalPos() - self._drag_origin
+                new_pos = self._drag_widget_pos + delta
+                self.move(new_pos)
+                return True
+            # Cursor feedback.
+            edge = self._hit_edge(wpos)
+            if edge:
+                cursors = {
+                    'r': Qt.SizeHorCursor, 'l': Qt.SizeHorCursor,
+                    'b': Qt.SizeVerCursor, 't': Qt.SizeVerCursor,
+                    'rb': Qt.SizeFDiagCursor, 'br': Qt.SizeFDiagCursor,
+                    'lb': Qt.SizeBDiagCursor, 'bl': Qt.SizeBDiagCursor,
+                    'rt': Qt.SizeBDiagCursor, 'tr': Qt.SizeBDiagCursor,
+                    'lt': Qt.SizeFDiagCursor, 'tl': Qt.SizeFDiagCursor,
+                }
+                self.setCursor(cursors.get(edge, Qt.ArrowCursor))
+                return True
+            if not self._in_axes_area(wpos):
+                self.setCursor(Qt.SizeAllCursor)
+                return False  # let matplotlib also see it
+            self.unsetCursor()
+            return False
+
+        if etype == QEvent.MouseButtonRelease:
+            if self._drag_origin is not None or self._resizing:
+                self._drag_origin = None
+                self._drag_widget_pos = None
+                self._resizing = False
+                self._resize_edge = None
+                self.unsetCursor()
+                return True
+            return False
+
+        return False
+
     # ── Drag to move ────────────────────────────────────────────────
     def _in_axes_area(self, pos):
         """True if *pos* (widget coords) falls inside the matplotlib
@@ -609,13 +698,11 @@ class EmbeddedChart(QWidget):
         selected = (self._source_sheet and
                     getattr(self._source_sheet, '_selected_chart',
                             None) is self)
-        p = QPainter(self)
         if selected:
+            p = QPainter(self)
             p.setPen(QPen(QColor("#3078c6"), 2))
-        else:
-            p.setPen(QPen(QColor("#90a4b8"), 1))
-        p.drawRect(0, 0, self.width() - 1, self.height() - 1)
-        p.end()
+            p.drawRect(0, 0, self.width() - 1, self.height() - 1)
+            p.end()
 
 
 class _ChartWindow(QDialog):

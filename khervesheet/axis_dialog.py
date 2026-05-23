@@ -16,10 +16,10 @@ the Free Software Foundation, either version 3 of the License, or
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout,
+    QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QPushButton, QComboBox, QLineEdit, QCheckBox,
     QSpinBox, QDoubleSpinBox, QTabWidget, QWidget, QGroupBox,
-    QDialogButtonBox, QColorDialog, QSizePolicy, QScrollArea,
+    QDialogButtonBox, QColorDialog,
 )
 
 import matplotlib.ticker as mticker
@@ -468,14 +468,6 @@ class AxisPropertiesDialog(QDialog):
         """
         w = QWidget()
         layout = QVBoxLayout(w)
-
-        note = QLabel(
-            "<i>Only properties that matplotlib allows to be set "
-            "independently on the secondary side are shown here. "
-            "Scale, limits, tick styling and grids are shared with "
-            "the primary side.</i>")
-        note.setWordWrap(True)
-        layout.addWidget(note)
 
         # ── Spine ──────────────────────────────────────────────────
         spine_grp = QGroupBox("Spine")
