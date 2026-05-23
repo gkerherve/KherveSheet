@@ -803,21 +803,44 @@ class MainWindow(QMainWindow):
                         sheet._col_designations = {
                             int(k): v for k, v in d.items()}
 
-                    # Cell formats (fill + borders).
+                    # Cell formats (fill, borders, font).
                     fmt_json = sg.attrs.get('cell_formats', '')
                     if fmt_json:
                         from .cellformat import formats_from_json
                         sheet._cell_formats.update(
                             formats_from_json(fmt_json))
-                        # Apply background colours to items.
                         from PyQt5.QtWidgets import QTableWidgetItem
+                        from PyQt5.QtGui import QFont, QBrush
                         for (fr, fc), cf in sheet._cell_formats.items():
+                            it = sheet.table.item(fr, fc)
+                            if it is None:
+                                it = QTableWidgetItem("")
+                                sheet.table.setItem(fr, fc, it)
                             if cf.bg_color:
-                                it = sheet.table.item(fr, fc)
-                                if it is None:
-                                    it = QTableWidgetItem("")
-                                    sheet.table.setItem(fr, fc, it)
                                 it.setBackground(QColor(cf.bg_color))
+                            if cf.font_color:
+                                it.setForeground(QColor(cf.font_color))
+                            if cf.alignment is not None:
+                                it.setTextAlignment(cf.alignment)
+                            # Font properties.
+                            need_font = (cf.bold is not None
+                                         or cf.italic is not None
+                                         or cf.underline is not None
+                                         or cf.font_family is not None
+                                         or cf.font_size is not None)
+                            if need_font:
+                                f = it.font()
+                                if cf.bold is not None:
+                                    f.setBold(cf.bold)
+                                if cf.italic is not None:
+                                    f.setItalic(cf.italic)
+                                if cf.underline is not None:
+                                    f.setUnderline(cf.underline)
+                                if cf.font_family is not None:
+                                    f.setFamily(cf.font_family)
+                                if cf.font_size is not None:
+                                    f.setPointSizeF(cf.font_size)
+                                it.setFont(f)
 
                     # Column widths.
                     if "col_widths" in sg:
@@ -1032,11 +1055,20 @@ class MainWindow(QMainWindow):
                     items.append(it)
         return items
 
+    def _cell_fmt(self, sheet, row, col):
+        """Get or create a CellFormat for a cell."""
+        from .cellformat import CellFormat
+        return sheet._cell_formats.setdefault((row, col), CellFormat())
+
     def _apply_font_family(self, font):
+        s = self._active_sheet()
         for it in self._selected_items():
             f = it.font()
             f.setFamily(font.family())
             it.setFont(f)
+            if s:
+                r, c = it.row(), it.column()
+                self._cell_fmt(s, r, c).font_family = font.family()
 
     def _apply_font_size(self, size_text):
         try:
@@ -1045,31 +1077,47 @@ class MainWindow(QMainWindow):
             return
         if size < 1:
             return
+        s = self._active_sheet()
         for it in self._selected_items():
             f = it.font()
             f.setPointSizeF(size)
             it.setFont(f)
+            if s:
+                r, c = it.row(), it.column()
+                self._cell_fmt(s, r, c).font_size = size
 
     def _toggle_bold(self):
         checked = self._bold_act.isChecked()
+        s = self._active_sheet()
         for it in self._selected_items():
             f = it.font()
             f.setBold(checked)
             it.setFont(f)
+            if s:
+                r, c = it.row(), it.column()
+                self._cell_fmt(s, r, c).bold = checked
 
     def _toggle_italic(self):
         checked = self._italic_act.isChecked()
+        s = self._active_sheet()
         for it in self._selected_items():
             f = it.font()
             f.setItalic(checked)
             it.setFont(f)
+            if s:
+                r, c = it.row(), it.column()
+                self._cell_fmt(s, r, c).italic = checked
 
     def _toggle_underline(self):
         checked = self._underline_act.isChecked()
+        s = self._active_sheet()
         for it in self._selected_items():
             f = it.font()
             f.setUnderline(checked)
             it.setFont(f)
+            if s:
+                r, c = it.row(), it.column()
+                self._cell_fmt(s, r, c).underline = checked
 
     def _apply_alignment(self, alignment):
         # Update toggle state — only one alignment active at a time.
@@ -1077,8 +1125,12 @@ class MainWindow(QMainWindow):
             alignment & Qt.AlignLeft and not alignment & Qt.AlignHCenter)
         self._align_center_act.setChecked(bool(alignment & Qt.AlignHCenter))
         self._align_right_act.setChecked(bool(alignment & Qt.AlignRight))
+        s = self._active_sheet()
         for it in self._selected_items():
             it.setTextAlignment(int(alignment))
+            if s:
+                r, c = it.row(), it.column()
+                self._cell_fmt(s, r, c).alignment = int(alignment)
 
     # ── Fill colour ─────────────────────────────────────────────────
     def _apply_last_fill_color(self):
@@ -1131,8 +1183,12 @@ class MainWindow(QMainWindow):
             self._apply_font_color(c)
 
     def _apply_font_color(self, color_hex):
+        s = self._active_sheet()
         for it in self._selected_items():
             it.setForeground(QColor(color_hex))
+            if s:
+                r, c = it.row(), it.column()
+                self._cell_fmt(s, r, c).font_color = color_hex
 
     # ── Borders ──────────────────────────────────────────────────────
     _BORDER_PRESETS = [

@@ -41,19 +41,34 @@ class BorderSpec:
 
 @dataclass
 class CellFormat:
-    """Per-cell visual formatting (fill colour + borders)."""
+    """Per-cell visual formatting (fill, borders, font, alignment)."""
     bg_color: Optional[str] = None
     border_top: Optional[BorderSpec] = None
     border_bottom: Optional[BorderSpec] = None
     border_left: Optional[BorderSpec] = None
     border_right: Optional[BorderSpec] = None
+    # Font properties.
+    bold: Optional[bool] = None
+    italic: Optional[bool] = None
+    underline: Optional[bool] = None
+    font_family: Optional[str] = None
+    font_size: Optional[float] = None
+    font_color: Optional[str] = None
+    alignment: Optional[int] = None
 
     def is_empty(self) -> bool:
         return (self.bg_color is None
                 and self.border_top is None
                 and self.border_bottom is None
                 and self.border_left is None
-                and self.border_right is None)
+                and self.border_right is None
+                and self.bold is None
+                and self.italic is None
+                and self.underline is None
+                and self.font_family is None
+                and self.font_size is None
+                and self.font_color is None
+                and self.alignment is None)
 
     def to_dict(self) -> dict:
         d: dict = {}
@@ -63,6 +78,20 @@ class CellFormat:
             b = getattr(self, f"border_{side}")
             if b is not None:
                 d[f"b_{side}"] = b.to_dict()
+        if self.bold is not None:
+            d["bold"] = self.bold
+        if self.italic is not None:
+            d["italic"] = self.italic
+        if self.underline is not None:
+            d["underline"] = self.underline
+        if self.font_family is not None:
+            d["font_family"] = self.font_family
+        if self.font_size is not None:
+            d["font_size"] = self.font_size
+        if self.font_color is not None:
+            d["font_color"] = self.font_color
+        if self.alignment is not None:
+            d["alignment"] = self.alignment
         return d
 
     @classmethod
@@ -73,6 +102,17 @@ class CellFormat:
             bd = d.get(f"b_{side}")
             if bd:
                 setattr(cf, f"border_{side}", BorderSpec.from_dict(bd))
+        cf.bold = d.get("bold")
+        cf.italic = d.get("italic")
+        cf.underline = d.get("underline")
+        cf.font_family = d.get("font_family")
+        cf.font_size = d.get("font_size")
+        if cf.font_size is not None:
+            cf.font_size = float(cf.font_size)
+        cf.font_color = d.get("font_color")
+        cf.alignment = d.get("alignment")
+        if cf.alignment is not None:
+            cf.alignment = int(cf.alignment)
         return cf
 
 
