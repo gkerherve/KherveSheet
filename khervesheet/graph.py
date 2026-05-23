@@ -75,11 +75,7 @@ class EmbeddedChart(QWidget):
         self._ax = self._figure.add_subplot(111)
         layout.addWidget(self._canvas, stretch=1)
 
-        # Compact toolbar (shown at bottom).
-        self._toolbar = NavigationToolbar(self._canvas, self)
-        self._toolbar.setIconSize(QSize(16, 16))
-        self._toolbar.setFixedHeight(24)
-        layout.addWidget(self._toolbar)
+        # No toolbar — right-click menu provides all actions.
 
         # Interactive label/axis editing — hover highlight + double-click.
         self._hover_highlight_artist = None
@@ -593,18 +589,7 @@ class EmbeddedChart(QWidget):
 
     def _set_selected(self, selected):
         """Visual feedback for selection — thicker blue border."""
-        if selected:
-            self.setStyleSheet(
-                "EmbeddedChart { "
-                "  border: 2px solid #3078c6; "
-                "  background: white; "
-                "}")
-        else:
-            self.setStyleSheet(
-                "EmbeddedChart { "
-                "  border: 1px solid #90a4b8; "
-                "  background: white; "
-                "}")
+        self.update()  # trigger paintEvent to redraw border
 
     def _hit_edge(self, pos):
         """Return a string like 'r', 'rb', 'l' etc. if pos is near
@@ -625,8 +610,14 @@ class EmbeddedChart(QWidget):
     # ── Paint border ────────────────────────────────────────────────
     def paintEvent(self, event):
         super().paintEvent(event)
+        selected = (self._source_sheet and
+                    getattr(self._source_sheet, '_selected_chart',
+                            None) is self)
         p = QPainter(self)
-        p.setPen(QPen(QColor("#90a4b8"), 1))
+        if selected:
+            p.setPen(QPen(QColor("#3078c6"), 2))
+        else:
+            p.setPen(QPen(QColor("#90a4b8"), 1))
         p.drawRect(0, 0, self.width() - 1, self.height() - 1)
         p.end()
 

@@ -166,6 +166,12 @@ class AxisPropertiesDialog(QDialog):
         w = QWidget()
         form = QFormLayout(w)
 
+        self._scale_note = QLabel(
+            "<i>Scale and limits are shared with the opposite side "
+            "(Bottom\u2194Top, Left\u2194Right).</i>")
+        self._scale_note.setWordWrap(True)
+        form.addRow(self._scale_note)
+
         self.scale_combo = QComboBox()
         self.scale_combo.addItems(
             ["linear", "log", "symlog", "logit"])
@@ -839,19 +845,17 @@ class AxisPropertiesDialog(QDialog):
         spine.set_edgecolor(st["spine_color"])
         spine.set_linewidth(st["spine_width"])
 
-        # ── Tick labels ────────────────────────────────────────────
-        label_kw = {
-            _side_param: st["tl_show"],
-            f"label{_side_param}": st["tl_show"],
-        }
-        mpl_axis.set_tick_params(which='both', **label_kw)
+        # ── Tick labels (per-side) ─────────────────────────────────
+        # Use only the specific side kwarg so the opposite side is
+        # not affected.
+        ax.tick_params(
+            axis='x' if is_x else 'y', which='both',
+            **{_side_param: st["tl_show"],
+               f"label{_side_param}": st["tl_show"]})
 
         if st["tl_show"]:
-            tl_props = dict(
-                color=st["tl_color"],
-                fontsize=st["tl_size"],
-                rotation=st["tl_rotation"],
-            )
+            # Label styling applies to the whole axis (matplotlib
+            # limitation), but visibility is per-side above.
             ax.tick_params(
                 axis='x' if is_x else 'y',
                 which='major',
@@ -859,17 +863,13 @@ class AxisPropertiesDialog(QDialog):
                 labelsize=st["tl_size"],
                 labelrotation=st["tl_rotation"],
             )
-
-            # Tick format.
             fmt_idx = st["tl_format"]
             fmt_code = _TICK_FORMATS[fmt_idx][1]
-            decimals = st["tl_decimals"]
-            prefix = st["tl_prefix"]
-            suffix = st["tl_suffix"]
             self._apply_tick_format(
-                mpl_axis, fmt_code, decimals, prefix, suffix)
+                mpl_axis, fmt_code, st["tl_decimals"],
+                st["tl_prefix"], st["tl_suffix"])
 
-        # ── Major ticks ────────────────────────────────────────────
+        # ── Major ticks (per-side visibility) ──────────────────────
         tick_dir = _TICK_DIRECTIONS[st["major_dir"]][1]
         if st["major_show"]:
             mpl_axis.set_major_locator(
@@ -884,9 +884,14 @@ class AxisPropertiesDialog(QDialog):
                 **{_side_param: True},
             )
         else:
-            mpl_axis.set_major_locator(mticker.NullLocator())
+            # Only hide ticks on this specific side.
+            ax.tick_params(
+                axis='x' if is_x else 'y',
+                which='major',
+                **{_side_param: False},
+            )
 
-        # ── Minor ticks ────────────────────────────────────────────
+        # ── Minor ticks (per-side visibility) ──────────────────────
         minor_dir = _TICK_DIRECTIONS[st["minor_dir"]][1]
         if st["minor_show"]:
             mpl_axis.set_minor_locator(
@@ -901,31 +906,40 @@ class AxisPropertiesDialog(QDialog):
                 **{_side_param: True},
             )
         else:
-            mpl_axis.set_minor_locator(mticker.NullLocator())
-
-        # ── Grids ──────────────────────────────────────────────────
-        major_ls = _LINE_STYLES[st["grid_major_style"]][1]
-        minor_ls = _LINE_STYLES[st["grid_minor_style"]][1]
-
-        ax.grid(
-            st["grid_major_show"],
-            axis='x' if is_x else 'y',
-            which='major',
-            color=st["grid_major_color"],
-            alpha=st["grid_major_alpha"],
-            linestyle=major_ls,
-            linewidth=st["grid_major_width"],
-        )
-        if st["minor_show"]:
-            ax.grid(
-                st["grid_minor_show"],
+            ax.tick_params(
                 axis='x' if is_x else 'y',
                 which='minor',
-                color=st["grid_minor_color"],
-                alpha=st["grid_minor_alpha"],
-                linestyle=minor_ls,
-                linewidth=st["grid_minor_width"],
+                **{_side_param: False},
             )
+
+        # ── Grids ──────────────────────────────────────────────────
+        # Grid is per-axis (x or y), not per-side. Disable first,
+        # then re-enable with styling if requested. This avoids the
+        # matplotlib quirk where passing kwargs implies visible=True.
+        ax_str = 'x' if is_x else 'y'
+
+        # Explicitly set visibility on every gridline artist.
+        for gl in mpl_axis.get_gridlines():
+            gl.set_visible(st["grid_major_show"])
+        if st["grid_major_show"]:
+            major_ls = _LINE_STYLES[st["grid_major_style"]][1]
+            ax.grid(True, axis=ax_str, which='major',
+                    color=st["grid_major_color"],
+                    alpha=st["grid_major_alpha"],
+                    linestyle=major_ls,
+                    linewidth=st["grid_major_width"])
+        else:
+            ax.grid(False, axis=ax_str, which='major')
+
+        if st["minor_show"] and st["grid_minor_show"]:
+            minor_ls = _LINE_STYLES[st["grid_minor_style"]][1]
+            ax.grid(True, axis=ax_str, which='minor',
+                    color=st["grid_minor_color"],
+                    alpha=st["grid_minor_alpha"],
+                    linestyle=minor_ls,
+                    linewidth=st["grid_minor_width"])
+        else:
+            ax.grid(False, axis=ax_str, which='minor')
 
         self._chart._canvas.draw_idle()
 
