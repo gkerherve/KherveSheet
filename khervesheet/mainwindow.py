@@ -1020,6 +1020,16 @@ class MainWindow(QMainWindow):
     def _apply_theme(self, name):
         from .app import apply_theme
         apply_theme(QApplication.instance(), name)
+        self._refresh_toolbar_icons()
+
+    def _refresh_toolbar_icons(self):
+        """Rebuild format toolbar icons so they match the current theme."""
+        self._bold_act.setIcon(icons.bold_icon(28))
+        self._italic_act.setIcon(icons.italic_icon(28))
+        self._underline_act.setIcon(icons.underline_icon(28))
+        self._align_left_act.setIcon(icons.align_left_icon(28))
+        self._align_center_act.setIcon(icons.align_center_icon(28))
+        self._align_right_act.setIcon(icons.align_right_icon(28))
 
     # ── Zoom ─────────────────────────────────────────────────────────
     def _zoom_in(self):

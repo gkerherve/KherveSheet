@@ -1023,6 +1023,14 @@ def _draw_arrow(p: QPainter, color: QColor, pw: float,
 # ── Cell-formatting icons (QPainter) ──────────────────────────────
 # These never depend on qtawesome — always painted manually.
 
+def _toolbar_fg() -> QColor:
+    """Return the current palette's ButtonText colour — adapts to theme."""
+    app = QApplication.instance()
+    if app:
+        return app.palette().color(app.palette().ButtonText)
+    return QColor("#333333")
+
+
 def _fmt_icon(size: int, draw_fn) -> QIcon:
     """Create a *size*×*size* icon by calling *draw_fn(painter, size)*."""
     pm = QPixmap(size, size)
@@ -1039,7 +1047,7 @@ def bold_icon(size: int = 28) -> QIcon:
         f = QFont("Arial", int(s * 0.6))
         f.setBold(True)
         p.setFont(f)
-        p.setPen(QPen(QColor("#333333")))
+        p.setPen(QPen(_toolbar_fg()))
         p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "B")
     return _fmt_icon(size, _draw)
 
@@ -1049,7 +1057,7 @@ def italic_icon(size: int = 28) -> QIcon:
         f = QFont("Arial", int(s * 0.6))
         f.setItalic(True)
         p.setFont(f)
-        p.setPen(QPen(QColor("#333333")))
+        p.setPen(QPen(_toolbar_fg()))
         p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "I")
     return _fmt_icon(size, _draw)
 
@@ -1059,14 +1067,14 @@ def underline_icon(size: int = 28) -> QIcon:
         f = QFont("Arial", int(s * 0.6))
         f.setUnderline(True)
         p.setFont(f)
-        p.setPen(QPen(QColor("#333333")))
+        p.setPen(QPen(_toolbar_fg()))
         p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "U")
     return _fmt_icon(size, _draw)
 
 
 def align_left_icon(size: int = 28) -> QIcon:
     def _draw(p, s):
-        p.setPen(QPen(QColor("#333333"), max(1.5, s / 14)))
+        p.setPen(QPen(_toolbar_fg(), max(1.5, s / 14)))
         m = s * 0.2  # margin
         for i, w_frac in enumerate((1.0, 0.6, 0.8, 0.5)):
             y = m + i * (s - 2 * m) / 3
@@ -1076,7 +1084,7 @@ def align_left_icon(size: int = 28) -> QIcon:
 
 def align_center_icon(size: int = 28) -> QIcon:
     def _draw(p, s):
-        p.setPen(QPen(QColor("#333333"), max(1.5, s / 14)))
+        p.setPen(QPen(_toolbar_fg(), max(1.5, s / 14)))
         m = s * 0.2
         cx = s / 2
         for i, w_frac in enumerate((1.0, 0.6, 0.8, 0.5)):
@@ -1088,7 +1096,7 @@ def align_center_icon(size: int = 28) -> QIcon:
 
 def align_right_icon(size: int = 28) -> QIcon:
     def _draw(p, s):
-        p.setPen(QPen(QColor("#333333"), max(1.5, s / 14)))
+        p.setPen(QPen(_toolbar_fg(), max(1.5, s / 14)))
         m = s * 0.2
         right = s - m
         for i, w_frac in enumerate((1.0, 0.6, 0.8, 0.5)):
