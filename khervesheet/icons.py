@@ -1144,19 +1144,99 @@ def font_color_icon(size: int = 28, color: str = "#ff0000") -> QIcon:
 
 
 def border_icon(size: int = 28) -> QIcon:
-    """Grid icon representing cell borders."""
+    """Grid icon representing cell borders (All Borders)."""
+    return border_preset_icon("all", size)
+
+
+def border_preset_icon(preset: str, size: int = 28) -> QIcon:
+    """Draw a border preset icon matching Excel's Borders menu.
+
+    *preset*: "bottom", "top", "left", "right", "none",
+              "all", "outside", "thick_outside",
+              "bottom_double", "thick_bottom",
+              "top_bottom", "top_thick_bottom",
+              "top_double_bottom".
+    """
     def _draw(p, s):
         fg = _toolbar_fg()
-        pw = max(1.2, s / 16)
-        p.setPen(QPen(fg, pw))
-        m = s * 0.18
-        w = s - 2 * m
-        # Outer rectangle
-        p.drawRect(QRectF(m, m, w, w))
-        # Cross in the middle
+        light = QColor(fg)
+        light.setAlpha(80)
+        thin = max(1.0, s / 20)
+        thick = max(2.0, s / 10)
+        m = s * 0.15
+        r = s - m          # right / bottom
         mid = s / 2
-        p.drawLine(QPointF(m, mid), QPointF(s - m, mid))
-        p.drawLine(QPointF(mid, m), QPointF(mid, s - m))
+
+        # Draw faint 2×2 grid as background reference.
+        p.setPen(QPen(light, 0.6))
+        p.drawRect(QRectF(m, m, r - m, r - m))
+        p.drawLine(QPointF(m, mid), QPointF(r, mid))
+        p.drawLine(QPointF(mid, m), QPointF(mid, r))
+
+        # Overlay the active border lines in full colour.
+        solid = QPen(fg, thin)
+        solid_thick = QPen(fg, thick)
+        dbl_gap = thick * 0.8
+
+        if preset == "bottom":
+            p.setPen(solid)
+            p.drawLine(QPointF(m, r), QPointF(r, r))
+
+        elif preset == "top":
+            p.setPen(solid)
+            p.drawLine(QPointF(m, m), QPointF(r, m))
+
+        elif preset == "left":
+            p.setPen(solid)
+            p.drawLine(QPointF(m, m), QPointF(m, r))
+
+        elif preset == "right":
+            p.setPen(solid)
+            p.drawLine(QPointF(r, m), QPointF(r, r))
+
+        elif preset == "none":
+            pass  # only the faint grid
+
+        elif preset == "all":
+            p.setPen(solid)
+            p.drawRect(QRectF(m, m, r - m, r - m))
+            p.drawLine(QPointF(m, mid), QPointF(r, mid))
+            p.drawLine(QPointF(mid, m), QPointF(mid, r))
+
+        elif preset == "outside":
+            p.setPen(solid)
+            p.drawRect(QRectF(m, m, r - m, r - m))
+
+        elif preset == "thick_outside":
+            p.setPen(solid_thick)
+            p.drawRect(QRectF(m, m, r - m, r - m))
+
+        elif preset == "bottom_double":
+            p.setPen(solid)
+            p.drawLine(QPointF(m, r - dbl_gap), QPointF(r, r - dbl_gap))
+            p.drawLine(QPointF(m, r), QPointF(r, r))
+
+        elif preset == "thick_bottom":
+            p.setPen(solid_thick)
+            p.drawLine(QPointF(m, r), QPointF(r, r))
+
+        elif preset == "top_bottom":
+            p.setPen(solid)
+            p.drawLine(QPointF(m, m), QPointF(r, m))
+            p.drawLine(QPointF(m, r), QPointF(r, r))
+
+        elif preset == "top_thick_bottom":
+            p.setPen(solid)
+            p.drawLine(QPointF(m, m), QPointF(r, m))
+            p.setPen(solid_thick)
+            p.drawLine(QPointF(m, r), QPointF(r, r))
+
+        elif preset == "top_double_bottom":
+            p.setPen(solid)
+            p.drawLine(QPointF(m, m), QPointF(r, m))
+            p.drawLine(QPointF(m, r - dbl_gap), QPointF(r, r - dbl_gap))
+            p.drawLine(QPointF(m, r), QPointF(r, r))
+
     return _fmt_icon(size, _draw)
 
 

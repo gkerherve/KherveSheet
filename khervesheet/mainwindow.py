@@ -175,30 +175,9 @@ class MainWindow(QMainWindow):
         format_menu.addSeparator()
         format_menu.addAction("Fill Color\u2026", self._pick_fill_color)
         format_menu.addAction("Font Color\u2026", self._pick_font_color)
-        border_sub = format_menu.addMenu("Borders")
-        border_sub.addAction(
-            "All Borders",
-            lambda: self._apply_border_preset("all"))
-        border_sub.addAction(
-            "Outside Borders",
-            lambda: self._apply_border_preset("outside"))
-        border_sub.addSeparator()
-        border_sub.addAction(
-            "Bottom Border",
-            lambda: self._apply_border_preset("bottom"))
-        border_sub.addAction(
-            "Top Border",
-            lambda: self._apply_border_preset("top"))
-        border_sub.addAction(
-            "Left Border",
-            lambda: self._apply_border_preset("left"))
-        border_sub.addAction(
-            "Right Border",
-            lambda: self._apply_border_preset("right"))
-        border_sub.addSeparator()
-        border_sub.addAction(
-            "No Borders",
-            lambda: self._apply_border_preset("none"))
+        border_sub = self._build_border_menu(format_menu)
+        border_sub.setTitle("Borders")
+        format_menu.addMenu(border_sub)
         format_menu.addSeparator()
         format_menu.addAction("Column Width…", self._format_col_width)
         format_menu.addAction("Row Height…", self._format_row_height)
@@ -354,23 +333,7 @@ class MainWindow(QMainWindow):
         self._border_btn.setIcon(icons.border_icon(28))
         self._border_btn.setToolTip("Borders")
         self._border_btn.setPopupMode(QToolButton.InstantPopup)
-        brd_menu = QMenu(self._border_btn)
-        brd_menu.addAction("All Borders",
-                           lambda: self._apply_border_preset("all"))
-        brd_menu.addAction("Outside Borders",
-                           lambda: self._apply_border_preset("outside"))
-        brd_menu.addSeparator()
-        brd_menu.addAction("Bottom Border",
-                           lambda: self._apply_border_preset("bottom"))
-        brd_menu.addAction("Top Border",
-                           lambda: self._apply_border_preset("top"))
-        brd_menu.addAction("Left Border",
-                           lambda: self._apply_border_preset("left"))
-        brd_menu.addAction("Right Border",
-                           lambda: self._apply_border_preset("right"))
-        brd_menu.addSeparator()
-        brd_menu.addAction("No Borders",
-                           lambda: self._apply_border_preset("none"))
+        brd_menu = self._build_border_menu(self._border_btn)
         self._border_btn.setMenu(brd_menu)
         fmt.addWidget(self._border_btn)
 
@@ -1163,6 +1126,38 @@ class MainWindow(QMainWindow):
             it.setForeground(QColor(color_hex))
 
     # ── Borders ──────────────────────────────────────────────────────
+    _BORDER_PRESETS = [
+        ("Bottom Border",              "bottom"),
+        ("Top Border",                 "top"),
+        ("Left Border",                "left"),
+        ("Right Border",               "right"),
+        ("No Border",                  "none"),
+        None,  # separator
+        ("All Borders",                "all"),
+        ("Outside Borders",            "outside"),
+        ("Thick Outside Borders",      "thick_outside"),
+        None,
+        ("Bottom Double Border",       "bottom_double"),
+        ("Thick Bottom Border",        "thick_bottom"),
+        ("Top and Bottom Border",      "top_bottom"),
+        ("Top and Thick Bottom Border", "top_thick_bottom"),
+        ("Top and Double Bottom Border", "top_double_bottom"),
+    ]
+
+    def _build_border_menu(self, parent):
+        """Build and return a QMenu with all border presets and icons."""
+        menu = QMenu(parent)
+        for item in self._BORDER_PRESETS:
+            if item is None:
+                menu.addSeparator()
+            else:
+                label, preset = item
+                act = menu.addAction(
+                    icons.border_preset_icon(preset, 20), label)
+                act.triggered.connect(
+                    lambda _, p=preset: self._apply_border_preset(p))
+        return menu
+
     def _apply_border_preset(self, preset):
         """Apply a border preset to the current selection."""
         from .cellformat import BorderSpec
@@ -1170,7 +1165,9 @@ class MainWindow(QMainWindow):
         if not s:
             return
 
-        spec = BorderSpec()  # solid black 1px
+        thin = BorderSpec()              # solid black 1px
+        thick = BorderSpec(width=2.0)     # solid black 2px
+        double = BorderSpec(style=Qt.DashLine)  # approx double
 
         for rng in s.table.selectedRanges():
             top_r = rng.topRow()
@@ -1183,22 +1180,47 @@ class MainWindow(QMainWindow):
                     sides = {}
 
                     if preset == "all":
-                        sides = {"top": spec, "bottom": spec,
-                                 "left": spec, "right": spec}
+                        sides = {"top": thin, "bottom": thin,
+                                 "left": thin, "right": thin}
+
                     elif preset == "outside":
-                        if r == top_r:
-                            sides["top"] = spec
-                        if r == bot_r:
-                            sides["bottom"] = spec
-                        if c == left_c:
-                            sides["left"] = spec
-                        if c == right_c:
-                            sides["right"] = spec
+                        if r == top_r:  sides["top"] = thin
+                        if r == bot_r:  sides["bottom"] = thin
+                        if c == left_c: sides["left"] = thin
+                        if c == right_c: sides["right"] = thin
+
+                    elif preset == "thick_outside":
+                        if r == top_r:  sides["top"] = thick
+                        if r == bot_r:  sides["bottom"] = thick
+                        if c == left_c: sides["left"] = thick
+                        if c == right_c: sides["right"] = thick
+
                     elif preset == "none":
                         sides = {"top": None, "bottom": None,
                                  "left": None, "right": None}
+
+                    elif preset == "bottom_double":
+                        if r == bot_r:
+                            sides["bottom"] = double
+
+                    elif preset == "thick_bottom":
+                        if r == bot_r:
+                            sides["bottom"] = thick
+
+                    elif preset == "top_bottom":
+                        if r == top_r:  sides["top"] = thin
+                        if r == bot_r:  sides["bottom"] = thin
+
+                    elif preset == "top_thick_bottom":
+                        if r == top_r:  sides["top"] = thin
+                        if r == bot_r:  sides["bottom"] = thick
+
+                    elif preset == "top_double_bottom":
+                        if r == top_r:  sides["top"] = thin
+                        if r == bot_r:  sides["bottom"] = double
+
                     elif preset in ("top", "bottom", "left", "right"):
-                        sides[preset] = spec
+                        sides[preset] = thin
 
                     if sides:
                         s.set_cell_borders(r, c, sides)
