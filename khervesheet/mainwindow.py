@@ -306,10 +306,12 @@ class MainWindow(QMainWindow):
         self._fill_btn.setPopupMode(QToolButton.MenuButtonPopup)
         self._fill_btn.clicked.connect(self._apply_last_fill_color)
         fill_menu = QMenu(self._fill_btn)
+        fill_menu.addAction(
+            self._build_color_palette(fill_menu, self._on_fill_palette))
+        fill_menu.addSeparator()
+        fill_menu.addAction("No Fill", self._clear_fill_color)
         fill_menu.addAction("Choose Color\u2026",
                             self._pick_fill_color)
-        fill_menu.addAction("No Fill",
-                            self._clear_fill_color)
         self._fill_btn.setMenu(fill_menu)
         fmt.addWidget(self._fill_btn)
 
@@ -323,6 +325,9 @@ class MainWindow(QMainWindow):
         self._font_color_btn.clicked.connect(
             self._apply_last_font_color)
         fc_menu = QMenu(self._font_color_btn)
+        fc_menu.addAction(
+            self._build_color_palette(fc_menu, self._on_font_palette))
+        fc_menu.addSeparator()
         fc_menu.addAction("Choose Color\u2026",
                           self._pick_font_color)
         self._font_color_btn.setMenu(fc_menu)
@@ -1161,6 +1166,68 @@ class MainWindow(QMainWindow):
             if s:
                 r, c = it.row(), it.column()
                 self._cell_fmt(s, r, c).alignment = int(alignment)
+
+    # ── Colour palette ────────────────────────────────────────────────
+    _PALETTE = [
+        # Row 1 — theme colours.
+        "#000000", "#ffffff", "#e7e6e6", "#44546a",
+        "#4472c4", "#ed7d31", "#a5a5a5", "#ffc000",
+        "#5b9bd5", "#70ad47",
+        # Row 2-6 — tints.
+        "#808080", "#f2f2f2", "#d0cece", "#d6dce4",
+        "#d9e2f3", "#fbe5d6", "#ededed", "#fff2cc",
+        "#deebf7", "#e2efda",
+        "#595959", "#d9d9d9", "#aeaaaa", "#adb9ca",
+        "#b4c7e7", "#f8cbad", "#dbdbdb", "#ffe599",
+        "#bdd7ee", "#c5e0b4",
+        "#404040", "#bfbfbf", "#757171", "#8497b0",
+        "#8faadc", "#f4b183", "#c9c9c9", "#ffd966",
+        "#9dc3e6", "#a9d18e",
+        "#262626", "#a6a6a6", "#3b3838", "#333f50",
+        "#2f5597", "#c55a11", "#7b7b7b", "#bf9000",
+        "#2e75b6", "#538135",
+        "#0d0d0d", "#7f7f7f", "#171616", "#222b35",
+        "#1f3864", "#843c0c", "#525252", "#7f6000",
+        "#1f4e79", "#385723",
+        # Row 7 — standard colours.
+        "#c00000", "#ff0000", "#ffc000", "#ffff00",
+        "#92d050", "#00b050", "#00b0f0", "#0070c0",
+        "#002060", "#7030a0",
+    ]
+
+    def _build_color_palette(self, parent_menu, callback):
+        """Return a QWidgetAction containing a grid of colour swatches."""
+        from PyQt5.QtWidgets import QWidgetAction, QGridLayout
+        container = QWidget()
+        grid = QGridLayout(container)
+        grid.setSpacing(2)
+        grid.setContentsMargins(4, 4, 4, 4)
+        cols = 10
+        for i, color in enumerate(self._PALETTE):
+            btn = QPushButton()
+            btn.setFixedSize(18, 18)
+            btn.setStyleSheet(
+                f"background:{color}; border:1px solid #888;"
+                f"border-radius:0px;")
+            btn.setToolTip(color)
+            btn.clicked.connect(
+                lambda _, c=color: callback(c))
+            grid.addWidget(btn, i // cols, i % cols)
+        wa = QWidgetAction(parent_menu)
+        wa.setDefaultWidget(container)
+        return wa
+
+    def _on_fill_palette(self, color):
+        self._last_fill_color = color
+        self._fill_btn.setIcon(icons.fill_color_icon(28, color))
+        self._apply_fill_color(color)
+        self._fill_btn.menu().close()
+
+    def _on_font_palette(self, color):
+        self._last_font_color = color
+        self._font_color_btn.setIcon(icons.font_color_icon(28, color))
+        self._apply_font_color(color)
+        self._font_color_btn.menu().close()
 
     # ── Fill colour ─────────────────────────────────────────────────
     def _apply_last_fill_color(self):
