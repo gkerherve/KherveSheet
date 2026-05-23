@@ -314,10 +314,10 @@ class MainWindow(QMainWindow):
         sb.addWidget(self._status_label, stretch=1)
 
         self._progress = QProgressBar()
-        self._progress.setMaximumWidth(200)
+        self._progress.setFixedWidth(200)
         self._progress.setMaximumHeight(16)
         self._progress.hide()
-        sb.addWidget(self._progress)
+        sb.addPermanentWidget(self._progress)
 
         # Selection summary (left of zoom)
         self._sum_label = QLabel("")
