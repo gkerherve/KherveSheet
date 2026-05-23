@@ -1700,9 +1700,12 @@ class SheetWidget(QWidget):
                         target = inline_editor or self._formula_bar
                         cp = target.cursorPosition()
                         text = target.text()
-                        target.setText(text[:cp] + ref + text[cp:])
+                        new_text = text[:cp] + ref + text[cp:]
+                        target.setText(new_text)
                         target.setCursorPosition(cp + len(ref))
                         target.setFocus()
+                        # Update ref highlights immediately.
+                        self._update_ref_highlights(new_text)
                         # Reset arrow nav — click takes over.
                         self._arrow_nav_active = False
                         self._arrow_nav_pos = None
