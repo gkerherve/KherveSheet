@@ -50,38 +50,44 @@ class _ColorButton(QPushButton):
             f"background: {self._color}; border: 1px solid #888;")
 
     def _pick(self):
-        c = QColorDialog.getColor(QColor(self._color), self)
-        if c.isValid():
-            self._color = c.name()
+        dlg = QColorDialog(QColor(self._color), self)
+        dlg.setStyleSheet("")        # prevent app theme bleeding in
+        if dlg.exec_() == QColorDialog.Accepted:
+            self._color = dlg.currentColor().name()
             self._update_style()
 
 
-# ── Side rail ───────────────────────────────────────────────────────
+# ── Styled side notebook ────────────────────────────────────────────
 
-class _SideRail(QWidget):
-    """Four auto-exclusive buttons to pick Bottom/Top/Left/Right."""
-
-    def __init__(self, callback, parent=None):
-        super().__init__(parent)
-        h = QHBoxLayout(self)
-        h.setContentsMargins(0, 0, 0, 0)
-        h.setSpacing(2)
-        self._buttons = {}
-        self._callback = callback
-        for side in ("Bottom", "Top", "Left", "Right"):
-            b = QPushButton(side)
-            b.setCheckable(True)
-            b.setAutoExclusive(True)
-            b.setMinimumWidth(60)
-            b.clicked.connect(lambda _, s=side: self._on_click(s))
-            h.addWidget(b)
-            self._buttons[side] = b
-
-    def set_side(self, side):
-        self._buttons[side].setChecked(True)
-
-    def _on_click(self, side):
-        self._callback(side)
+_SIDE_TAB_STYLE = """
+QTabBar::tab {
+    min-width: 80px;
+    padding: 6px 16px;
+    font-weight: bold;
+    color: #555;
+    background: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 #f4f4f4, stop:1 #e0e0e0);
+    border: 1px solid #b0b0b0;
+    border-bottom: none;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    margin-right: 2px;
+}
+QTabBar::tab:selected {
+    color: #1a1a1a;
+    background: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 #ffffff, stop:1 #f0f4fa);
+    border-bottom: 2px solid #3078c6;
+}
+QTabBar::tab:hover:!selected {
+    background: qlineargradient(
+        x1:0, y1:0, x2:0, y2:1,
+        stop:0 #fafafa, stop:1 #eaeef4);
+    color: #333;
+}
+"""
 
 
 # ── Main dialog ─────────────────────────────────────────────────────
@@ -128,11 +134,19 @@ class AxisPropertiesDialog(QDialog):
 
         outer = QVBoxLayout(self)
 
-        # Side rail.
-        self._rail = _SideRail(self._switch_side)
-        outer.addWidget(self._rail)
+        # Side notebook (Bottom / Top / Left / Right).
+        self._side_tabs = QTabWidget()
+        self._side_tabs.setStyleSheet(_SIDE_TAB_STYLE)
+        for label in ("Bottom", "Top", "Left", "Right"):
+            placeholder = QWidget()
+            placeholder.setMaximumHeight(0)
+            self._side_tabs.addTab(placeholder, label)
+        self._side_tabs.setMaximumHeight(
+            self._side_tabs.tabBar().sizeHint().height() + 4)
+        self._side_tabs.currentChanged.connect(self._on_side_tab)
+        outer.addWidget(self._side_tabs)
 
-        # Tabs.
+        # Property tabs.
         self._tabs = QTabWidget()
         outer.addWidget(self._tabs, stretch=1)
 
@@ -157,7 +171,8 @@ class AxisPropertiesDialog(QDialog):
         self._current_side = None
 
         # Populate from current side.
-        self._rail.set_side(side)
+        side_index = ["Bottom", "Top", "Left", "Right"].index(side)
+        self._side_tabs.setCurrentIndex(side_index)
         self._switch_side(side)
 
     # ── Tab builders ────────────────────────────────────────────────
@@ -296,7 +311,7 @@ class AxisPropertiesDialog(QDialog):
         self.spine_width = QDoubleSpinBox()
         self.spine_width.setRange(0.0, 20.0)
         self.spine_width.setSingleStep(0.5)
-        self.spine_width.setValue(0.8)
+        self.spine_width.setValue(1.0)
         sf.addRow("Width:", self.spine_width)
 
         layout.addWidget(spine_grp)
@@ -323,7 +338,7 @@ class AxisPropertiesDialog(QDialog):
         self.major_width = QDoubleSpinBox()
         self.major_width.setRange(0.0, 10.0)
         self.major_width.setSingleStep(0.5)
-        self.major_width.setValue(0.8)
+        self.major_width.setValue(1.0)
         mf.addRow("Width:", self.major_width)
 
         self.major_color = _ColorButton("#000000")
@@ -358,7 +373,7 @@ class AxisPropertiesDialog(QDialog):
         self.minor_width = QDoubleSpinBox()
         self.minor_width.setRange(0.0, 10.0)
         self.minor_width.setSingleStep(0.5)
-        self.minor_width.setValue(0.6)
+        self.minor_width.setValue(1.0)
         nf.addRow("Width:", self.minor_width)
 
         self.minor_color = _ColorButton("#000000")
@@ -447,6 +462,11 @@ class AxisPropertiesDialog(QDialog):
         self.limit_max.setEnabled(not auto)
 
     # ── Side switching ─────────────────────────────────────────────
+
+    def _on_side_tab(self, index):
+        """Called when the side notebook tab changes."""
+        side = ["Bottom", "Top", "Left", "Right"][index]
+        self._switch_side(side)
 
     def _switch_side(self, side):
         """Save current side state, load new side state."""
@@ -675,15 +695,11 @@ class AxisPropertiesDialog(QDialog):
             self.tl_size.setValue(10)
             self.tl_rotation.setValue(0)
 
-        # Spine.
+        # Spine — default to black / 1.0 for clean initial display.
         spine = ax.spines[spine_key]
         self.spine_show.setChecked(spine.get_visible())
-        try:
-            from matplotlib.colors import to_hex
-            self.spine_color.set_color(to_hex(spine.get_edgecolor()))
-        except Exception:
-            self.spine_color.set_color("#000000")
-        self.spine_width.setValue(spine.get_linewidth())
+        self.spine_color.set_color("#000000")
+        self.spine_width.setValue(1.0)
 
         # Major ticks.
         self.major_show.setChecked(True)
@@ -706,17 +722,8 @@ class AxisPropertiesDialog(QDialog):
         self.major_length.setValue(
             float(tp.get('major_tick_length',
                          tp.get('length', 3.5))))
-        self.major_width.setValue(
-            float(tp.get('major_tick_width',
-                         tp.get('width', 0.8))))
-        try:
-            from matplotlib.colors import to_hex
-            mc = tp.get('color', '#000000')
-            if not isinstance(mc, str):
-                mc = to_hex(mc)
-            self.major_color.set_color(mc)
-        except Exception:
-            self.major_color.set_color("#000000")
+        self.major_width.setValue(1.0)
+        self.major_color.set_color("#000000")
         n_major = len(mpl_axis.get_majorticklocs())
         self.major_count.setValue(max(2, n_major))
 
@@ -727,8 +734,8 @@ class AxisPropertiesDialog(QDialog):
         self.minor_direction.setCurrentIndex(
             self.major_direction.currentIndex())
         self.minor_length.setValue(2.0)
-        self.minor_width.setValue(0.6)
-        self.minor_color.set_color(self.major_color.color())
+        self.minor_width.setValue(1.0)
+        self.minor_color.set_color("#000000")
         self.minor_count.setValue(5)
 
         # Grids.

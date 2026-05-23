@@ -52,6 +52,11 @@ def _make_app_icon():
 _COMMON_QSS = """
 QToolBar { padding: 0px; margin: 0px; spacing: 1px; }
 QToolButton { padding: 1px; margin: 0px; }
+QSpinBox, QDoubleSpinBox { min-height: 22px; }
+QSpinBox::up-button, QDoubleSpinBox::up-button,
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+    min-width: 18px; min-height: 10px;
+}
 """
 
 # ── Light theme ──────────────────────────────────────────────────
