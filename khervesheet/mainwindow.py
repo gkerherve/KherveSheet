@@ -753,9 +753,17 @@ class MainWindow(QMainWindow):
                             srg.attrs['label'] = s['label']
                             srg.attrs['plot_type'] = s['plot_type']
                             # All extra visual / fill properties.
-                            props = {k: v for k, v in s.items()
-                                     if k not in ('x', 'y', 'label',
-                                                  'plot_type')}
+                            _skip = {'x', 'y', 'label', 'plot_type'}
+                            props = {}
+                            for k, v in s.items():
+                                if k in _skip:
+                                    continue
+                                # Convert numpy scalars to Python.
+                                if hasattr(v, 'item'):
+                                    v = v.item()
+                                if isinstance(v, (str, int, float,
+                                                  bool, type(None))):
+                                    props[k] = v
                             if props:
                                 srg.attrs['props'] = json.dumps(
                                     props)
