@@ -55,6 +55,7 @@ class EmbeddedChart(QWidget):
         self._source_sheet = source_sheet
         self._series = []
         self._fill_artists = []  # fill_between patches
+        self._axis_props = {}    # persisted axis dialog state
 
         # Dragging / resizing state.
         self._drag_origin = None      # mouse pos at drag start
@@ -170,7 +171,7 @@ class EmbeddedChart(QWidget):
                 "label": s["label"],
                 "plot_type": s["plot_type"],
             })
-        return {
+        d = {
             "series": series,
             "pos_x": self.x(),
             "pos_y": self.y(),
@@ -186,6 +187,9 @@ class EmbeddedChart(QWidget):
             "top_label": getattr(self, '_top_label_text', ''),
             "right_label": getattr(self, '_right_label_text', ''),
         }
+        if self._axis_props:
+            d["axis_props"] = self._axis_props
+        return d
 
     @classmethod
     def from_dict(cls, d, source_sheet, parent):
@@ -219,12 +223,20 @@ class EmbeddedChart(QWidget):
             from .axis_dialog import AxisPropertiesDialog
             AxisPropertiesDialog._set_secondary_label(
                 chart, "right", right_lbl, {"fontsize": 10})
-        try:
-            ax.set_xscale(d.get("xscale", "linear"))
-            ax.set_yscale(d.get("yscale", "linear"))
-        except ValueError:
-            pass
-        ax.grid(d.get("grid", False))
+        # Restore axis properties if saved.
+        axis_props = d.get("axis_props")
+        if axis_props:
+            chart._axis_props = axis_props
+            from .axis_dialog import AxisPropertiesDialog
+            for direction, st in axis_props.items():
+                AxisPropertiesDialog._apply_dir_static(chart, direction, st)
+        else:
+            try:
+                ax.set_xscale(d.get("xscale", "linear"))
+                ax.set_yscale(d.get("yscale", "linear"))
+            except ValueError:
+                pass
+            ax.grid(d.get("grid", False))
         chart._canvas.draw_idle()
         return chart
 

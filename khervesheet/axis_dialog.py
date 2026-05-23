@@ -1009,6 +1009,7 @@ class AxisPropertiesDialog(QDialog):
         self._dir_states[self._current_dir] = \
             self._capture_widgets()
         self._apply_dir(self._current_dir)
+        self._chart._axis_props = dict(self._dir_states)
 
     def apply_to_chart(self, chart):
         """Apply all modified directions to the chart (called on OK)."""
@@ -1016,6 +1017,8 @@ class AxisPropertiesDialog(QDialog):
             self._capture_widgets()
         for d, st in self._dir_states.items():
             self._apply_dir(d, st)
+        # Persist axis properties on chart for save/load.
+        chart._axis_props = dict(self._dir_states)
 
     def _apply_dir(self, direction, st=None):
         """Apply one direction's state (primary + secondary) to axes."""
@@ -1209,6 +1212,185 @@ class AxisPropertiesDialog(QDialog):
             self._chart, loc, sec_text, sec_title_kw)
 
         self._chart._canvas.draw_idle()
+
+    # ── Static re-apply (for restoring saved state) ───────────────
+
+    @classmethod
+    def _apply_dir_static(cls, chart, direction, st):
+        """Apply saved axis state *st* to *chart* without a dialog."""
+        ax = chart._ax
+        is_x = (direction == "x")
+        pri_key = "bottom" if is_x else "left"
+        sec_key = "top" if is_x else "right"
+        mpl_axis = ax.xaxis if is_x else ax.yaxis
+        ax_str = 'x' if is_x else 'y'
+
+        # Scale.
+        try:
+            if is_x:
+                ax.set_xscale(st["scale"])
+            else:
+                ax.set_yscale(st["scale"])
+        except ValueError:
+            pass
+
+        if not st.get("limit_auto", True):
+            if is_x:
+                ax.set_xlim(st["limit_min"], st["limit_max"])
+            else:
+                ax.set_ylim(st["limit_min"], st["limit_max"])
+
+        currently_inverted = (ax.xaxis_inverted() if is_x
+                              else ax.yaxis_inverted())
+        if st.get("invert", False) != currently_inverted:
+            if is_x:
+                ax.invert_xaxis()
+            else:
+                ax.invert_yaxis()
+
+        # Primary title.
+        text = st.get("title_text", "") if st.get("title_show", True) else ""
+        weight = "bold" if st.get("title_bold") else "normal"
+        style = "italic" if st.get("title_italic") else "normal"
+        font_family = st.get("title_font", "Default")
+        if font_family == "Default":
+            font_family = "sans-serif"
+        try:
+            rotation = int(st.get("title_rotation", 0))
+        except (ValueError, TypeError):
+            rotation = 0
+
+        title_kw = dict(
+            fontsize=st.get("title_size", 10),
+            color=st.get("title_color", "#000000"),
+            fontweight=weight, fontstyle=style,
+            fontfamily=font_family, rotation=rotation,
+        )
+        if is_x:
+            ax.set_xlabel(text, **title_kw)
+        else:
+            ax.set_ylabel(text, **title_kw)
+
+        # Primary spine.
+        spine = ax.spines[pri_key]
+        spine.set_visible(st.get("spine_show", True))
+        spine.set_edgecolor(st.get("spine_color", "#000000"))
+        spine.set_linewidth(st.get("spine_width", 1.0))
+
+        # Tick labels.
+        ax.tick_params(
+            axis=ax_str, which='both',
+            **{pri_key: st.get("tl_show", True),
+               f"label{pri_key}": st.get("tl_show", True)})
+        if st.get("tl_show", True):
+            ax.tick_params(
+                axis=ax_str, which='major',
+                labelcolor=st.get("tl_color", "#000000"),
+                labelsize=st.get("tl_size", 10),
+                labelrotation=st.get("tl_rotation", 0),
+            )
+            fmt_idx = st.get("tl_format", 0)
+            fmt_code = _TICK_FORMATS[fmt_idx][1]
+            cls._apply_tick_format(
+                mpl_axis, fmt_code, st.get("tl_decimals", 2),
+                st.get("tl_prefix", ""), st.get("tl_suffix", ""))
+
+        # Major ticks.
+        tick_dir = _TICK_DIRECTIONS[st.get("major_dir", 0)][1]
+        if st.get("major_show", True):
+            mpl_axis.set_major_locator(
+                mticker.MaxNLocator(nbins=st.get("major_count", 6)))
+            ax.tick_params(
+                axis=ax_str, which='major',
+                direction=tick_dir,
+                length=st.get("major_length", 3.5),
+                width=st.get("major_width", 1.0),
+                color=st.get("major_color", "#000000"),
+                **{pri_key: True},
+            )
+        else:
+            ax.tick_params(
+                axis=ax_str, which='major', **{pri_key: False})
+
+        # Minor ticks.
+        minor_dir = _TICK_DIRECTIONS[st.get("minor_dir", 0)][1]
+        if st.get("minor_show", False):
+            mpl_axis.set_minor_locator(
+                mticker.AutoMinorLocator(st.get("minor_count", 5)))
+            ax.tick_params(
+                axis=ax_str, which='minor',
+                direction=minor_dir,
+                length=st.get("minor_length", 2.0),
+                width=st.get("minor_width", 1.0),
+                color=st.get("minor_color", "#000000"),
+                **{pri_key: True},
+            )
+        else:
+            ax.tick_params(
+                axis=ax_str, which='minor', **{pri_key: False})
+
+        # Grids.
+        for gl in mpl_axis.get_gridlines():
+            gl.set_visible(st.get("grid_major_show", False))
+        if st.get("grid_major_show", False):
+            major_ls = _LINE_STYLES[st.get("grid_major_style", 0)][1]
+            ax.grid(True, axis=ax_str, which='major',
+                    color=st.get("grid_major_color", "#cccccc"),
+                    alpha=st.get("grid_major_alpha", 0.7),
+                    linestyle=major_ls,
+                    linewidth=st.get("grid_major_width", 0.8))
+        else:
+            ax.grid(False, axis=ax_str, which='major')
+
+        if st.get("minor_show", False) and st.get("grid_minor_show", False):
+            minor_ls = _LINE_STYLES[st.get("grid_minor_style", 2)][1]
+            ax.grid(True, axis=ax_str, which='minor',
+                    color=st.get("grid_minor_color", "#e0e0e0"),
+                    alpha=st.get("grid_minor_alpha", 0.4),
+                    linestyle=minor_ls,
+                    linewidth=st.get("grid_minor_width", 0.5))
+        else:
+            ax.grid(False, axis=ax_str, which='minor')
+
+        # Secondary spine.
+        sec_spine = ax.spines[sec_key]
+        sec_spine.set_visible(st.get("sec_spine_show", False))
+        sec_spine.set_edgecolor(st.get("sec_spine_color", "#000000"))
+        sec_spine.set_linewidth(st.get("sec_spine_width", 1.0))
+        sec_ls = _LINE_STYLES[st.get("sec_spine_style", 0)][1]
+        sec_spine.set_linestyle(sec_ls)
+
+        # Secondary ticks & labels.
+        ax.tick_params(
+            axis=ax_str, which='both',
+            **{sec_key: st.get("sec_tick_show", False),
+               f"label{sec_key}": st.get("sec_label_show", False)})
+
+        # Secondary title.
+        sec_text = (st.get("sec_title_text", "")
+                    if st.get("sec_title_show", False) else "")
+        sec_weight = "bold" if st.get("sec_title_bold") else "normal"
+        sec_style = "italic" if st.get("sec_title_italic") else "normal"
+        sec_font = st.get("sec_title_font", "Default")
+        if sec_font == "Default":
+            sec_font = "sans-serif"
+        try:
+            sec_rot = int(st.get("sec_title_rotation", "0"))
+        except (ValueError, TypeError):
+            sec_rot = 0
+
+        sec_title_kw = dict(
+            fontsize=st.get("sec_title_size", 10),
+            color=st.get("sec_title_color", "#000000"),
+            fontweight=sec_weight, fontstyle=sec_style,
+            fontfamily=sec_font, rotation=sec_rot,
+        )
+        loc = "top" if is_x else "right"
+        if is_x:
+            chart._top_label_text = sec_text
+        else:
+            chart._right_label_text = sec_text
+        cls._set_secondary_label(chart, loc, sec_text, sec_title_kw)
 
     # ── Helpers ────────────────────────────────────────────────────
 

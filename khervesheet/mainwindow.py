@@ -716,6 +716,10 @@ class MainWindow(QMainWindow):
                         cg.attrs['yscale'] = d.get('yscale', 'linear')
                         cg.attrs['grid'] = d.get('grid', False)
                         cg.attrs['series_count'] = len(d['series'])
+                        # Axis properties (full dialog state).
+                        if d.get('axis_props'):
+                            cg.attrs['axis_props'] = json.dumps(
+                                d['axis_props'])
                         for ki, s in enumerate(d['series']):
                             srg = cg.create_group(f"series_{ki}")
                             srg.create_dataset("x", data=s['x'])
@@ -841,7 +845,7 @@ class MainWindow(QMainWindow):
                                 "plot_type": srg.attrs[
                                     'plot_type'],
                             })
-                        deferred_charts.append({
+                        cd = {
                             "series": series,
                             "pos_x": int(cg.attrs['pos_x']),
                             "pos_y": int(cg.attrs['pos_y']),
@@ -858,7 +862,12 @@ class MainWindow(QMainWindow):
                                 'yscale', 'linear'),
                             "grid": bool(cg.attrs.get(
                                 'grid', False)),
-                        })
+                        }
+                        # Axis properties (full dialog state).
+                        ap_json = cg.attrs.get('axis_props', '')
+                        if ap_json:
+                            cd["axis_props"] = json.loads(ap_json)
+                        deferred_charts.append(cd)
                     if deferred_charts:
                         sheet._deferred_charts = deferred_charts
 
