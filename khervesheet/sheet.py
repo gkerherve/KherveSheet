@@ -204,6 +204,7 @@ class SheetWidget(QWidget):
             "Value or =formula  (e.g. =SUM(A1:A10), =B1+C1)")
         self._formula_bar.returnPressed.connect(self._apply_formula_bar)
         self._formula_bar.textChanged.connect(self._on_formula_bar_text)
+        self._formula_bar.installEventFilter(self)
 
         fbar.addWidget(cell_lbl)
         fbar.addWidget(self._cell_ref_label)
@@ -256,6 +257,10 @@ class SheetWidget(QWidget):
         # inserts a cell reference instead of navigating.
         self._formula_entry_cell = None   # (row, col) being edited
         self._ref_highlight_active = False
+        # Arrow-key cell reference navigation state.
+        self._arrow_nav_active = False
+        self._arrow_nav_pos = None       # (row, col) of ref cursor
+        self._arrow_nav_ref_span = None  # (start, end) char indices in editor
 
         # Signals
         self.table.cellChanged.connect(self._on_cell_changed)
@@ -267,6 +272,7 @@ class SheetWidget(QWidget):
         self._fill_end_row = None
         self.table.viewport().setMouseTracking(True)
         self.table.viewport().installEventFilter(self)
+        self.table.installEventFilter(self)
 
     # ── Public API ───────────────────────────────────────────────────
     def column_count(self) -> int:
@@ -483,10 +489,16 @@ class SheetWidget(QWidget):
 
     def _exit_formula_mode(self):
         self._formula_entry_cell = None
+        self._arrow_nav_active = False
+        self._arrow_nav_pos = None
+        self._arrow_nav_ref_span = None
         self._clear_ref_highlights()
 
     def _apply_formula_bar(self):
         self._formula_entry_cell = None
+        self._arrow_nav_active = False
+        self._arrow_nav_pos = None
+        self._arrow_nav_ref_span = None
         self._clear_ref_highlights()
         idx = self.table.currentIndex()
         if not idx.isValid():
@@ -1273,7 +1285,122 @@ class SheetWidget(QWidget):
         return QRect(cell_rect.right() - hp, cell_rect.bottom() - hp,
                      hp * 2, hp * 2)
 
+    # ── Arrow-key formula reference helpers ────────────────────────
+    _OPERATOR_CHARS = set("=+-*/^(,<>&")
+
+    def _find_inline_editor(self):
+        """Return the active inline QLineEdit cell editor, or None."""
+        editor = self.table.findChild(QLineEdit, "",
+                                      Qt.FindDirectChildrenOnly)
+        if editor is None:
+            vp = self.table.viewport()
+            for child in vp.children():
+                if isinstance(child, QLineEdit):
+                    editor = child
+                    break
+        if editor is not None and editor is self._formula_bar:
+            return None
+        return editor
+
+    def _should_arrow_insert_ref(self, editor):
+        """Return True if an arrow key should insert/move a cell ref
+        rather than move the text cursor."""
+        if self._arrow_nav_active:
+            return True
+        text = editor.text()
+        if not text.startswith("="):
+            return False
+        cp = editor.cursorPosition()
+        if cp == 0:
+            return False
+        ch = text[cp - 1]
+        return ch in self._OPERATOR_CHARS
+
+    def _handle_arrow_key(self, key, editor):
+        """Process an arrow key press during formula entry.
+        Returns True if the event was consumed."""
+        # Determine new reference cursor position.
+        if self._arrow_nav_pos is not None:
+            r, c = self._arrow_nav_pos
+        else:
+            r = self.table.currentRow()
+            c = self.table.currentColumn()
+            if r < 0 or c < 0:
+                return False
+
+        if key == Qt.Key_Up:
+            r = max(0, r - 1)
+        elif key == Qt.Key_Down:
+            r = min(self.table.rowCount() - 1, r + 1)
+        elif key == Qt.Key_Left:
+            c = max(0, c - 1)
+        elif key == Qt.Key_Right:
+            c = min(self.table.columnCount() - 1, c + 1)
+        else:
+            return False
+
+        ref = col_index_to_letter(c) + str(r + 1)
+        text = editor.text()
+
+        if self._arrow_nav_active and self._arrow_nav_ref_span:
+            # Replace the previous arrow-inserted reference.
+            start, end = self._arrow_nav_ref_span
+            new_text = text[:start] + ref + text[end:]
+            new_end = start + len(ref)
+        else:
+            # Insert a new reference at cursor position.
+            cp = editor.cursorPosition()
+            new_text = text[:cp] + ref + text[cp:]
+            start = cp
+            new_end = cp + len(ref)
+
+        editor.blockSignals(True)
+        editor.setText(new_text)
+        editor.setCursorPosition(new_end)
+        editor.blockSignals(False)
+
+        self._arrow_nav_active = True
+        self._arrow_nav_pos = (r, c)
+        self._arrow_nav_ref_span = (start, new_end)
+
+        # Update highlights from the full formula text.
+        self._update_ref_highlights(new_text)
+        return True
+
     def eventFilter(self, obj, event):
+        # ── Formula bar arrow key interception ───────────────────
+        if obj is self._formula_bar and event.type() == QEvent.KeyPress:
+            key = event.key()
+            if key in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right):
+                if (self._formula_entry_cell is not None
+                        and self._should_arrow_insert_ref(self._formula_bar)):
+                    if self._handle_arrow_key(key, self._formula_bar):
+                        return True
+            elif key == Qt.Key_Escape:
+                self._exit_formula_mode()
+            else:
+                # Any non-arrow key breaks arrow nav mode.
+                self._arrow_nav_active = False
+                self._arrow_nav_pos = None
+                self._arrow_nav_ref_span = None
+
+        # ── Table-level key interception for inline "=" editors ────
+        if obj is self.table and event.type() == QEvent.KeyPress:
+            key = event.key()
+            if key in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right):
+                # Find active inline editor.
+                editor = self._find_inline_editor()
+                if editor and editor.text().startswith("="):
+                    # Ensure formula entry mode is active.
+                    if self._formula_entry_cell is None:
+                        r = self.table.currentRow()
+                        c = self.table.currentColumn()
+                        if r >= 0 and c >= 0:
+                            self._formula_entry_cell = (r, c)
+                    if self._should_arrow_insert_ref(editor):
+                        if self._handle_arrow_key(key, editor):
+                            return True
+
         if obj is not self.table.viewport():
             return super().eventFilter(obj, event)
         etype = event.type()
@@ -1331,6 +1458,10 @@ class SheetWidget(QWidget):
                         target.setText(text[:cp] + ref + text[cp:])
                         target.setCursorPosition(cp + len(ref))
                         target.setFocus()
+                        # Reset arrow nav — click takes over.
+                        self._arrow_nav_active = False
+                        self._arrow_nav_pos = None
+                        self._arrow_nav_ref_span = None
                         return True  # consume click
 
             hr = self._fill_handle_rect()

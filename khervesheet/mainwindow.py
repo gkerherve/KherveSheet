@@ -18,7 +18,8 @@ from PyQt5.QtWidgets import (
     QMainWindow, QStatusBar, QLabel, QAction, QMenu, QMenuBar,
     QToolBar, QToolButton, QFileDialog, QMessageBox, QProgressBar,
     QSlider, QHBoxLayout, QWidget, QUndoStack, QComboBox,
-    QInputDialog, QApplication, QFontComboBox,
+    QInputDialog, QApplication, QFontComboBox, QPushButton,
+    QWidgetAction, QGridLayout,
 )
 
 from . import APP_NAME, __version__
@@ -1197,7 +1198,6 @@ class MainWindow(QMainWindow):
 
     def _build_color_palette(self, parent_menu, callback):
         """Return a QWidgetAction containing a grid of colour swatches."""
-        from PyQt5.QtWidgets import QWidgetAction, QGridLayout
         container = QWidget()
         grid = QGridLayout(container)
         grid.setSpacing(2)
