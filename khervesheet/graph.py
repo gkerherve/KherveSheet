@@ -874,11 +874,19 @@ class PlotDetailsDialog(QDialog):
         sp = QSplitter(Qt.Horizontal)
         outer.addWidget(sp, stretch=1)
 
-        # ── Series list ─────────────────────────────────────────────
+        # ── Series list (checkable) ────────────────────────────────
         self._series_list = QListWidget()
         self._series_list.setMinimumWidth(140)
-        for s in chart._series:
-            self._series_list.addItem(s["label"])
+        from PyQt5.QtWidgets import QListWidgetItem
+        for i, s in enumerate(chart._series):
+            item = QListWidgetItem(s["label"])
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            visible = True
+            artist = s.get("artist")
+            if artist is not None and hasattr(artist, 'get_visible'):
+                visible = artist.get_visible()
+            item.setCheckState(Qt.Checked if visible else Qt.Unchecked)
+            self._series_list.addItem(item)
         sp.addWidget(self._series_list)
 
         # ── Tabs ────────────────────────────────────────────────────
@@ -887,6 +895,7 @@ class PlotDetailsDialog(QDialog):
         sp.setSizes([160, 480])
 
         self._build_graph_tab()
+        self._build_data_tab()
         self._build_line_tab()
         self._build_symbol_tab()
         self._build_fill_tab()
@@ -897,6 +906,9 @@ class PlotDetailsDialog(QDialog):
 
         # ── Footer ──────────────────────────────────────────────────
         footer = QHBoxLayout()
+        axis_btn = QPushButton("Axis Properties\u2026")
+        axis_btn.clicked.connect(self._open_axis_props)
+        footer.addWidget(axis_btn)
         footer.addStretch()
         bb = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Apply
@@ -936,6 +948,50 @@ class PlotDetailsDialog(QDialog):
         form.addRow("X Scale:", self.xscale_combo)
         form.addRow("Y Scale:", self.yscale_combo)
         self._tabs.addTab(w, "Graph")
+
+    def _build_data_tab(self):
+        """Data range tab — shows and allows editing the plotted range."""
+        w = QWidget()
+        form = QFormLayout(w)
+
+        self.x_range_edit = QLineEdit()
+        self.x_range_edit.setPlaceholderText("e.g. A1:A20")
+        form.addRow("X Range:", self.x_range_edit)
+
+        self.y_range_edit = QLineEdit()
+        self.y_range_edit.setPlaceholderText("e.g. B1:B20")
+        form.addRow("Y Range:", self.y_range_edit)
+
+        self.data_info = QLabel("")
+        self.data_info.setWordWrap(True)
+        form.addRow("Points:", self.data_info)
+
+        self._tabs.addTab(w, "Data")
+
+    def _open_axis_props(self):
+        """Open the Axis Properties dialog for the chart."""
+        from .axis_dialog import AxisPropertiesDialog
+        dlg = AxisPropertiesDialog(self._chart, "Bottom", parent=self)
+        if dlg.exec_() == QDialog.Accepted:
+            dlg.apply_to_chart(self._chart)
+
+    @staticmethod
+    def _col_letter(col_idx):
+        """Convert 0-based column index to letter (A, B, ... Z, AA...)."""
+        result = ""
+        n = col_idx
+        while True:
+            result = chr(ord('A') + n % 26) + result
+            n = n // 26 - 1
+            if n < 0:
+                break
+        return result
+
+    def _range_string(self, col_idx, data_len):
+        """Build a range string like 'A1:A20' from column index and
+        data length."""
+        letter = self._col_letter(col_idx)
+        return f"{letter}1:{letter}{data_len}"
 
     def _build_line_tab(self):
         w = QWidget()
@@ -1014,6 +1070,22 @@ class PlotDetailsDialog(QDialog):
         artist = s.get("artist")
         self.label_edit.setText(s["label"])
 
+        # Data tab — populate range info.
+        chart = self._chart
+        n_pts = len(s.get("x", []))
+        self.data_info.setText(str(n_pts))
+        x_col = chart._x_col
+        y_cols = chart._y_cols
+        if x_col is not None:
+            self.x_range_edit.setText(self._range_string(x_col, n_pts))
+        else:
+            self.x_range_edit.setText(f"1:{n_pts}  (row index)")
+        if row < len(y_cols):
+            self.y_range_edit.setText(
+                self._range_string(y_cols[row], n_pts))
+        else:
+            self.y_range_edit.setText("")
+
         # Try to read line properties from the artist.
         if hasattr(artist, 'get_linestyle'):
             ls = artist.get_linestyle()
@@ -1063,6 +1135,27 @@ class PlotDetailsDialog(QDialog):
             if isinstance(c, str):
                 self.fill_color.set_color(c)
 
+    @staticmethod
+    def _parse_range(range_str):
+        """Parse a range like 'A1:A20' into (col_idx, row_start, row_end).
+
+        Returns None on failure.
+        """
+        import re
+        m = re.match(r'^([A-Za-z]+)(\d+):([A-Za-z]+)(\d+)$',
+                     range_str.strip())
+        if not m:
+            return None
+        col_letter = m.group(1).upper()
+        r1 = int(m.group(2)) - 1    # 0-based
+        r2 = int(m.group(4)) - 1
+        # Convert letter to index.
+        col = 0
+        for ch in col_letter:
+            col = col * 26 + (ord(ch) - ord('A') + 1)
+        col -= 1  # 0-based
+        return col, min(r1, r2), max(r1, r2)
+
     def apply_to_chart(self, chart):
         """Apply all settings to the chart."""
         ax = chart._ax
@@ -1083,8 +1176,23 @@ class PlotDetailsDialog(QDialog):
             if leg:
                 leg.remove()
 
-        # Series settings for currently selected series
+        # ── Apply visibility from checkboxes ──────────────────────
+        for i in range(self._series_list.count()):
+            if i >= len(chart._series):
+                break
+            item = self._series_list.item(i)
+            visible = (item.checkState() == Qt.Checked)
+            artist = chart._series[i].get("artist")
+            if artist is not None and hasattr(artist, 'set_visible'):
+                artist.set_visible(visible)
+
+        # ── Apply data range changes ──────────────────────────────
         row = self._series_list.currentRow()
+        sheet = chart._source_sheet
+        if sheet and 0 <= row < len(chart._series):
+            self._apply_range_edits(chart, row, sheet)
+
+        # Series settings for currently selected series
         if 0 <= row < len(chart._series):
             s = chart._series[row]
             artist = s.get("artist")
@@ -1118,10 +1226,44 @@ class PlotDetailsDialog(QDialog):
                 row, mode, self.fill_target.currentIndex(),
                 self.fill_color.color(), self.fill_alpha.value())
 
-            # Refresh legend
+            # Refresh legend (only include visible series).
             if self.legend_check.isChecked():
                 leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
                 if leg:
                     leg.set_draggable(True)
 
         chart._canvas.draw_idle()
+
+    def _apply_range_edits(self, chart, row, sheet):
+        """Re-read data if the user changed X or Y range strings."""
+        # Check if X range changed.
+        x_parsed = self._parse_range(self.x_range_edit.text())
+        if x_parsed is not None:
+            new_x_col, xr1, xr2 = x_parsed
+            if new_x_col != chart._x_col:
+                chart._x_col = new_x_col
+        # Check if Y range changed.
+        y_parsed = self._parse_range(self.y_range_edit.text())
+        if y_parsed is not None and row < len(chart._y_cols):
+            new_y_col, yr1, yr2 = y_parsed
+            chart._y_cols[row] = new_y_col
+        # Re-read data from sheet for this series.
+        if chart._x_col is not None:
+            x_data = sheet.numeric_column(chart._x_col)
+        else:
+            x_data = np.arange(sheet.row_count(), dtype=float)
+        if row < len(chart._y_cols):
+            y_data = sheet.numeric_column(chart._y_cols[row])
+            mask = ~(np.isnan(x_data) | np.isnan(y_data))
+            x = x_data[mask]
+            y = y_data[mask]
+            s = chart._series[row]
+            s["x"], s["y"] = x, y
+            artist = s.get("artist")
+            if artist is not None:
+                if hasattr(artist, 'set_data'):
+                    artist.set_data(x, y)
+                elif hasattr(artist, 'set_offsets'):
+                    artist.set_offsets(np.column_stack([x, y]))
+            chart._ax.relim()
+            chart._ax.autoscale_view()
