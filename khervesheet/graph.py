@@ -668,12 +668,13 @@ class EmbeddedChart(QWidget):
                     self._drag_origin = event.globalPos()
                     self._drag_widget_pos = self.geometry()
                     return True   # consumed — resize only
-                # On legend → let matplotlib's draggable handle it.
-                if self._hit_legend(canvas_pos):
-                    self._legend_dragging = True
+                # Inside axes area → let matplotlib handle it
+                # (legend drag, zoom, pan, data interaction).
+                if self._in_axes_area(canvas_pos):
+                    if self._hit_legend(canvas_pos):
+                        self._legend_dragging = True
                     return False
-                # Record press for potential chart drag, but don't
-                # consume so matplotlib can detect double-clicks.
+                # Outside axes (margins) → start chart drag.
                 self._drag_origin = event.globalPos()
                 self._drag_widget_pos = self.pos()
             return False  # let matplotlib see the press
@@ -716,6 +717,9 @@ class EmbeddedChart(QWidget):
                 }
                 self.setCursor(cursors.get(edge, Qt.ArrowCursor))
                 return True
+            if self._in_axes_area(canvas_pos):
+                self.unsetCursor()
+                return False  # let matplotlib handle hover
             self.setCursor(Qt.SizeAllCursor)
             return False
 
@@ -735,20 +739,17 @@ class EmbeddedChart(QWidget):
         return False
 
     # ── Drag to move ────────────────────────────────────────────────
-    def _in_axes_area(self, pos):
-        """True if *pos* (widget coords) falls inside the matplotlib
-        axes rectangle — the actual plot area, not the margins."""
+    def _in_axes_area(self, canvas_pos):
+        """True if *canvas_pos* (canvas-local QPoint) is inside the
+        matplotlib axes rectangle, accounting for HiDPI scaling."""
         try:
-            bbox = self._ax.get_window_extent()
-            # Canvas coords: origin bottom-left; widget coords: top-left.
-            canvas_geom = self._canvas.geometry()
-            # Map widget pos to canvas-local coords.
-            cx = pos.x() - canvas_geom.x()
-            cy = pos.y() - canvas_geom.y()
-            # Flip y for matplotlib convention.
-            cy_mpl = canvas_geom.height() - cy
+            dpr = self._canvas.devicePixelRatio()
+            cx = canvas_pos.x() * dpr
+            cy = (self._canvas.height() - canvas_pos.y()) * dpr
+            renderer = self._canvas.get_renderer()
+            bbox = self._ax.get_window_extent(renderer)
             return (bbox.x0 <= cx <= bbox.x1 and
-                    bbox.y0 <= cy_mpl <= bbox.y1)
+                    bbox.y0 <= cy <= bbox.y1)
         except Exception:
             return True  # fallback: assume inside
 
