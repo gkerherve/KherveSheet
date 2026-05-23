@@ -445,8 +445,12 @@ class EmbeddedChart(QWidget):
         pass
 
     def _on_canvas_click(self, event):
-        """Handle double-click: label edit or axis properties."""
+        """Handle double-click: label edit, legend edit, or axis props."""
         if event.dblclick:
+            # Double-click on legend → open legend editor.
+            if self._hit_legend_mpl(event):
+                self._open_legend_editor()
+                return
             if self._try_edit_axis_label(event):
                 return
             side = self._hit_axis_spine(event)
@@ -455,6 +459,24 @@ class EmbeddedChart(QWidget):
                 return
             # Double-click elsewhere opens axis properties (Bottom X).
             self._open_axis_dialog("Bottom")
+
+    def _hit_legend_mpl(self, event):
+        """Return True if matplotlib *event* is over the legend."""
+        leg = self._ax.get_legend()
+        if leg is None or not leg.get_visible():
+            return False
+        try:
+            renderer = self._canvas.get_renderer()
+            bbox = leg.get_window_extent(renderer)
+            return bbox.contains(event.x, event.y)
+        except Exception:
+            return False
+
+    def _open_legend_editor(self):
+        """Open the legend editor dialog."""
+        dlg = LegendEditorDialog(self)
+        if dlg.exec_() == QDialog.Accepted:
+            dlg.apply_to_chart(self)
 
     def _try_edit_axis_label(self, event):
         """If *event* hit xlabel, ylabel, or title, open QInputDialog
@@ -524,6 +546,7 @@ class EmbeddedChart(QWidget):
         menu = QMenu(self)
         menu.addAction("Plot Details\u2026", self._open_plot_details)
         menu.addAction("Properties\u2026", self._open_properties)
+        menu.addAction("Edit Legend\u2026", self._open_legend_editor)
         menu.addSeparator()
 
         # X Axis submenu
@@ -1418,3 +1441,62 @@ class PlotDetailsDialog(QDialog):
                     artist.set_offsets(np.column_stack([x, y]))
             chart._ax.relim()
             chart._ax.autoscale_view()
+
+
+# ── Legend Editor Dialog ──────────────────────────────────────────
+
+class LegendEditorDialog(QDialog):
+    """Dialog to edit legend entry names."""
+
+    def __init__(self, chart, parent=None):
+        super().__init__(parent or chart)
+        self.setWindowTitle("Edit Legend")
+        self._chart = chart
+        self.resize(320, 200)
+
+        layout = QVBoxLayout(self)
+
+        # One QLineEdit per series.
+        self._edits = []
+        form = QFormLayout()
+        for i, s in enumerate(chart._series):
+            edit = QLineEdit(s.get("label", ""))
+            self._edits.append(edit)
+            form.addRow(f"Series {i + 1}:", edit)
+        layout.addLayout(form)
+
+        # Show/hide legend checkbox.
+        leg = chart._ax.get_legend()
+        self._show_legend = QCheckBox("Show Legend")
+        self._show_legend.setChecked(leg is not None and leg.get_visible())
+        layout.addWidget(self._show_legend)
+
+        # OK / Cancel.
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def apply_to_chart(self, chart):
+        """Apply edited labels to chart series and refresh legend."""
+        ax = chart._ax
+        for i, edit in enumerate(self._edits):
+            if i >= len(chart._series):
+                break
+            new_label = edit.text()
+            chart._series[i]["label"] = new_label
+            artist = chart._series[i].get("artist")
+            if artist is not None and hasattr(artist, 'set_label'):
+                artist.set_label(new_label)
+
+        if self._show_legend.isChecked():
+            leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
+            if leg:
+                leg.set_draggable(True)
+        else:
+            leg = ax.get_legend()
+            if leg:
+                leg.remove()
+
+        chart._canvas.draw_idle()
