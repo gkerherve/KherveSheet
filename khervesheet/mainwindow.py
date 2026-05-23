@@ -363,10 +363,13 @@ class MainWindow(QMainWindow):
     def _open_file(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Open File", "",
+            "KherveSheet (*.ksheet);;"
             "CSV Files (*.csv);;Excel Files (*.xlsx);;All Files (*)")
         if not path:
             return
-        if path.endswith(".csv"):
+        if path.endswith(".ksheet"):
+            self._load_ksheet(path)
+        elif path.endswith(".csv"):
             self._load_csv(path)
         elif path.endswith(".xlsx"):
             self._load_excel(path)
@@ -376,17 +379,24 @@ class MainWindow(QMainWindow):
 
     def _save_file(self):
         if self._current_file:
-            self._save_to_csv(self._current_file)
+            if self._current_file.endswith(".ksheet"):
+                self._save_to_ksheet(self._current_file)
+            else:
+                self._save_to_csv(self._current_file)
         else:
             self._save_file_as()
 
     def _save_file_as(self):
         path, _ = QFileDialog.getSaveFileName(
             self, "Save As", "",
+            "KherveSheet (*.ksheet);;"
             "CSV Files (*.csv);;All Files (*)")
         if not path:
             return
-        self._save_to_csv(path)
+        if path.endswith(".ksheet"):
+            self._save_to_ksheet(path)
+        else:
+            self._save_to_csv(path)
         self._current_file = path
         self._add_recent(path)
         self._update_title()
@@ -557,6 +567,224 @@ class MainWindow(QMainWindow):
         finally:
             self._show_progress(False)
 
+    # ── KherveSheet native HDF5 I/O ────────────────────────────────
+    def _save_to_ksheet(self, path: str):
+        try:
+            import h5py
+        except ImportError:
+            QMessageBox.warning(
+                self, "Missing Library",
+                "h5py is required for .ksheet files.\n"
+                "Install with: pip install h5py")
+            return
+        import json
+        import numpy as np
+        self._show_progress(True)
+        try:
+            wb = self._workbook
+            with h5py.File(path, 'w') as f:
+                f.attrs['format'] = 'ksheet'
+                f.attrs['version'] = 1
+                f.attrs['sheet_count'] = wb.tabs.count()
+
+                for si in range(wb.tabs.count()):
+                    sheet = wb.tabs.widget(si)
+                    name = wb.tabs.tabText(si)
+                    sg = f.create_group(f"sheet_{si}")
+                    sg.attrs['name'] = name
+                    sg.attrs['rows'] = sheet.row_count()
+                    sg.attrs['cols'] = sheet.column_count()
+
+                    # Grid data as a flat string array.
+                    n_rows = sheet.row_count()
+                    n_cols = sheet.column_count()
+                    data = []
+                    for r in range(n_rows):
+                        self._progress.setValue(
+                            int(100 * (si * n_rows + r)
+                                / max(1, wb.tabs.count() * n_rows)))
+                        QApplication.processEvents()
+                        for c in range(n_cols):
+                            it = sheet.table.item(r, c)
+                            data.append(it.text() if it else "")
+                    dt = h5py.string_dtype()
+                    sg.create_dataset("cells", data=data, dtype=dt)
+
+                    # Column designations.
+                    if sheet._col_designations:
+                        sg.attrs['col_designations'] = json.dumps(
+                            {str(k): v
+                             for k, v in sheet._col_designations.items()})
+
+                    # Column widths.
+                    widths = [sheet.table.columnWidth(c)
+                              for c in range(n_cols)]
+                    sg.create_dataset("col_widths", data=widths)
+
+                    # Charts.
+                    charts = getattr(sheet, '_charts', [])
+                    sg.attrs['chart_count'] = len(charts)
+                    for ci, chart in enumerate(charts):
+                        cg = sg.create_group(f"chart_{ci}")
+                        d = chart.to_dict()
+                        cg.attrs['pos_x'] = d['pos_x']
+                        cg.attrs['pos_y'] = d['pos_y']
+                        cg.attrs['width'] = d['width']
+                        cg.attrs['height'] = d['height']
+                        cg.attrs['title'] = d.get('title', '')
+                        cg.attrs['xlabel'] = d.get('xlabel', 'X')
+                        cg.attrs['ylabel'] = d.get('ylabel', 'Y')
+                        cg.attrs['xscale'] = d.get('xscale', 'linear')
+                        cg.attrs['yscale'] = d.get('yscale', 'linear')
+                        cg.attrs['grid'] = d.get('grid', False)
+                        cg.attrs['series_count'] = len(d['series'])
+                        for ki, s in enumerate(d['series']):
+                            srg = cg.create_group(f"series_{ki}")
+                            srg.create_dataset("x", data=s['x'])
+                            srg.create_dataset("y", data=s['y'])
+                            srg.attrs['label'] = s['label']
+                            srg.attrs['plot_type'] = s['plot_type']
+
+            self.statusBar().showMessage(f"Saved to {path}", 5000)
+        except Exception as e:
+            QMessageBox.warning(self, "Save Error", str(e))
+        finally:
+            self._show_progress(False)
+
+    def _load_ksheet(self, path: str):
+        try:
+            import h5py
+        except ImportError:
+            QMessageBox.warning(
+                self, "Missing Library",
+                "h5py is required for .ksheet files.\n"
+                "Install with: pip install h5py")
+            return
+        import json
+        import numpy as np
+        self._show_progress(True)
+        try:
+            with h5py.File(path, 'r') as f:
+                if f.attrs.get('format') != 'ksheet':
+                    QMessageBox.warning(
+                        self, "Format Error",
+                        "Not a valid .ksheet file.")
+                    return
+
+                sheet_count = int(f.attrs['sheet_count'])
+
+                # Create fresh workbook.
+                wb = WorkbookWidget()
+                # Remove default sheets.
+                while wb.tabs.count():
+                    w = wb.tabs.widget(0)
+                    wb.tabs.removeTab(0)
+                    w.deleteLater()
+
+                from PyQt5.QtWidgets import QTableWidgetItem
+
+                for si in range(sheet_count):
+                    sg = f[f"sheet_{si}"]
+                    name = sg.attrs['name']
+                    n_rows = int(sg.attrs['rows'])
+                    n_cols = int(sg.attrs['cols'])
+
+                    sheet = wb.add_sheet(name)
+                    sheet.table.blockSignals(True)
+                    sheet.table.setRowCount(n_rows)
+                    sheet.table.setColumnCount(n_cols)
+                    sheet._refresh_headers()
+
+                    # Restore cells.
+                    cells = sg["cells"][:]
+                    idx = 0
+                    for r in range(n_rows):
+                        self._progress.setValue(
+                            int(100 * (si * n_rows + r)
+                                / max(1, sheet_count * n_rows)))
+                        QApplication.processEvents()
+                        for c in range(n_cols):
+                            val = cells[idx]
+                            if isinstance(val, bytes):
+                                val = val.decode('utf-8')
+                            if val:
+                                sheet.table.setItem(
+                                    r, c, QTableWidgetItem(val))
+                                sheet._shadow[(r, c)] = val
+                            idx += 1
+                    sheet.table.blockSignals(False)
+
+                    # Column designations.
+                    desig_json = sg.attrs.get('col_designations', '')
+                    if desig_json:
+                        d = json.loads(desig_json)
+                        sheet._col_designations = {
+                            int(k): v for k, v in d.items()}
+
+                    # Column widths.
+                    if "col_widths" in sg:
+                        widths = sg["col_widths"][:]
+                        for c, w in enumerate(widths):
+                            sheet.table.setColumnWidth(c, int(w))
+
+                    # Charts.
+                    chart_count = int(sg.attrs.get('chart_count', 0))
+                    if chart_count:
+                        from .graph import EmbeddedChart
+                        if not hasattr(sheet, '_charts'):
+                            sheet._charts = []
+                        viewport = sheet.table.viewport()
+                        for ci in range(chart_count):
+                            cg = sg[f"chart_{ci}"]
+                            series_count = int(
+                                cg.attrs['series_count'])
+                            series = []
+                            for ki in range(series_count):
+                                srg = cg[f"series_{ki}"]
+                                series.append({
+                                    "x": list(srg["x"][:]),
+                                    "y": list(srg["y"][:]),
+                                    "label": srg.attrs['label'],
+                                    "plot_type": srg.attrs[
+                                        'plot_type'],
+                                })
+                            cd = {
+                                "series": series,
+                                "pos_x": int(cg.attrs['pos_x']),
+                                "pos_y": int(cg.attrs['pos_y']),
+                                "width": int(cg.attrs['width']),
+                                "height": int(cg.attrs['height']),
+                                "title": cg.attrs.get('title', ''),
+                                "xlabel": cg.attrs.get(
+                                    'xlabel', 'X'),
+                                "ylabel": cg.attrs.get(
+                                    'ylabel', 'Y'),
+                                "xscale": cg.attrs.get(
+                                    'xscale', 'linear'),
+                                "yscale": cg.attrs.get(
+                                    'yscale', 'linear'),
+                                "grid": bool(cg.attrs.get(
+                                    'grid', False)),
+                            }
+                            chart = EmbeddedChart.from_dict(
+                                cd, sheet, viewport)
+                            sheet._charts.append(chart)
+
+                wb.tabs.setCurrentIndex(0)
+                self.setCentralWidget(wb)
+                self._workbook = wb
+                self._wire_undo_to_sheets()
+                self._workbook.tabs.currentChanged.connect(
+                    lambda: self._wire_undo_to_sheets())
+                self._undo_stack.clear()
+
+            self.statusBar().showMessage(
+                f"Loaded {path}", 5000)
+        except Exception as e:
+            QMessageBox.warning(self, "Load Error", str(e))
+        finally:
+            self._show_progress(False)
+
     # ── Recent files ─────────────────────────────────────────────────
     def _add_recent(self, path: str):
         if path in self._recent_files:
@@ -580,7 +808,9 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "File Not Found",
                                 f"{path} no longer exists.")
             return
-        if path.endswith(".csv"):
+        if path.endswith(".ksheet"):
+            self._load_ksheet(path)
+        elif path.endswith(".csv"):
             self._load_csv(path)
         elif path.endswith(".xlsx"):
             self._load_excel(path)

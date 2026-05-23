@@ -9,7 +9,7 @@ while reusing KhervePlot's plotting engine for embedded charts.
 
 - Python 3.12 / 3.13 with PyQt5 + matplotlib + numpy.
 - Run via `python KherveSheet.py` or `python -m khervesheet`.
-- Optional libs: openpyxl (Excel import/export).
+- Optional libs: openpyxl (Excel import/export), h5py (native .ksheet format).
 - Crash log: `%TEMP%/khervesheet_crash.log`.
 - **Version string** is derived at runtime in `_version.py` from
   `git rev-list --count HEAD` and `git rev-parse --short HEAD`,
@@ -33,10 +33,7 @@ into a new module and import.
   - `sheet.py`      — `SheetWidget` (single grid tab with formula bar).
   - `workbook.py`   — `WorkbookWidget` (QTabWidget managing sheets).
   - `graph.py`      — `EmbeddedChart` (matplotlib chart overlaid on grid viewport).
-  - `mainwindow.py` — `MainWindow` shell: menus, toolbars, status bar.
-  - `mainwindow_io.py` — `IOMixin`: CSV / Excel import/export.
-  - `mainwindow_columns.py` — `ColumnsMixin`: column operations.
-  - `mainwindow_analysis.py` — `AnalysisMixin`: basic analysis ops.
+  - `mainwindow.py` — `MainWindow` shell: menus, toolbars, status bar, I/O (CSV/Excel/HDF5).
   - `formula_engine.py` — cell formula parser & evaluator.
   - `undo_commands.py` — QUndoCommand classes.
   - `icons.py`      — qtawesome icon factory (themed MDI + custom QPainter plot glyphs).

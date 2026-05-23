@@ -69,36 +69,10 @@ class EmbeddedChart(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(0)
 
-        # Title bar with close button.
-        title_bar = QWidget()
-        title_bar.setFixedHeight(22)
-        title_bar.setStyleSheet(
-            "background: qlineargradient("
-            "x1:0, y1:0, x2:0, y2:1, "
-            "stop:0 #e8ecf1, stop:1 #d4dae3); "
-            "border-bottom: 1px solid #b0b8c4;")
-        tb_layout = QHBoxLayout(title_bar)
-        tb_layout.setContentsMargins(6, 0, 4, 0)
-        tb_layout.setSpacing(4)
-        self._title_label = QLabel(f"Chart \u2014 {label}")
-        self._title_label.setStyleSheet(
-            "font-size: 10px; font-weight: bold; color: #2c3e50; "
-            "background: transparent; border: none;")
-        tb_layout.addWidget(self._title_label, stretch=1)
-
-        close_btn = QPushButton("\u2715")
-        close_btn.setFixedSize(18, 18)
-        close_btn.setStyleSheet(
-            "QPushButton { border: none; font-size: 12px; "
-            "color: #888; background: transparent; }"
-            "QPushButton:hover { color: #e60000; }")
-        close_btn.clicked.connect(self._close_chart)
-        tb_layout.addWidget(close_btn)
-        layout.addWidget(title_bar)
-
-        # Matplotlib figure.
+        # Matplotlib figure — no title bar, just the plot.
         self._figure = Figure(figsize=(5, 3), dpi=100)
         self._canvas = FigureCanvas(self._figure)
+        self._canvas.setMouseTracking(True)
         self._ax = self._figure.add_subplot(111)
         layout.addWidget(self._canvas, stretch=1)
 
@@ -187,6 +161,61 @@ class EmbeddedChart(QWidget):
         else:
             lines = ax.plot(x, y, label=label)
             return lines[0] if lines else None
+
+    # ── Serialisation ────────────────────────────────────────────────
+    def to_dict(self):
+        """Return a JSON-safe dict capturing chart state."""
+        ax = self._ax
+        series = []
+        for s in self._series:
+            series.append({
+                "x": list(s["x"]),
+                "y": list(s["y"]),
+                "label": s["label"],
+                "plot_type": s["plot_type"],
+            })
+        return {
+            "series": series,
+            "pos_x": self.x(),
+            "pos_y": self.y(),
+            "width": self.width(),
+            "height": self.height(),
+            "title": ax.get_title(),
+            "xlabel": ax.get_xlabel(),
+            "ylabel": ax.get_ylabel(),
+            "xscale": ax.get_xscale(),
+            "yscale": ax.get_yscale(),
+            "grid": (ax.xaxis.get_gridlines()[0].get_visible()
+                     if ax.xaxis.get_gridlines() else False),
+        }
+
+    @classmethod
+    def from_dict(cls, d, source_sheet, parent):
+        """Recreate a chart from a dict produced by to_dict()."""
+        series = d["series"]
+        s0 = series[0]
+        chart = cls(
+            np.array(s0["x"]), np.array(s0["y"]),
+            s0["label"], s0["plot_type"],
+            source_sheet, parent)
+        for s in series[1:]:
+            chart.add_series(
+                np.array(s["x"]), np.array(s["y"]),
+                s["label"], s["plot_type"])
+        chart.move(d.get("pos_x", 40), d.get("pos_y", 40))
+        chart.resize(d.get("width", 480), d.get("height", 320))
+        ax = chart._ax
+        ax.set_title(d.get("title", ""))
+        ax.set_xlabel(d.get("xlabel", "X"))
+        ax.set_ylabel(d.get("ylabel", "Y"))
+        try:
+            ax.set_xscale(d.get("xscale", "linear"))
+            ax.set_yscale(d.get("yscale", "linear"))
+        except ValueError:
+            pass
+        ax.grid(d.get("grid", False))
+        chart._canvas.draw_idle()
+        return chart
 
     # ── Close ───────────────────────────────────────────────────────
     def _close_chart(self):
@@ -294,8 +323,7 @@ class EmbeddedChart(QWidget):
                 self, dlg_title, "Label:", QLineEdit.Normal, old)
             if ok and new != old:
                 setter(new)
-                if setter is ax.set_title and new:
-                    self._title_label.setText(new)
+                pass  # title updated on axes directly
                 self._canvas.draw_idle()
             return True
         return False
@@ -360,12 +388,6 @@ class EmbeddedChart(QWidget):
         ym.addAction("Properties\u2026",
                       lambda: self._open_axis_dialog("Left"))
 
-        # Top/Right axes
-        menu.addAction("Top Axis\u2026",
-                       lambda: self._open_axis_dialog("Top"))
-        menu.addAction("Right Axis\u2026",
-                       lambda: self._open_axis_dialog("Right"))
-
         menu.addSeparator()
         menu.addAction("Pop Out to Window", self._pop_out)
         menu.addSeparator()
@@ -399,9 +421,6 @@ class EmbeddedChart(QWidget):
         ax.set_xlabel(dlg.xlabel_edit.text())
         ax.set_ylabel(dlg.ylabel_edit.text())
         ax.grid(dlg.grid_check.isChecked())
-        title = dlg.title_edit.text()
-        if title:
-            self._title_label.setText(title)
         self._canvas.draw_idle()
 
     # ── Fill between curves ─────────────────────────────────────────
@@ -449,9 +468,25 @@ class EmbeddedChart(QWidget):
         self._fill_artists = keep
 
     # ── Drag to move ────────────────────────────────────────────────
+    def _in_axes_area(self, pos):
+        """True if *pos* (widget coords) falls inside the matplotlib
+        axes rectangle — the actual plot area, not the margins."""
+        try:
+            bbox = self._ax.get_window_extent()
+            # Canvas coords: origin bottom-left; widget coords: top-left.
+            canvas_geom = self._canvas.geometry()
+            # Map widget pos to canvas-local coords.
+            cx = pos.x() - canvas_geom.x()
+            cy = pos.y() - canvas_geom.y()
+            # Flip y for matplotlib convention.
+            cy_mpl = canvas_geom.height() - cy
+            return (bbox.x0 <= cx <= bbox.x1 and
+                    bbox.y0 <= cy_mpl <= bbox.y1)
+        except Exception:
+            return True  # fallback: assume inside
+
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            # Mark this chart as selected on the parent sheet.
             self._select()
 
             edge = self._hit_edge(event.pos())
@@ -462,8 +497,8 @@ class EmbeddedChart(QWidget):
                 self._drag_widget_pos = self.geometry()
                 event.accept()
                 return
-            # Drag from title bar area (top 22px).
-            if event.pos().y() <= 22:
+            # Drag from anywhere outside the axes area (margins/border).
+            if not self._in_axes_area(event.pos()):
                 self._drag_origin = event.globalPos()
                 self._drag_widget_pos = self.pos()
                 self.setCursor(Qt.SizeAllCursor)
@@ -497,7 +532,8 @@ class EmbeddedChart(QWidget):
             event.accept()
             return
 
-        # Update cursor based on edge proximity or title bar.
+        # Update cursor: resize edges → resize cursors,
+        # outside axes → move cursor, inside axes → default.
         edge = self._hit_edge(event.pos())
         if edge:
             cursors = {
@@ -509,7 +545,7 @@ class EmbeddedChart(QWidget):
                 'lt': Qt.SizeFDiagCursor, 'tl': Qt.SizeFDiagCursor,
             }
             self.setCursor(cursors.get(edge, Qt.ArrowCursor))
-        elif event.pos().y() <= 22:
+        elif not self._in_axes_area(event.pos()):
             self.setCursor(Qt.SizeAllCursor)
         else:
             self.unsetCursor()
@@ -1095,10 +1131,6 @@ class PlotDetailsDialog(QDialog):
             leg = ax.get_legend()
             if leg:
                 leg.remove()
-
-        title = self.title_edit.text()
-        if title:
-            chart._title_label.setText(title)
 
         # Series settings for currently selected series
         row = self._series_list.currentRow()
