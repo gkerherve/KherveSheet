@@ -108,19 +108,56 @@ class CellFormatDelegate(QStyledItemDelegate):
     for performance; only borders need custom painting.
     """
 
+    # Cycling colours for formula reference highlights (Excel-like).
+    REF_COLORS = [
+        "#4472c4",   # blue
+        "#ed7d31",   # orange
+        "#a5a5a5",   # grey
+        "#ffc000",   # gold
+        "#5b9bd5",   # light blue
+        "#70ad47",   # green
+        "#e74c3c",   # red
+        "#9b59b6",   # purple
+    ]
+
     def __init__(self, formats: Dict[Tuple[int, int], CellFormat],
                  parent=None):
         super().__init__(parent)
         self._formats = formats
+        # Formula reference highlights: {(row, col): color_hex}
+        self._ref_highlights: Dict[Tuple[int, int], str] = {}
 
     def paint(self, painter: QPainter,
               option: QStyleOptionViewItem,
               index: QModelIndex):
+        key = (index.row(), index.column())
+
+        # Draw formula reference background tint before default paint.
+        ref_color = self._ref_highlights.get(key)
+        if ref_color:
+            painter.save()
+            bg = QColor(ref_color)
+            bg.setAlpha(30)
+            painter.fillRect(option.rect, bg)
+            painter.restore()
+
         super().paint(painter, option, index)
-        cf = self._formats.get((index.row(), index.column()))
-        if cf is None:
-            return
-        rect = option.rect
+
+        # Draw cell format borders.
+        cf = self._formats.get(key)
+        if cf is not None:
+            self._draw_borders(painter, option.rect, cf)
+
+        # Draw formula reference border on top.
+        if ref_color:
+            painter.save()
+            pen = QPen(QColor(ref_color), 2.0)
+            painter.setPen(pen)
+            painter.drawRect(option.rect.adjusted(1, 1, -1, -1))
+            painter.restore()
+
+    def _draw_borders(self, painter, rect, cf):
+        """Draw cell format borders."""
         painter.save()
         painter.setClipRect(rect)
         if cf.border_top:

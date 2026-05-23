@@ -254,6 +254,7 @@ class SheetWidget(QWidget):
         # Formula entry mode: when editing a formula, clicking a cell
         # inserts a cell reference instead of navigating.
         self._formula_entry_cell = None   # (row, col) being edited
+        self._ref_highlight_active = False
 
         # Signals
         self.table.cellChanged.connect(self._on_cell_changed)
@@ -354,6 +355,11 @@ class SheetWidget(QWidget):
 
     # ── Cell ref display ─────────────────────────────────────────────
     def _on_current_cell_changed(self, row, col, prev_row, prev_col):
+        # Clear formula highlights when navigating away (unless in
+        # formula entry mode where clicking inserts a ref).
+        if self._formula_entry_cell is None:
+            self._clear_ref_highlights()
+
         if row < 0 or col < 0:
             self._cell_ref_label.setText("")
             self._formula_bar.clear()
@@ -361,10 +367,13 @@ class SheetWidget(QWidget):
 
         ref = f"{col_index_to_letter(col)}{row + 1}"
         self._cell_ref_label.setText(ref)
-        # Show formula if cell has one, otherwise show value
+        # Show formula if cell has one, otherwise show value.
         formula = self._cell_formulas.get((row, col))
         if formula:
             self._formula_bar.setText(formula)
+            # Show ref highlights for existing formulas when selected.
+            if not self._formula_bar.hasFocus():
+                self._update_ref_highlights(formula)
         else:
             it = self.table.item(row, col)
             self._formula_bar.setText(it.text() if it else "")
@@ -419,14 +428,18 @@ class SheetWidget(QWidget):
                 c = self.table.currentColumn()
                 if r >= 0 and c >= 0:
                     self._formula_entry_cell = (r, c)
+            self._update_ref_highlights(text)
         elif not text.startswith("="):
             self._formula_entry_cell = None
+            self._clear_ref_highlights()
 
     def _exit_formula_mode(self):
         self._formula_entry_cell = None
+        self._clear_ref_highlights()
 
     def _apply_formula_bar(self):
         self._formula_entry_cell = None
+        self._clear_ref_highlights()
         idx = self.table.currentIndex()
         if not idx.isValid():
             return
@@ -443,6 +456,62 @@ class SheetWidget(QWidget):
         finally:
             self.table.blockSignals(False)
         self._on_cell_changed(row, col)
+
+    # ── Formula reference highlighting ─────────────────────────────
+    _REF_PATTERN = None  # compiled lazily
+
+    def _parse_cell_refs(self, formula_text: str):
+        """Extract unique (row, col) positions from cell references
+        in *formula_text*.  Returns a list of (row, col) in the order
+        each ref first appears."""
+        import re
+        if self._REF_PATTERN is None:
+            SheetWidget._REF_PATTERN = re.compile(
+                r'\$?([A-Za-z]{1,3})\$?(\d{1,7})')
+        seen = set()
+        result = []
+        for m in self._REF_PATTERN.finditer(formula_text):
+            letters = m.group(1).upper()
+            row_num = int(m.group(2))
+            c = letter_to_col_index(letters)
+            r = row_num - 1
+            if r < 0 or c < 0:
+                continue
+            key = (r, c)
+            if key not in seen:
+                seen.add(key)
+                result.append(key)
+        return result
+
+    def _update_ref_highlights(self, text: str):
+        """Parse cell refs from *text* and highlight them on the grid."""
+        from .cellformat import CellFormatDelegate
+        delegate = self._fmt_delegate
+        refs = self._parse_cell_refs(text)
+        colors = CellFormatDelegate.REF_COLORS
+        new_highlights = {}
+        for i, key in enumerate(refs):
+            new_highlights[key] = colors[i % len(colors)]
+        old = set(delegate._ref_highlights.keys())
+        delegate._ref_highlights = new_highlights
+        self._ref_highlight_active = bool(new_highlights)
+        # Repaint affected cells.
+        dirty = old | set(new_highlights.keys())
+        for (r, c) in dirty:
+            idx = self.table.model().index(r, c)
+            self.table.update(idx)
+
+    def _clear_ref_highlights(self):
+        """Remove all formula reference highlights."""
+        if not self._ref_highlight_active:
+            return
+        delegate = self._fmt_delegate
+        old = set(delegate._ref_highlights.keys())
+        delegate._ref_highlights.clear()
+        self._ref_highlight_active = False
+        for (r, c) in old:
+            idx = self.table.model().index(r, c)
+            self.table.update(idx)
 
     # ── Formula evaluation (basic) ───────────────────────────────────
     def _evaluate_formula(self, formula: str, row: int, col: int):
