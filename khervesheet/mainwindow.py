@@ -310,6 +310,16 @@ class MainWindow(QMainWindow):
             act.setToolTip(pt)
 
     # ── Status bar ───────────────────────────────────────────────────
+    def _status_msg(self, text: str, timeout: int = 0):
+        """Show a message in the status label. *timeout* in ms;
+        0 = permanent.  Never use statusBar().showMessage() as it
+        hides the stretch label and shifts permanent widgets left."""
+        self._status_label.setText(text)
+        if timeout > 0:
+            from PyQt5.QtCore import QTimer
+            QTimer.singleShot(
+                timeout, lambda: self._status_label.setText("Ready"))
+
     def _build_status_bar(self):
         sb = QStatusBar()
         self.setStatusBar(sb)
@@ -368,7 +378,7 @@ class MainWindow(QMainWindow):
             lambda: self._wire_undo_to_sheets())
         self._undo_stack.clear()
         self._update_title()
-        self.statusBar().showMessage("New workbook created", 3000)
+        self._status_msg("New workbook created", 3000)
 
     def _open_file(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -467,7 +477,7 @@ class MainWindow(QMainWindow):
                     sheet._shadow[(i, j)] = val
             sheet.table.blockSignals(False)
 
-            self.statusBar().showMessage(
+            self._status_msg(
                 f"Loaded {n_rows} rows × {n_cols} columns from {path}",
                 5000)
         except Exception as e:
@@ -491,7 +501,7 @@ class MainWindow(QMainWindow):
                         it = sheet.table.item(r, c)
                         row.append(it.text() if it else "")
                     writer.writerow(row)
-            self.statusBar().showMessage(f"Saved to {path}", 5000)
+            self._status_msg(f"Saved to {path}", 5000)
         except Exception as e:
             QMessageBox.warning(self, "Save Error", str(e))
         finally:
@@ -533,7 +543,7 @@ class MainWindow(QMainWindow):
                     sheet._shadow[(r, c)] = val
             sheet.table.blockSignals(False)
 
-            self.statusBar().showMessage(
+            self._status_msg(
                 f"Loaded {n_rows} × {n_cols} from {path}", 5000)
         except Exception as e:
             QMessageBox.warning(self, "Import Error", str(e))
@@ -571,7 +581,7 @@ class MainWindow(QMainWindow):
                         pass
                     ws.cell(r + 1, c + 1, val)
             wb.save(path)
-            self.statusBar().showMessage(f"Exported to {path}", 5000)
+            self._status_msg(f"Exported to {path}", 5000)
         except Exception as e:
             QMessageBox.warning(self, "Export Error", str(e))
         finally:
@@ -655,7 +665,7 @@ class MainWindow(QMainWindow):
                             srg.attrs['label'] = s['label']
                             srg.attrs['plot_type'] = s['plot_type']
 
-            self.statusBar().showMessage(f"Saved to {path}", 5000)
+            self._status_msg(f"Saved to {path}", 5000)
         except Exception as e:
             QMessageBox.warning(self, "Save Error", str(e))
         finally:
@@ -788,7 +798,7 @@ class MainWindow(QMainWindow):
                     lambda: self._wire_undo_to_sheets())
                 self._undo_stack.clear()
 
-            self.statusBar().showMessage(
+            self._status_msg(
                 f"Loaded {path}", 5000)
         except Exception as e:
             QMessageBox.warning(self, "Load Error", str(e))
@@ -862,7 +872,7 @@ class MainWindow(QMainWindow):
                     for sr in sel._series
                 ],
             }
-            self.statusBar().showMessage("Chart copied", 2000)
+            self._status_msg("Chart copied", 2000)
         else:
             s._copy_selection()
 
@@ -891,7 +901,7 @@ class MainWindow(QMainWindow):
                 else:
                     first_chart.add_series(x, y, sr["label"], sr["plot_type"])
             _g._chart_clipboard = None
-            self.statusBar().showMessage("Chart pasted", 2000)
+            self._status_msg("Chart pasted", 2000)
         else:
             s._paste_clipboard()
 
@@ -1133,7 +1143,7 @@ class MainWindow(QMainWindow):
             else:
                 first_chart.add_series(x, y, label, plot_type)
 
-        self.statusBar().showMessage(
+        self._status_msg(
             f"Created {plot_type} chart", 3000)
 
     # ── Format operations ────────────────────────────────────────────
@@ -1177,7 +1187,7 @@ class MainWindow(QMainWindow):
         for rng in sel:
             for c in range(rng.leftColumn(), rng.rightColumn() + 1):
                 s.set_designation(c, desig)
-        self.statusBar().showMessage(
+        self._status_msg(
             f"Set column(s) as {desig}", 2000)
 
     def _sort_asc(self):
