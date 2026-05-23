@@ -34,6 +34,8 @@ NUMBER_FORMATS = [
     "0.000",
     "0.0000",
     "Scientific",
+    "Percentage",
+    "Currency",
     "Date",
     "Time",
     "Text",
@@ -113,6 +115,10 @@ def _format_value(raw: str, fmt: str) -> str:
         return f"{val:.4f}"
     elif fmt == "Scientific":
         return f"{val:.4e}"
+    elif fmt == "Percentage":
+        return f"{val * 100:.2f}%"
+    elif fmt == "Currency":
+        return f"${val:,.2f}"
     return raw
 
 
@@ -169,16 +175,11 @@ class BulkCellEditCmd(QUndoCommand):
         self.sheet.table.blockSignals(False)
 
 
-def _format_number(value):
+def _format_number(value, decimals=3):
     """Format a numeric result for cell display.
 
-    Rules:
-    - Integers display without decimals: 2, 100, -5
-    - Floats show up to 3 decimal places by default, trailing zeros
-      stripped: 3.14, 0.5, 2 (not 2.000)
-    - If the number has meaningful precision beyond 3 decimals, show
-      all significant digits up to 10: 3.14159265
-    - Non-numeric results pass through unchanged.
+    Shows up to *decimals* places (default 3), trailing zeros stripped.
+    Integers display without decimals.  Non-numeric values pass through.
     """
     if isinstance(value, bool):
         return "TRUE" if value else "FALSE"
@@ -189,10 +190,9 @@ def _format_number(value):
     # Exact integer floats.
     if value == int(value) and abs(value) < 1e15:
         return int(value)
-    # Round to 10 significant decimals to remove float noise.
-    rounded = round(value, 10)
-    # Format with up to 10 decimals, then strip trailing zeros.
-    s = f"{rounded:.10f}"
+    # Round to requested precision and strip trailing zeros.
+    rounded = round(value, decimals)
+    s = f"{rounded:.{decimals}f}"
     s = s.rstrip("0").rstrip(".")
     return s
 
@@ -1117,6 +1117,10 @@ class SheetWidget(QWidget):
         menu.addAction("Insert Row Below", self._insert_row_below)
         menu.addAction("Delete Row(s)", self._delete_selected_rows)
         menu.addAction("Add 10 Rows", self._add_10_rows)
+
+        menu.addSeparator()
+        menu.addAction("Format Cells\u2026",
+                       lambda: self.window()._open_format_cells_dialog())
 
         menu.exec_(self.table.viewport().mapToGlobal(pos))
 
