@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QPushButton, QComboBox, QLineEdit, QCheckBox,
     QSpinBox, QDoubleSpinBox, QTabWidget, QWidget, QGroupBox,
-    QDialogButtonBox, QColorDialog,
+    QDialogButtonBox, QColorDialog, QSlider,
 )
 
 import matplotlib.ticker as mticker
@@ -183,6 +183,9 @@ class AxisPropertiesDialog(QDialog):
 
     # ── Tab builders ────────────────────────────────────────────────
 
+    # Slider resolution: number of discrete steps.
+    _SLIDER_STEPS = 1000
+
     def _build_scale_tab(self):
         w = QWidget()
         form = QFormLayout(w)
@@ -197,20 +200,102 @@ class AxisPropertiesDialog(QDialog):
         self.limit_auto.toggled.connect(self._on_auto_limits)
         form.addRow(self.limit_auto)
 
+        # ── Min: slider + spin box ─────────────────────────────────
         self.limit_min = QDoubleSpinBox()
         self.limit_min.setRange(-1e15, 1e15)
-        self.limit_min.setDecimals(6)
-        form.addRow("Min:", self.limit_min)
+        self.limit_min.setDecimals(4)
+        self._min_slider = QSlider(Qt.Horizontal)
+        self._min_slider.setRange(0, self._SLIDER_STEPS)
+        min_row = QHBoxLayout()
+        min_row.addWidget(self._min_slider, stretch=1)
+        min_row.addWidget(self.limit_min)
+        form.addRow("Min:", min_row)
 
+        # ── Max: slider + spin box ─────────────────────────────────
         self.limit_max = QDoubleSpinBox()
         self.limit_max.setRange(-1e15, 1e15)
-        self.limit_max.setDecimals(6)
-        form.addRow("Max:", self.limit_max)
+        self.limit_max.setDecimals(4)
+        self._max_slider = QSlider(Qt.Horizontal)
+        self._max_slider.setRange(0, self._SLIDER_STEPS)
+        max_row = QHBoxLayout()
+        max_row.addWidget(self._max_slider, stretch=1)
+        max_row.addWidget(self.limit_max)
+        form.addRow("Max:", max_row)
+
+        # Slider ↔ spin box sync + live preview.
+        self._min_slider.valueChanged.connect(self._on_min_slider)
+        self._max_slider.valueChanged.connect(self._on_max_slider)
+        self.limit_min.valueChanged.connect(self._on_min_spin)
+        self.limit_max.valueChanged.connect(self._on_max_spin)
+
+        # Slider range bookkeeping (set in _refresh_from_axes).
+        self._slider_lo = 0.0
+        self._slider_hi = 1.0
 
         self.invert_check = QCheckBox("Invert axis")
         form.addRow(self.invert_check)
 
         self._tabs.addTab(w, "Scale")
+
+    # ── Slider helpers ─────────────────────────────────────────────
+
+    def _setup_slider_range(self, lo, hi):
+        """Configure the slider mapping from [lo, hi]."""
+        margin = max(abs(hi - lo) * 0.5, 1e-6)
+        self._slider_lo = lo - margin
+        self._slider_hi = hi + margin
+
+    def _val_to_slider(self, val):
+        span = self._slider_hi - self._slider_lo
+        if span == 0:
+            return 0
+        frac = (val - self._slider_lo) / span
+        return int(max(0, min(self._SLIDER_STEPS,
+                              frac * self._SLIDER_STEPS)))
+
+    def _slider_to_val(self, pos):
+        frac = pos / self._SLIDER_STEPS
+        return self._slider_lo + frac * (self._slider_hi - self._slider_lo)
+
+    def _on_min_slider(self, pos):
+        val = self._slider_to_val(pos)
+        self.limit_min.blockSignals(True)
+        self.limit_min.setValue(val)
+        self.limit_min.blockSignals(False)
+        self._live_update_limits()
+
+    def _on_max_slider(self, pos):
+        val = self._slider_to_val(pos)
+        self.limit_max.blockSignals(True)
+        self.limit_max.setValue(val)
+        self.limit_max.blockSignals(False)
+        self._live_update_limits()
+
+    def _on_min_spin(self, val):
+        self._min_slider.blockSignals(True)
+        self._min_slider.setValue(self._val_to_slider(val))
+        self._min_slider.blockSignals(False)
+        self._live_update_limits()
+
+    def _on_max_spin(self, val):
+        self._max_slider.blockSignals(True)
+        self._max_slider.setValue(self._val_to_slider(val))
+        self._max_slider.blockSignals(False)
+        self._live_update_limits()
+
+    def _live_update_limits(self):
+        """Apply min/max to the chart in real time."""
+        if self.limit_auto.isChecked():
+            return
+        ax = self._ax
+        is_x = (self._current_dir == "x")
+        lo = self.limit_min.value()
+        hi = self.limit_max.value()
+        if is_x:
+            ax.set_xlim(lo, hi)
+        else:
+            ax.set_ylim(lo, hi)
+        self._chart._canvas.draw_idle()
 
     def _build_title_tab(self):
         w = QWidget()
@@ -549,6 +634,8 @@ class AxisPropertiesDialog(QDialog):
     def _on_auto_limits(self, auto):
         self.limit_min.setEnabled(not auto)
         self.limit_max.setEnabled(not auto)
+        self._min_slider.setEnabled(not auto)
+        self._max_slider.setEnabled(not auto)
 
     # ── Side switching ─────────────────────────────────────────────
 
@@ -650,9 +737,20 @@ class AxisPropertiesDialog(QDialog):
     def _restore_widgets(self, st):
         """Restore widget values from a captured dict."""
         self.scale_combo.setCurrentText(st["scale"])
+        self._setup_slider_range(st["limit_min"], st["limit_max"])
         self.limit_auto.setChecked(st["limit_auto"])
+        self.limit_min.blockSignals(True)
+        self.limit_max.blockSignals(True)
         self.limit_min.setValue(st["limit_min"])
         self.limit_max.setValue(st["limit_max"])
+        self._min_slider.blockSignals(True)
+        self._max_slider.blockSignals(True)
+        self._min_slider.setValue(self._val_to_slider(st["limit_min"]))
+        self._max_slider.setValue(self._val_to_slider(st["limit_max"]))
+        self._min_slider.blockSignals(False)
+        self._max_slider.blockSignals(False)
+        self.limit_min.blockSignals(False)
+        self.limit_max.blockSignals(False)
         self._on_auto_limits(st["limit_auto"])
         self.invert_check.setChecked(st["invert"])
 
@@ -737,9 +835,20 @@ class AxisPropertiesDialog(QDialog):
         cur_scale = ax.get_xscale() if is_x else ax.get_yscale()
         self.scale_combo.setCurrentText(cur_scale)
         lims = ax.get_xlim() if is_x else ax.get_ylim()
+        self._setup_slider_range(lims[0], lims[1])
         self.limit_auto.setChecked(True)
+        self.limit_min.blockSignals(True)
+        self.limit_max.blockSignals(True)
         self.limit_min.setValue(lims[0])
         self.limit_max.setValue(lims[1])
+        self._min_slider.blockSignals(True)
+        self._max_slider.blockSignals(True)
+        self._min_slider.setValue(self._val_to_slider(lims[0]))
+        self._max_slider.setValue(self._val_to_slider(lims[1]))
+        self._min_slider.blockSignals(False)
+        self._max_slider.blockSignals(False)
+        self.limit_min.blockSignals(False)
+        self.limit_max.blockSignals(False)
         self._on_auto_limits(True)
         inverted = (ax.xaxis_inverted() if is_x
                     else ax.yaxis_inverted())
