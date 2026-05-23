@@ -66,8 +66,6 @@ class EmbeddedChart(QWidget):
         self._resizing = False
         self._resize_edge = None      # which edges: combination of t/b/l/r
         self._legend_dragging = False
-        self._legend_drag_origin = None
-        self._legend_anchor_start = (0, 0)
 
         self.setMinimumSize(240, 180)
         self.resize(480, 320)
@@ -126,6 +124,8 @@ class EmbeddedChart(QWidget):
             self._y_cols.append(y_col)
 
         leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
+        if leg:
+            leg.set_draggable(True)
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
         self._canvas.draw_idle()
@@ -194,6 +194,8 @@ class EmbeddedChart(QWidget):
         s["plot_type"] = new_plot_type
         # Refresh legend.
         leg = self._ax.legend(loc="best", framealpha=0.8, fontsize=8)
+        if leg:
+            leg.set_draggable(True)
         self._canvas.draw_idle()
 
     # ── Serialisation ────────────────────────────────────────────────
@@ -424,45 +426,15 @@ class EmbeddedChart(QWidget):
             return False
         try:
             # Transform canvas-local Qt coords → matplotlib display coords.
-            cx, cy = event_pos.x(), self._canvas.height() - event_pos.y()
+            # Account for device pixel ratio (HiDPI / Windows scaling).
+            dpr = self._canvas.devicePixelRatio()
+            cx = event_pos.x() * dpr
+            cy = (self._canvas.height() - event_pos.y()) * dpr
             renderer = self._canvas.get_renderer()
             bbox = leg.get_window_extent(renderer)
             return bbox.contains(cx, cy)
         except Exception:
             return False
-
-    def _start_legend_drag(self, global_pos):
-        """Begin manual legend drag."""
-        leg = self._ax.get_legend()
-        if leg is None:
-            return
-        self._legend_dragging = True
-        self._legend_drag_origin = global_pos
-        # Snapshot the legend's current position in display (pixel) coords.
-        try:
-            renderer = self._canvas.get_renderer()
-            bbox = leg.get_window_extent(renderer)
-            self._legend_anchor_start = (bbox.x0, bbox.y0)
-        except Exception:
-            self._legend_anchor_start = (0, 0)
-        self.setCursor(Qt.ClosedHandCursor)
-
-    def _move_legend(self, global_pos):
-        """Manually reposition the legend based on mouse drag delta."""
-        leg = self._ax.get_legend()
-        if leg is None or self._legend_drag_origin is None:
-            return
-        # Compute pixel delta (Qt coords: Y down, mpl: Y up).
-        delta = global_pos - self._legend_drag_origin
-        dx_px, dy_px = delta.x(), -delta.y()
-        # New position in display coords.
-        x0, y0 = self._legend_anchor_start
-        new_x, new_y = x0 + dx_px, y0 + dy_px
-        # Convert display coords to axes fraction.
-        inv = self._ax.transAxes.inverted()
-        fx, fy = inv.transform((new_x, new_y))
-        leg.set_bbox_to_anchor((fx, fy), transform=self._ax.transAxes)
-        self._canvas.draw_idle()
 
     # ── Interactive label / axis editing ───────────────────────────
     _SPINE_MAP = {"Bottom": "bottom", "Top": "top",
@@ -663,11 +635,10 @@ class EmbeddedChart(QWidget):
     def eventFilter(self, obj, event):
         """Intercept mouse events on the canvas for drag / resize.
 
-        Events inside the matplotlib axes area are forwarded to the
-        canvas (matplotlib interaction).  Events in the margin area
-        (outside the axes) are handled here for drag / resize.
+        Click+drag moves the chart, except when on the legend
+        (matplotlib's draggable legend handles that).
         """
-        if obj is not self._canvas:
+        if obj is not self._canvas and not self._canvas.isAncestorOf(obj):
             return super().eventFilter(obj, event)
 
         from PyQt5.QtCore import QEvent
@@ -679,8 +650,13 @@ class EmbeddedChart(QWidget):
                          QEvent.MouseButtonRelease):
             return False
 
-        # Map canvas-local pos to chart-widget coords for hit testing.
-        wpos = self._canvas.mapToParent(event.pos())
+        # Map event pos to canvas-local and chart-widget coords.
+        if obj is self._canvas:
+            canvas_pos = event.pos()
+        else:
+            canvas_pos = self._canvas.mapFromGlobal(
+                obj.mapToGlobal(event.pos()))
+        wpos = self._canvas.mapToParent(canvas_pos)
 
         if etype == QEvent.MouseButtonPress:
             if event.button() == Qt.LeftButton:
@@ -692,21 +668,20 @@ class EmbeddedChart(QWidget):
                     self._drag_origin = event.globalPos()
                     self._drag_widget_pos = self.geometry()
                     return True   # consumed — resize only
-                # Click on legend → move legend only (not the chart).
-                if self._hit_legend(event.pos()):
-                    self._start_legend_drag(event.globalPos())
-                    return True  # consumed — legend drag only
-                # Record press for potential drag, but don't consume
-                # so matplotlib can detect double-clicks.
+                # On legend → let matplotlib's draggable handle it.
+                if self._hit_legend(canvas_pos):
+                    self._legend_dragging = True
+                    return False
+                # Record press for potential chart drag, but don't
+                # consume so matplotlib can detect double-clicks.
                 self._drag_origin = event.globalPos()
                 self._drag_widget_pos = self.pos()
             return False  # let matplotlib see the press
 
         if etype == QEvent.MouseMove:
-            # While legend is being dragged, move it manually.
+            # While legend is being dragged, let matplotlib handle.
             if self._legend_dragging:
-                self._move_legend(event.globalPos())
-                return True
+                return False
             if self._resizing and self._drag_origin is not None:
                 delta = event.globalPos() - self._drag_origin
                 geo = QRect(self._drag_widget_pos)
@@ -741,17 +716,13 @@ class EmbeddedChart(QWidget):
                 }
                 self.setCursor(cursors.get(edge, Qt.ArrowCursor))
                 return True
-            if self._hit_legend(event.pos()):
-                self.setCursor(Qt.OpenHandCursor)
-                return False
             self.setCursor(Qt.SizeAllCursor)
             return False
 
         if etype == QEvent.MouseButtonRelease:
             if self._legend_dragging:
                 self._legend_dragging = False
-                self._legend_drag_origin = None
-                return True
+                return False  # let mpl finalize
             if self._drag_origin is not None or self._resizing:
                 self._drag_origin = None
                 self._drag_widget_pos = None
@@ -917,7 +888,9 @@ class _ChartWindow(QDialog):
         for s in series:
             EmbeddedChart._plot_one(
                 ax, s["x"], s["y"], s["label"], s["plot_type"])
-        ax.legend(loc="best", framealpha=0.8, fontsize=8)
+        leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
+        if leg:
+            leg.set_draggable(True)
 
         toolbar = NavigationToolbar(canvas, self)
         toolbar.setIconSize(QSize(18, 18))
@@ -1339,7 +1312,9 @@ class PlotDetailsDialog(QDialog):
         ax.set_xscale(self.xscale_combo.currentText())
         ax.set_yscale(self.yscale_combo.currentText())
         if self.legend_check.isChecked():
-            ax.legend(loc="best", framealpha=0.8, fontsize=8)
+            leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
+            if leg:
+                leg.set_draggable(True)
         else:
             leg = ax.get_legend()
             if leg:
@@ -1403,7 +1378,9 @@ class PlotDetailsDialog(QDialog):
 
             # Refresh legend (only include visible series).
             if self.legend_check.isChecked():
-                ax.legend(loc="best", framealpha=0.8, fontsize=8)
+                leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
+                if leg:
+                    leg.set_draggable(True)
 
         chart._canvas.draw_idle()
 
