@@ -496,6 +496,12 @@ class EmbeddedChart(QWidget):
         from PyQt5.QtCore import QEvent
         etype = event.type()
 
+        # Only handle mouse events — other events (paint, resize, etc.)
+        # don't carry a pos() and must pass through untouched.
+        if etype not in (QEvent.MouseButtonPress, QEvent.MouseMove,
+                         QEvent.MouseButtonRelease):
+            return False
+
         # Map canvas-local pos to chart-widget coords for hit testing.
         wpos = self._canvas.mapToParent(event.pos())
 
