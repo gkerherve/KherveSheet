@@ -97,7 +97,8 @@ QTabBar::tab:hover:!selected {
 _TICK_FORMATS = [
     ("Auto", "auto"),
     ("Decimal", "decimal"),
-    ("Scientific", "scientific"),
+    ("Scientific (1.23e+05)", "scientific"),
+    ("Scientific (\u00d710\u207f)", "std_scientific"),
     ("Engineering", "engineering"),
     ("Percentage", "percent"),
     ("Plain", "plain"),
@@ -1411,6 +1412,10 @@ class AxisPropertiesDialog(QDialog):
                 mticker.FuncFormatter(
                     lambda v, _: f"{prefix}{v:.{decimals}e}"
                     f"{suffix}"))
+        elif fmt_code == "std_scientific":
+            fmt = mticker.ScalarFormatter(useMathText=True)
+            fmt.set_powerlimits((0, 0))
+            mpl_axis.set_major_formatter(fmt)
         elif fmt_code == "engineering":
             mpl_axis.set_major_formatter(
                 mticker.EngFormatter(places=decimals,
