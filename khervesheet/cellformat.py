@@ -18,6 +18,7 @@ from PyQt5.QtCore import Qt, QRect, QRectF, QModelIndex
 from PyQt5.QtGui import QPen, QColor, QPainter, QFontMetrics
 from PyQt5.QtWidgets import (
     QStyledItemDelegate, QStyleOptionViewItem, QTableWidget,
+    QStyle,
 )
 
 
@@ -193,7 +194,22 @@ class CellFormatDelegate(QStyledItemDelegate):
             painter.fillRect(option.rect, bg)
             painter.restore()
 
-        super().paint(painter, option, index)
+        # Paint cell content without the default opaque selection
+        # highlight so values remain readable when a column/row is
+        # selected.  We draw a translucent tint afterwards instead.
+        selected = bool(option.state & QStyle.State_Selected)
+        if selected:
+            opt2 = QStyleOptionViewItem(option)
+            opt2.state &= ~QStyle.State_Selected
+            super().paint(painter, opt2, index)
+            # Translucent selection overlay (Excel-like light blue).
+            painter.save()
+            hl = option.palette.highlight().color()
+            hl.setAlpha(60)
+            painter.fillRect(option.rect, hl)
+            painter.restore()
+        else:
+            super().paint(painter, option, index)
 
         # ── Text overflow into empty right-hand neighbours ────────
         self._paint_overflow(painter, option, index)
