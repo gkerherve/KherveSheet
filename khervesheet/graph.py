@@ -600,7 +600,7 @@ class EmbeddedChart(QWidget):
         x_inv = xm.addAction("Invert Axis")
         x_inv.setCheckable(True)
         x_inv.setChecked(self._ax.get_xlim()[0] > self._ax.get_xlim()[1])
-        x_inv.toggled.connect(lambda c: self._invert_axis("x", c))
+        x_inv.triggered.connect(lambda c: self._invert_axis("x", c))
         xm.addSeparator()
         xm.addAction("Axis Properties\u2026",
                       lambda: self._open_axis_dialog("Bottom"))
@@ -614,7 +614,7 @@ class EmbeddedChart(QWidget):
         y_inv = ym.addAction("Invert Axis")
         y_inv.setCheckable(True)
         y_inv.setChecked(self._ax.get_ylim()[0] > self._ax.get_ylim()[1])
-        y_inv.toggled.connect(lambda c: self._invert_axis("y", c))
+        y_inv.triggered.connect(lambda c: self._invert_axis("y", c))
         ym.addSeparator()
         ym.addAction("Axis Properties\u2026",
                       lambda: self._open_axis_dialog("Left"))
