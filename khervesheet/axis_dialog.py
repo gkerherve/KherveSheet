@@ -168,7 +168,9 @@ class AxisPropertiesDialog(QDialog):
         outer.addWidget(bb)
 
         # ── Per-direction state cache ─────────────────────────────
-        self._dir_states = {}     # "x" -> dict, "y" -> dict
+        # Pre-load from chart's saved axis properties so that manual
+        # limits and other settings persist across dialog sessions.
+        self._dir_states = dict(getattr(chart, '_axis_props', {}) or {})
         self._current_dir = None
 
         # ── Initial selection ─────────────────────────────────────
