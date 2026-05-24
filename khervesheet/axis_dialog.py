@@ -242,6 +242,9 @@ class AxisPropertiesDialog(QDialog):
 
     def _setup_slider_range(self, lo, hi):
         """Configure the slider mapping from [lo, hi]."""
+        # Always use ascending order for slider range, even if axis
+        # is inverted (where get_xlim returns high, low).
+        lo, hi = min(lo, hi), max(lo, hi)
         margin = max(abs(hi - lo) * 0.5, 1e-6)
         self._slider_lo = lo - margin
         self._slider_hi = hi + margin
