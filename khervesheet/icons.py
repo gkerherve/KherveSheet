@@ -1398,3 +1398,104 @@ def redo_icon(size: int = 28) -> QIcon:
         ])
         p.drawPolygon(tri)
     return _fmt_icon(size, _draw)
+
+
+def table_design_icon(size: int = 28) -> QIcon:
+    """Small coloured table grid for Table Design."""
+    def _draw(p, s):
+        m = s * 0.15
+        r = s - m
+        cols, rows = 3, 4
+        cw = (r - m) / cols
+        rh = (r - m) / rows
+        # Header row
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#4472c4"))
+        p.drawRect(QRectF(m, m, r - m, rh))
+        # Banded rows
+        for row in range(1, rows):
+            bg = QColor("#d9e2f3") if row % 2 == 1 else QColor("#ffffff")
+            p.setBrush(bg)
+            p.drawRect(QRectF(m, m + row * rh, r - m, rh))
+        # Grid lines
+        p.setPen(QPen(QColor("#4472c4"), max(0.8, s / 28)))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(QRectF(m, m, r - m, r - m))
+        for col in range(1, cols):
+            x = m + col * cw
+            p.drawLine(QPointF(x, m), QPointF(x, r))
+        for row in range(1, rows):
+            y = m + row * rh
+            p.drawLine(QPointF(m, y), QPointF(r, y))
+    return _fmt_icon(size, _draw)
+
+
+def symbol_icon(size: int = 28) -> QIcon:
+    """Greek omega for the symbol insertion button."""
+    def _draw(p, s):
+        f = QFont("Segoe UI", int(s * 0.6))
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QPen(_toolbar_fg()))
+        p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "\u03a9")
+    return _fmt_icon(size, _draw)
+
+
+def merge_cells_icon(size: int = 28) -> QIcon:
+    """Four cells merging into one with inward arrows."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        m = s * 0.15
+        r = s - m
+        mid = s / 2
+        # 2x2 grid
+        p.setPen(QPen(fg, max(1.0, s / 20)))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(QRectF(m, m, r - m, r - m))
+        p.setPen(QPen(fg, max(0.8, s / 24), Qt.DashLine))
+        p.drawLine(QPointF(m, mid), QPointF(r, mid))
+        p.drawLine(QPointF(mid, m), QPointF(mid, r))
+        # Inward arrows
+        p.setPen(Qt.NoPen)
+        p.setBrush(fg)
+        a = s * 0.08
+        p.drawPolygon(QPolygonF([
+            QPointF(m + a, mid), QPointF(m + a * 3, mid - a),
+            QPointF(m + a * 3, mid + a)]))
+        p.drawPolygon(QPolygonF([
+            QPointF(r - a, mid), QPointF(r - a * 3, mid - a),
+            QPointF(r - a * 3, mid + a)]))
+        p.drawPolygon(QPolygonF([
+            QPointF(mid, m + a), QPointF(mid - a, m + a * 3),
+            QPointF(mid + a, m + a * 3)]))
+        p.drawPolygon(QPolygonF([
+            QPointF(mid, r - a), QPointF(mid - a, r - a * 3),
+            QPointF(mid + a, r - a * 3)]))
+    return _fmt_icon(size, _draw)
+
+
+def image_icon(size: int = 28) -> QIcon:
+    """Mountain-and-sun landscape icon for image insertion."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        m = s * 0.15
+        r = s - m
+        p.setPen(QPen(fg, max(1.0, s / 20)))
+        p.setBrush(QColor("#f0f4f8"))
+        p.drawRect(QRectF(m, m, r - m, r - m))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#f0c040"))
+        sun_r = s * 0.08
+        p.drawEllipse(QPointF(m + (r - m) * 0.7, m + (r - m) * 0.25),
+                       sun_r, sun_r)
+        p.setBrush(QColor("#5b9bd5"))
+        p.drawPolygon(QPolygonF([
+            QPointF(m, r),
+            QPointF(m + (r - m) * 0.35, m + (r - m) * 0.4),
+            QPointF(m + (r - m) * 0.65, r)]))
+        p.setBrush(QColor("#70ad47"))
+        p.drawPolygon(QPolygonF([
+            QPointF(m + (r - m) * 0.3, r),
+            QPointF(m + (r - m) * 0.6, m + (r - m) * 0.55),
+            QPointF(r, r)]))
+    return _fmt_icon(size, _draw)

@@ -420,17 +420,22 @@ class MainWindow(QMainWindow):
 
         # ── Table Design button ──────────────────────────────────
         self._table_design_btn = QToolButton()
-        self._table_design_btn.setIcon(
-            icons.themed_icon("mdi.table-large"))
+        self._table_design_btn.setIcon(icons.table_design_icon(28))
         self._table_design_btn.setToolTip("Table Design")
         self._table_design_btn.setPopupMode(QToolButton.InstantPopup)
         self._table_design_btn.setMenu(self._table_design_menu)
         plot_bar.addWidget(self._table_design_btn)
 
+        # ── Image button ────────────────────────────────────────
+        img_btn = QToolButton()
+        img_btn.setIcon(icons.image_icon(28))
+        img_btn.setToolTip("Insert Image")
+        img_btn.clicked.connect(self._insert_image)
+        plot_bar.addWidget(img_btn)
+
         # ── Symbol insertion button ──────────────────────────────
         self._symbol_btn = QToolButton()
-        self._symbol_btn.setIcon(
-            icons.themed_icon("mdi.omega"))
+        self._symbol_btn.setIcon(icons.symbol_icon(28))
         self._symbol_btn.setToolTip("Insert Symbol")
         self._symbol_btn.setPopupMode(QToolButton.InstantPopup)
         sym_menu = QMenu(self._symbol_btn)
@@ -442,8 +447,7 @@ class MainWindow(QMainWindow):
 
         # ── Merge/Unmerge button (in formatting toolbar) ─────────
         self._merge_btn = QToolButton()
-        self._merge_btn.setIcon(
-            icons.themed_icon("mdi.table-merge-cells"))
+        self._merge_btn.setIcon(icons.merge_cells_icon(28))
         self._merge_btn.setToolTip("Merge / Unmerge Cells")
         self._merge_btn.clicked.connect(self._toggle_merge)
         fmt.addWidget(self._merge_btn)
