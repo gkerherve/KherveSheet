@@ -467,6 +467,67 @@ class EmbeddedChart(QWidget):
         self._ax.autoscale_view()
         self._canvas.draw_idle()
 
+    def _refresh_data(self):
+        """Re-read source columns and update all series, preserving
+        every visual property (title, labels, scales, limits, colours,
+        line styles, legend, fills, axis props)."""
+        if not self._source_sheet:
+            return
+        sheet = self._source_sheet
+        # Snapshot current axis state so we can restore it.
+        title = self._ax.get_title()
+        xlabel = self._ax.get_xlabel()
+        ylabel = self._ax.get_ylabel()
+        xscale = self._ax.get_xscale()
+        yscale = self._ax.get_yscale()
+        xlim = self._ax.get_xlim()
+        ylim = self._ax.get_ylim()
+        grid_on = bool(self._ax.xaxis.get_gridlines()[0].get_visible()
+                       if self._ax.xaxis.get_gridlines() else False)
+
+        for i, (s, yc) in enumerate(
+                zip(self._series, self._y_cols)):
+            xc = s.get("x_col", self._x_col)
+            if xc is not None:
+                x_full = sheet.numeric_column(xc)
+            else:
+                x_full = np.arange(sheet.row_count(), dtype=float)
+            y_full = sheet.numeric_column(yc)
+            x_r0 = s.get("x_row_start", 0)
+            x_r1 = s.get("x_row_end", len(x_full) - 1)
+            y_r0 = s.get("y_row_start", 0)
+            y_r1 = s.get("y_row_end", len(y_full) - 1)
+            x_data = x_full[x_r0:x_r1 + 1]
+            y_data = y_full[y_r0:y_r1 + 1]
+            n = min(len(x_data), len(y_data))
+            x_data = x_data[:n]
+            y_data = y_data[:n]
+            mask = ~(np.isnan(x_data) | np.isnan(y_data))
+            x = x_data[mask]
+            y = y_data[mask]
+            s["x"], s["y"] = x, y
+            artist = s.get("artist")
+            if artist is None:
+                continue
+            if hasattr(artist, 'set_data'):
+                artist.set_data(x, y)
+            elif hasattr(artist, 'set_offsets'):
+                artist.set_offsets(np.column_stack([x, y]))
+
+        # Restore axis state (don't autoscale — keep user's view).
+        self._ax.set_title(title)
+        self._ax.set_xlabel(xlabel)
+        self._ax.set_ylabel(ylabel)
+        try:
+            self._ax.set_xscale(xscale)
+            self._ax.set_yscale(yscale)
+        except Exception:
+            pass
+        self._ax.set_xlim(xlim)
+        self._ax.set_ylim(ylim)
+        self._ax.grid(grid_on)
+        self._canvas.draw_idle()
+
     # ── Legend hit testing ─────────────────────────────────────────────
     def _hit_legend(self, event_pos):
         """Return True if *event_pos* (canvas-local QPoint) is over the
@@ -662,6 +723,8 @@ class EmbeddedChart(QWidget):
         ym.addAction("Axis Properties\u2026",
                       lambda: self._open_axis_dialog("Left"))
 
+        menu.addSeparator()
+        menu.addAction("Update Plot", self._refresh_data)
         menu.addSeparator()
         menu.addAction("Pop Out to Window", self._pop_out)
         menu.addSeparator()
