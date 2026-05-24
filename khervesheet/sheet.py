@@ -15,7 +15,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from PyQt5.QtCore import Qt, QEvent, QRect, pyqtSignal
+from PyQt5.QtCore import Qt, QEvent, QRect, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPixmap, QBrush
 from PyQt5.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
@@ -399,6 +399,14 @@ class SheetWidget(QWidget):
         self._fill_dragging = False
         self._fill_anchor_range = None
         self._fill_end_row = None
+
+        # ── Marching ants (copy highlight) ───────────────────────────
+        self._marching_range = None   # QTableWidgetSelectionRange or None
+        self._march_offset = 0
+        self._march_timer = QTimer(self)
+        self._march_timer.timeout.connect(self._march_tick)
+        self._painting_ants = False   # recursion guard for paint event
+
         self.table.viewport().setMouseTracking(True)
         self.table.viewport().installEventFilter(self)
         self.table.installEventFilter(self)
@@ -1498,6 +1506,54 @@ class SheetWidget(QWidget):
                     row_data.append(it.text() if it else "")
             rows.append("\t".join(row_data))
         QApplication.clipboard().setText("\n".join(rows))
+        # Start marching ants around copied range.
+        self._start_marching_ants(s)
+
+    # ── Marching ants animation ──────────────────────────────────────
+    def _start_marching_ants(self, sel_range):
+        """Begin animated dashed border around the copied range."""
+        self._marching_range = sel_range
+        self._march_offset = 0
+        self._march_timer.start(150)  # ~7 fps animation
+        self.table.viewport().update()
+
+    def _clear_marching_ants(self):
+        """Stop marching ants animation."""
+        if self._marching_range is not None:
+            self._marching_range = None
+            self._march_timer.stop()
+            self.table.viewport().update()
+
+    def _march_tick(self):
+        """Advance dash offset and repaint."""
+        self._march_offset = (self._march_offset + 1) % 8
+        self.table.viewport().update()
+
+    def _paint_marching_ants(self, painter):
+        """Draw the animated dashed border on the viewport."""
+        rng = self._marching_range
+        if rng is None:
+            return
+        # Compute pixel rect from cell geometry.
+        top_left = self.table.visualItemRect(
+            self.table.item(rng.topRow(), rng.leftColumn())
+            or self.table.invisibleRootItem())
+        # Use columnViewportPosition / rowViewportPosition for accuracy.
+        x1 = self.table.columnViewportPosition(rng.leftColumn())
+        y1 = self.table.rowViewportPosition(rng.topRow())
+        x2 = (self.table.columnViewportPosition(rng.rightColumn())
+               + self.table.columnWidth(rng.rightColumn()))
+        y2 = (self.table.rowViewportPosition(rng.bottomRow())
+               + self.table.rowHeight(rng.bottomRow()))
+        rect = QRect(x1, y1, x2 - x1, y2 - y1)
+        if rect.isEmpty():
+            return
+        pen = QPen(QColor(0, 120, 215), 2, Qt.CustomDashLine)
+        pen.setDashPattern([4, 4])
+        pen.setDashOffset(self._march_offset)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRect(rect.adjusted(1, 1, -1, -1))
 
     def _paste_values_only(self):
         """Paste clipboard content as plain values (no formulas)."""
@@ -1544,6 +1600,7 @@ class SheetWidget(QWidget):
         if changes and self._undo_stack:
             self._undo_stack.push(
                 BulkCellEditCmd(self, changes, "Paste Values"))
+        self._clear_marching_ants()
 
     def _paste_clipboard(self):
         clipboard = QApplication.clipboard()
@@ -1565,6 +1622,7 @@ class SheetWidget(QWidget):
         if row < 0 or col < 0:
             return
         changes = []
+        formula_cells = []  # cells that need formula evaluation
         self.table.blockSignals(True)
         try:
             for dr, line in enumerate(text.split("\n")):
@@ -1576,19 +1634,46 @@ class SheetWidget(QWidget):
                         continue
                     it = self.table.item(r, c)
                     old = it.text() if it else ""
-                    if it is None:
-                        it = QTableWidgetItem(val)
-                        self.table.setItem(r, c, it)
+                    if val.startswith("="):
+                        # Store formula, register deps, evaluate.
+                        self._cell_formulas[(r, c)] = val
+                        self._register_deps(r, c, val)
+                        dec = self._cell_decimals(r, c)
+                        result = self._evaluate_formula(val, r, c, dec)
+                        display = str(result)
+                        display = self._apply_cell_number_format(
+                            display, r, c)
+                        if it is None:
+                            it = QTableWidgetItem(display)
+                            self.table.setItem(r, c, it)
+                        else:
+                            it.setText(display)
+                        self._shadow[(r, c)] = display
+                        if old != display:
+                            changes.append((r, c, old, display))
+                        formula_cells.append((r, c))
                     else:
-                        it.setText(val)
-                    self._shadow[(r, c)] = val
-                    if old != val:
-                        changes.append((r, c, old, val))
+                        self._cell_formulas.pop((r, c), None)
+                        self._unregister_deps(r, c)
+                        if it is None:
+                            it = QTableWidgetItem(val)
+                            self.table.setItem(r, c, it)
+                        else:
+                            it.setText(val)
+                        self._shadow[(r, c)] = val
+                        if old != val:
+                            changes.append((r, c, old, val))
         finally:
             self.table.blockSignals(False)
         if changes and self._undo_stack:
             self._undo_stack.push(
                 BulkCellEditCmd(self, changes, "Paste"))
+        # Recalculate dependents of pasted formula cells.
+        for r, c in formula_cells:
+            self.data_changed.emit(c)
+            self._recalc_dependents(r, c)
+        # Clear marching ants after paste.
+        self._clear_marching_ants()
 
     def _clear_selection(self):
         sel = self.table.selectedRanges()
@@ -1820,6 +1905,8 @@ class SheetWidget(QWidget):
         if obj is self.table and event.type() == QEvent.KeyPress:
             key = event.key()
             if key == Qt.Key_Escape:
+                if self._marching_range is not None:
+                    self._clear_marching_ants()
                 if self._formula_entry_cell is not None:
                     self._exit_formula_mode()
                     return True
@@ -1840,6 +1927,17 @@ class SheetWidget(QWidget):
         if obj is not self.table.viewport():
             return super().eventFilter(obj, event)
         etype = event.type()
+
+        # Paint marching ants overlay after the viewport paints normally.
+        if (etype == QEvent.Paint and self._marching_range is not None
+                and not self._painting_ants):
+            self._painting_ants = True
+            obj.event(event)  # let the viewport paint itself
+            painter = QPainter(self.table.viewport())
+            self._paint_marching_ants(painter)
+            painter.end()
+            self._painting_ants = False
+            return True
 
         if etype == QEvent.MouseMove and not self._fill_dragging:
             hr = self._fill_handle_rect()
