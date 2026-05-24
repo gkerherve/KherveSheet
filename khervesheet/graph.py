@@ -403,15 +403,26 @@ class EmbeddedChart(QWidget):
         if not relevant:
             return
         sheet = self._source_sheet
-        # Re-read X data.
+        # Re-read X data (full column, sliced per-series below).
         if self._x_col is not None:
-            x_data = sheet.numeric_column(self._x_col)
+            x_full = sheet.numeric_column(self._x_col)
         else:
-            x_data = np.arange(sheet.row_count(), dtype=float)
-        # Update each series.
+            x_full = np.arange(sheet.row_count(), dtype=float)
+        # Update each series respecting row ranges.
         for i, (s, yc) in enumerate(
                 zip(self._series, self._y_cols)):
-            y_data = sheet.numeric_column(yc)
+            y_full = sheet.numeric_column(yc)
+            # Apply row range bounds if set.
+            x_r0 = s.get("x_row_start", 0)
+            x_r1 = s.get("x_row_end", len(x_full) - 1)
+            y_r0 = s.get("y_row_start", 0)
+            y_r1 = s.get("y_row_end", len(y_full) - 1)
+            x_data = x_full[x_r0:x_r1 + 1]
+            y_data = y_full[y_r0:y_r1 + 1]
+            # Align lengths.
+            n = min(len(x_data), len(y_data))
+            x_data = x_data[:n]
+            y_data = y_data[:n]
             mask = ~(np.isnan(x_data) | np.isnan(y_data))
             x = x_data[mask]
             y = y_data[mask]

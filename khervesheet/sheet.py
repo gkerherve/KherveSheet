@@ -677,6 +677,7 @@ class SheetWidget(QWidget):
         deps = self._dependents.get((row, col))
         if not deps:
             return
+        changed_cols = set()
         for (dr, dc) in list(deps):
             if (dr, dc) in visited:
                 continue
@@ -697,8 +698,12 @@ class SheetWidget(QWidget):
                 it.setText(result)
             self._shadow[(dr, dc)] = result
             self.table.blockSignals(False)
+            changed_cols.add(dc)
             # Cascade: recalc cells that depend on this one too.
             self._recalc_dependents(dr, dc, visited)
+        # Notify charts about columns that changed via formula recalc.
+        for c in changed_cols:
+            self.data_changed.emit(c)
 
     def _set_cell_quiet(self, row, col, text):
         """Set cell text without triggering signals."""
