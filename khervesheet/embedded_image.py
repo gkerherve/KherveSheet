@@ -24,11 +24,162 @@ from PyQt5.QtGui import (
 from PyQt5.QtWidgets import (
     QWidget, QMenu, QFileDialog, QDialog, QVBoxLayout, QHBoxLayout,
     QLabel, QSlider, QDialogButtonBox, QGroupBox, QFormLayout,
-    QRubberBand, QPushButton, QSpinBox,
+    QRubberBand, QPushButton, QSpinBox, QUndoCommand,
 )
 
 # Resize handle size in pixels.
 _HANDLE = 6
+
+
+# ── Undo commands ─────────────────────────────────────────────────────
+
+def _find_sheet_widget(viewport_widget):
+    """Walk up from the viewport to find the SheetWidget owning _images."""
+    sw = viewport_widget
+    while sw and not hasattr(sw, '_images'):
+        p = sw.parent()
+        if p is sw:
+            break
+        sw = p
+    return sw if sw and hasattr(sw, '_images') else None
+
+
+def _find_undo_stack(viewport_widget):
+    """Walk up from the viewport to find _undo_stack on SheetWidget."""
+    sw = _find_sheet_widget(viewport_widget)
+    if sw:
+        return getattr(sw, '_undo_stack', None)
+    return None
+
+
+class InsertImageCmd(QUndoCommand):
+    """Undoable insert / paste of an image."""
+
+    def __init__(self, sheet, image, label="Insert Image"):
+        super().__init__(label)
+        self._sheet = sheet
+        self._image = image
+
+    def undo(self):
+        if self._image in self._sheet._images:
+            self._sheet._images.remove(self._image)
+        self._image.hide()
+
+    def redo(self):
+        if not getattr(self, "_first", False):
+            self._first = True
+            return
+        if self._image not in self._sheet._images:
+            self._sheet._images.append(self._image)
+        self._image.setParent(self._sheet.table.viewport())
+        self._image.show()
+
+
+class DeleteImageCmd(QUndoCommand):
+    """Undoable deletion of an image."""
+
+    def __init__(self, sheet, image):
+        super().__init__("Delete Image")
+        self._sheet = sheet
+        self._image = image
+        self._pos = image.pos()
+        self._size = image.size()
+
+    def undo(self):
+        self._image.setParent(self._sheet.table.viewport())
+        self._image.move(self._pos)
+        self._image.resize(self._size)
+        if self._image not in self._sheet._images:
+            self._sheet._images.append(self._image)
+        self._image.show()
+
+    def redo(self):
+        if not getattr(self, "_first", False):
+            self._first = True
+            return
+        if self._image in self._sheet._images:
+            self._sheet._images.remove(self._image)
+        self._image.hide()
+
+
+class ImageCropCmd(QUndoCommand):
+    """Undoable crop operation."""
+
+    def __init__(self, image, old_crop, new_crop):
+        super().__init__("Crop Image")
+        self._image = image
+        self._old = QRectF(old_crop)
+        self._new = QRectF(new_crop)
+
+    def undo(self):
+        self._image._crop_rect = QRectF(self._old)
+        self._image._apply_filters()
+
+    def redo(self):
+        if not getattr(self, "_first", False):
+            self._first = True
+            return
+        self._image._crop_rect = QRectF(self._new)
+        self._image._apply_filters()
+
+
+class ImageAdjustCmd(QUndoCommand):
+    """Undoable colour adjustment."""
+
+    def __init__(self, image, old_hue, old_sat, old_bri,
+                 new_hue, new_sat, new_bri):
+        super().__init__("Adjust Image")
+        self._image = image
+        self._old = (old_hue, old_sat, old_bri)
+        self._new = (new_hue, new_sat, new_bri)
+
+    def undo(self):
+        self._image._hue_shift, self._image._saturation, \
+            self._image._brightness = self._old
+        self._image._apply_filters()
+
+    def redo(self):
+        if not getattr(self, "_first", False):
+            self._first = True
+            return
+        self._image._hue_shift, self._image._saturation, \
+            self._image._brightness = self._new
+        self._image._apply_filters()
+
+
+class ReplaceImageCmd(QUndoCommand):
+    """Undoable image replacement."""
+
+    def __init__(self, image, old_pixmap, old_crop, old_hue, old_sat,
+                 old_bri, new_pixmap):
+        super().__init__("Replace Image")
+        self._image = image
+        self._old_pm = old_pixmap
+        self._old_crop = QRectF(old_crop)
+        self._old_hue = old_hue
+        self._old_sat = old_sat
+        self._old_bri = old_bri
+        self._new_pm = new_pixmap
+
+    def undo(self):
+        self._image._original_pixmap = self._old_pm
+        self._image._crop_rect = QRectF(self._old_crop)
+        self._image._hue_shift = self._old_hue
+        self._image._saturation = self._old_sat
+        self._image._brightness = self._old_bri
+        self._image._apply_filters()
+
+    def redo(self):
+        if not getattr(self, "_first", False):
+            self._first = True
+            return
+        self._image._original_pixmap = self._new_pm
+        self._image._crop_rect = QRectF(0, 0, 1, 1)
+        self._image._hue_shift = 0
+        self._image._saturation = 0
+        self._image._brightness = 0
+        self._image._pixmap = self._new_pm
+        self._image.update()
 
 
 class EmbeddedImage(QWidget):
@@ -218,6 +369,7 @@ class EmbeddedImage(QWidget):
                 x2 = min(1.0, (rect.right() - 2) / w)
                 y2 = min(1.0, (rect.bottom() - 2) / h)
                 # Compose with existing crop.
+                old_crop = QRectF(self._crop_rect)
                 cr = self._crop_rect
                 new_x1 = cr.x() + x1 * cr.width()
                 new_y1 = cr.y() + y1 * cr.height()
@@ -225,6 +377,10 @@ class EmbeddedImage(QWidget):
                 new_h = (y2 - y1) * cr.height()
                 self._crop_rect = QRectF(new_x1, new_y1, new_w, new_h)
                 self._apply_filters()
+                stack = _find_undo_stack(self.parent())
+                if stack:
+                    stack.push(ImageCropCmd(
+                        self, old_crop, self._crop_rect))
             self._cropping = False
             self.setCursor(Qt.SizeAllCursor)
             return
@@ -239,6 +395,8 @@ class EmbeddedImage(QWidget):
 
     def contextMenuEvent(self, ev):
         menu = QMenu(self)
+        menu.addAction("Save Image As…", self._save_image_as)
+        menu.addSeparator()
         menu.addAction("Resize…", self._resize_dialog)
         ar_act = menu.addAction("Lock Aspect Ratio")
         ar_act.setCheckable(True)
@@ -264,20 +422,52 @@ class EmbeddedImage(QWidget):
 
     def _reset_crop(self):
         """Remove any cropping."""
-        self._crop_rect = QRectF(0, 0, 1, 1)
+        old_crop = QRectF(self._crop_rect)
+        new_crop = QRectF(0, 0, 1, 1)
+        if old_crop == new_crop:
+            return
+        self._crop_rect = new_crop
         self._apply_filters()
+        stack = _find_undo_stack(self.parent())
+        if stack:
+            stack.push(ImageCropCmd(self, old_crop, new_crop))
+
+    # ── Save to file ──────────────────────────────────────────────────
+
+    def _save_image_as(self):
+        """Export the displayed image (with crop/filters applied)."""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Image As", "",
+            "PNG (*.png);;JPEG (*.jpg *.jpeg);;BMP (*.bmp);;All Files (*)")
+        if path:
+            fmt = "PNG"
+            lower = path.lower()
+            if lower.endswith((".jpg", ".jpeg")):
+                fmt = "JPEG"
+            elif lower.endswith(".bmp"):
+                fmt = "BMP"
+            self._pixmap.save(path, fmt)
 
     # ── Colour adjustments ────────────────────────────────────────────
 
     def _open_adjustments(self):
-        dlg = ImageAdjustDialog(
-            self._hue_shift, self._saturation, self._brightness,
-            parent=self)
+        old_h, old_s, old_b = (self._hue_shift, self._saturation,
+                               self._brightness)
+        dlg = ImageAdjustDialog(old_h, old_s, old_b, parent=self)
         if dlg.exec_() == QDialog.Accepted:
-            self._hue_shift = dlg.hue_shift
-            self._saturation = dlg.saturation
-            self._brightness = dlg.brightness
+            new_h = dlg.hue_shift
+            new_s = dlg.saturation
+            new_b = dlg.brightness
+            if (new_h, new_s, new_b) == (old_h, old_s, old_b):
+                return
+            self._hue_shift = new_h
+            self._saturation = new_s
+            self._brightness = new_b
             self._apply_filters()
+            stack = _find_undo_stack(self.parent())
+            if stack:
+                stack.push(ImageAdjustCmd(
+                    self, old_h, old_s, old_b, new_h, new_s, new_b))
 
     def _apply_filters(self):
         """Rebuild _pixmap from _original_pixmap applying crop + colour."""
@@ -381,6 +571,11 @@ class EmbeddedImage(QWidget):
         if path:
             pm = QPixmap(path)
             if not pm.isNull():
+                old_pm = self._original_pixmap
+                old_crop = QRectF(self._crop_rect)
+                old_h, old_s, old_b = (self._hue_shift,
+                                       self._saturation,
+                                       self._brightness)
                 self._original_pixmap = pm
                 self._crop_rect = QRectF(0, 0, 1, 1)
                 self._hue_shift = 0
@@ -388,17 +583,26 @@ class EmbeddedImage(QWidget):
                 self._brightness = 0
                 self._pixmap = pm
                 self.update()
+                stack = _find_undo_stack(self.parent())
+                if stack:
+                    stack.push(ReplaceImageCmd(
+                        self, old_pm, old_crop, old_h, old_s,
+                        old_b, pm))
 
     def _delete(self):
-        """Remove this image from the sheet."""
-        sheet = self.parent()
-        if sheet and hasattr(sheet, 'parent'):
-            sw = sheet.parent()
-            while sw and not hasattr(sw, '_images'):
-                sw = sw.parent()
-            if sw and hasattr(sw, '_images'):
+        """Remove this image from the sheet (undoable)."""
+        sw = _find_sheet_widget(self.parent())
+        if sw:
+            stack = getattr(sw, '_undo_stack', None)
+            if stack:
                 if self in sw._images:
                     sw._images.remove(self)
+                self.hide()
+                stack.push(DeleteImageCmd(sw, self))
+                return
+            # No undo stack — hard delete.
+            if self in sw._images:
+                sw._images.remove(self)
         self.deleteLater()
 
     # ── Serialisation ─────────────────────────────────────────────────

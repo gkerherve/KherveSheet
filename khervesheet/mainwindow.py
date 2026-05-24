@@ -810,6 +810,8 @@ class MainWindow(QMainWindow):
                             ig.attrs['saturation'] = d['saturation']
                         if d.get('brightness', 0) != 0:
                             ig.attrs['brightness'] = d['brightness']
+                        if not d.get('keep_aspect_ratio', True):
+                            ig.attrs['keep_aspect_ratio'] = False
                         # Store PNG data as raw bytes.
                         import base64
                         ig.create_dataset(
@@ -1070,6 +1072,9 @@ class MainWindow(QMainWindow):
                         if 'brightness' in ig.attrs:
                             imd["brightness"] = int(
                                 ig.attrs['brightness'])
+                        if 'keep_aspect_ratio' in ig.attrs:
+                            imd["keep_aspect_ratio"] = bool(
+                                ig.attrs['keep_aspect_ratio'])
                         deferred_images.append(imd)
                     if deferred_images:
                         sheet._deferred_images = deferred_images
@@ -1229,15 +1234,7 @@ class MainWindow(QMainWindow):
             from PyQt5.QtGui import QPixmap
             pm = QPixmap(clipboard.pixmap())
             if not pm.isNull():
-                from .embedded_image import EmbeddedImage
-                viewport = s.table.viewport()
-                img = EmbeddedImage(pm, viewport)
-                offset = len(getattr(s, '_images', [])) * 30
-                img.move(40 + offset, 40 + offset)
-                if not hasattr(s, '_images'):
-                    s._images = []
-                s._images.append(img)
-                self._status_msg("Image pasted", 2000)
+                self._place_image(pm, "Paste Image")
                 return
         # Fall back to text paste.
         s._paste_clipboard()
@@ -1865,10 +1862,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Image Error",
                                 f"Could not load image:\n{path}")
             return
+        self._place_image(pm, "Insert Image")
+
+    def _place_image(self, pm, label="Insert Image"):
+        """Create an EmbeddedImage on the active sheet (undoable)."""
         sheet = self._active_sheet()
         if not sheet:
             return
-        from .embedded_image import EmbeddedImage
+        from .embedded_image import EmbeddedImage, InsertImageCmd
         viewport = sheet.table.viewport()
         img = EmbeddedImage(pm, viewport)
         offset = len(getattr(sheet, '_images', [])) * 30
@@ -1876,7 +1877,9 @@ class MainWindow(QMainWindow):
         if not hasattr(sheet, '_images'):
             sheet._images = []
         sheet._images.append(img)
-        self._status_msg("Inserted image", 3000)
+        if self._undo_stack:
+            self._undo_stack.push(InsertImageCmd(sheet, img, label))
+        self._status_msg(label, 3000)
 
     # ── Format operations ────────────────────────────────────────────
     def _set_number_format(self, fmt: str):
