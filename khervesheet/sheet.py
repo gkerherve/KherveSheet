@@ -371,6 +371,7 @@ class SheetWidget(QWidget):
         self._dependents: dict = {}      # (row, col) → set of (r, c) that depend on it
         self._col_formats: dict = {}     # col → format string
         self._col_designations: dict = {}  # col → "X" or "Y"
+        self._merged_ranges: list = []   # [(r, c, row_span, col_span), ...]
 
         # Formula entry mode: when editing a formula, clicking a cell
         # inserts a cell reference instead of navigating.
@@ -440,6 +441,43 @@ class SheetWidget(QWidget):
 
     def column_display_name(self, col: int) -> str:
         return col_index_to_letter(col)
+
+    # ── Merge cells ─────────────────────────────────────────────────
+    def merge_selection(self):
+        """Merge the selected cells into one span."""
+        sel = self.table.selectedRanges()
+        if not sel:
+            return
+        rng = sel[0]
+        r, c = rng.topRow(), rng.leftColumn()
+        rs = rng.rowCount()
+        cs = rng.columnCount()
+        if rs <= 1 and cs <= 1:
+            return
+        # Keep top-left value, clear rest.
+        for mr in range(r, r + rs):
+            for mc in range(c, c + cs):
+                if (mr, mc) != (r, c):
+                    it = self.table.item(mr, mc)
+                    if it:
+                        it.setText("")
+        self.table.setSpan(r, c, rs, cs)
+        self._merged_ranges.append((r, c, rs, cs))
+
+    def unmerge_selection(self):
+        """Unmerge any merged cells in the selection."""
+        sel = self.table.selectedRanges()
+        if not sel:
+            return
+        rng = sel[0]
+        keep = []
+        for (mr, mc, rs, cs) in self._merged_ranges:
+            if (rng.topRow() <= mr <= rng.bottomRow() and
+                    rng.leftColumn() <= mc <= rng.rightColumn()):
+                self.table.setSpan(mr, mc, 1, 1)
+            else:
+                keep.append((mr, mc, rs, cs))
+        self._merged_ranges = keep
 
     def _apply_cell_number_format(self, text: str, row: int,
                                    col: int) -> str:

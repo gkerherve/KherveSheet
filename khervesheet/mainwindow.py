@@ -185,6 +185,15 @@ class MainWindow(QMainWindow):
         format_menu.addAction("Column Width…", self._format_col_width)
         format_menu.addAction("Row Height…", self._format_row_height)
         format_menu.addSeparator()
+        format_menu.addAction("Merge Cells", self._merge_cells)
+        format_menu.addAction("Unmerge Cells", self._unmerge_cells)
+        self._wrap_act = format_menu.addAction(
+            "Wrap Text", self._toggle_wrap_text)
+        self._wrap_act.setCheckable(True)
+        format_menu.addSeparator()
+        format_menu.addAction(
+            "Table Design\u2026", self._open_table_design)
+        format_menu.addSeparator()
         fc_act = format_menu.addAction(
             "Format Cells\u2026\tCtrl+1", self._open_format_cells_dialog)
         from PyQt5.QtWidgets import QShortcut
@@ -703,6 +712,11 @@ class MainWindow(QMainWindow):
                     if fmt_json:
                         sg.attrs['cell_formats'] = fmt_json
 
+                    # Merged cells.
+                    if sheet._merged_ranges:
+                        sg.attrs['merged_ranges'] = json.dumps(
+                            sheet._merged_ranges)
+
                     # Column designations.
                     if sheet._col_designations:
                         sg.attrs['col_designations'] = json.dumps(
@@ -733,8 +747,13 @@ class MainWindow(QMainWindow):
                         cg.attrs['series_count'] = len(d['series'])
                         # Axis properties (full dialog state).
                         if d.get('axis_props'):
-                            cg.attrs['axis_props'] = json.dumps(
-                                d['axis_props'])
+                            ap = d['axis_props']
+                            for _dir, st in ap.items():
+                                if isinstance(st, dict):
+                                    for k, v in list(st.items()):
+                                        if hasattr(v, 'item'):
+                                            st[k] = v.item()
+                            cg.attrs['axis_props'] = json.dumps(ap)
                         # Secondary labels.
                         cg.attrs['top_label'] = d.get(
                             'top_label', '')
@@ -911,12 +930,26 @@ class MainWindow(QMainWindow):
                                 if cf.font_size is not None:
                                     ft.setPointSizeF(cf.font_size)
                                 it.setFont(ft)
+                            if cf.wrap_text:
+                                flags = it.flags()
+                                flags |= Qt.TextWordWrap
+                                it.setFlags(flags)
+                                sheet.table.resizeRowToContents(fr)
 
                     # Column widths.
                     if "col_widths" in sg:
                         widths = sg["col_widths"][:]
                         for c, w in enumerate(widths):
                             sheet.table.setColumnWidth(c, int(w))
+
+                    # Merged cells.
+                    mr_json = sg.attrs.get('merged_ranges', '')
+                    if mr_json:
+                        spans = json.loads(mr_json)
+                        sheet._merged_ranges = [
+                            tuple(s) for s in spans]
+                        for (mr, mc, rs, cs) in sheet._merged_ranges:
+                            sheet.table.setSpan(mr, mc, rs, cs)
 
                     # Collect chart data (defer creation until after
                     # the workbook is installed as central widget so
@@ -1753,6 +1786,130 @@ class MainWindow(QMainWindow):
         if ok:
             s.table.verticalHeader().setDefaultSectionSize(h)
 
+    # ── Table Design ──────────────────────────────────────────────────
+    def _open_table_design(self):
+        """Open the Table Design gallery and apply to selection."""
+        from .table_styles import TableDesignDialog
+        from .cellformat import CellFormat, BorderSpec
+        s = self._active_sheet()
+        if not s:
+            return
+        sel = s.table.selectedRanges()
+        if not sel:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.information(
+                self, "No Selection",
+                "Select the cell range to format first.")
+            return
+        dlg = TableDesignDialog(self)
+        if dlg.exec_() != QDialog.Accepted or not dlg.selected_style:
+            return
+        style = dlg.selected_style
+        rng = sel[0]
+        r0, r1 = rng.topRow(), rng.bottomRow()
+        c0, c1 = rng.leftColumn(), rng.rightColumn()
+        use_header = dlg.use_header
+        use_banding = dlg.use_banding
+
+        keys = []
+        for r in range(r0, r1 + 1):
+            for c in range(c0, c1 + 1):
+                keys.append((r, c))
+        old = self._push_format_undo(s, keys)
+
+        from PyQt5.QtWidgets import QTableWidgetItem
+        for r in range(r0, r1 + 1):
+            is_header = (r == r0 and use_header)
+            data_row = r - r0 - (1 if use_header else 0)
+            for c in range(c0, c1 + 1):
+                cf = self._cell_fmt(s, r, c)
+                it = s.table.item(r, c)
+                if it is None:
+                    it = QTableWidgetItem("")
+                    s.table.setItem(r, c, it)
+
+                # Background.
+                if is_header:
+                    bg = style.header_bg
+                elif use_banding and data_row % 2 == 1:
+                    bg = style.odd_bg
+                else:
+                    bg = style.even_bg
+                cf.bg_color = bg
+                it.setBackground(QColor(bg))
+
+                # Text colour & font.
+                fg = style.header_fg if is_header else style.text_fg
+                cf.font_color = fg
+                it.setForeground(QColor(fg))
+                if is_header and style.header_bold:
+                    cf.bold = True
+                    ft = it.font()
+                    ft.setBold(True)
+                    it.setFont(ft)
+
+                # Borders.
+                bc = style.border_color
+                if bc:
+                    if style.border_outer:
+                        if r == r0:
+                            cf.border_top = BorderSpec(color=bc)
+                        if r == r1:
+                            cf.border_bottom = BorderSpec(color=bc)
+                        if c == c0:
+                            cf.border_left = BorderSpec(color=bc)
+                        if c == c1:
+                            cf.border_right = BorderSpec(color=bc)
+                    if style.border_inner:
+                        if c < c1:
+                            cf.border_right = BorderSpec(color=bc)
+                        if r < r1:
+                            cf.border_bottom = BorderSpec(color=bc)
+                    if is_header and style.border_header_bottom:
+                        cf.border_bottom = BorderSpec(
+                            color=bc, width=2.0)
+                    elif not is_header and r == r0 and style.border_header_bottom:
+                        cf.border_top = BorderSpec(
+                            color=bc, width=2.0)
+
+        self._finish_format_undo(s, keys, old)
+        s.table.viewport().update()
+
+    # ── Merge / Wrap ──────────────────────────────────────────────────
+    def _merge_cells(self):
+        s = self._active_sheet()
+        if s:
+            s.merge_selection()
+
+    def _unmerge_cells(self):
+        s = self._active_sheet()
+        if s:
+            s.unmerge_selection()
+
+    def _toggle_wrap_text(self):
+        s = self._active_sheet()
+        if not s:
+            return
+        checked = self._wrap_act.isChecked()
+        keys = self._selected_cell_keys()
+        old = self._push_format_undo(s, keys) if s else None
+        for r, c in keys:
+            cf = self._cell_fmt(s, r, c)
+            cf.wrap_text = checked
+            it = s.table.item(r, c)
+            if it is None:
+                from PyQt5.QtWidgets import QTableWidgetItem
+                it = QTableWidgetItem("")
+                s.table.setItem(r, c, it)
+            flags = it.flags()
+            if checked:
+                flags |= Qt.TextWordWrap
+            else:
+                flags &= ~Qt.TextWordWrap
+            it.setFlags(flags)
+            s.table.resizeRowToContents(r)
+        self._finish_format_undo(s, keys, old)
+
     # ── Format Cells dialog ────────────────────────────────────────
     def _open_format_cells_dialog(self):
         """Open the Format Cells dialog for the current selection."""
@@ -1850,6 +2007,13 @@ class MainWindow(QMainWindow):
                     # Wrap text.
                     if result.get("wrap_text") is not None:
                         cf.wrap_text = result["wrap_text"]
+                        flags = it.flags()
+                        if result["wrap_text"]:
+                            flags |= Qt.TextWordWrap
+                        else:
+                            flags &= ~Qt.TextWordWrap
+                        it.setFlags(flags)
+                        sheet.table.resizeRowToContents(r)
 
                     # Fill.
                     if "bg_color" in result:
