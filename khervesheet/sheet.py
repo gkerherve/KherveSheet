@@ -855,8 +855,12 @@ class SheetWidget(QWidget):
 
             import datetime as _dt
 
-            def _mean(vals):
-                v = list(vals)
+            def _mean(*args):
+                # Accept either _mean([1,2,3]) or _mean(1,2,3)
+                if len(args) == 1 and hasattr(args[0], '__iter__'):
+                    v = list(args[0])
+                else:
+                    v = list(args)
                 return sum(v) / len(v) if v else 0
 
             # ── Date & Time helpers ──────────────────────────────
@@ -1062,14 +1066,27 @@ class SheetWidget(QWidget):
                   "abs": abs, "round": round, "int": int, "float": float,
                   "sum": sum, "min": min, "max": max, "len": len,
                   "mean": _mean, "avg": _mean,
+                  "ABS": abs, "ROUND": round, "INT": int, "FLOAT": float,
+                  "SUM": sum, "MIN": min, "MAX": max,
+                  "MEAN": _mean, "AVG": _mean, "AVERAGE": _mean,
                   "PI": math.pi, "pi": math.pi,
-                  "sqrt": math.sqrt, "log": math.log,
-                  "log10": math.log10, "exp": math.exp,
-                  "sin": math.sin, "cos": math.cos, "tan": math.tan,
-                  "asin": math.asin, "acos": math.acos, "atan": math.atan,
-                  "atan2": math.atan2,
-                  "sinh": math.sinh, "cosh": math.cosh, "tanh": math.tanh,
-                  "asinh": math.asinh, "acosh": math.acosh, "atanh": math.atanh,
+                  "sqrt": math.sqrt, "SQRT": math.sqrt,
+                  "log": math.log, "LOG": math.log,
+                  "log10": math.log10, "LOG10": math.log10,
+                  "exp": math.exp, "EXP": math.exp,
+                  "sin": math.sin, "SIN": math.sin,
+                  "cos": math.cos, "COS": math.cos,
+                  "tan": math.tan, "TAN": math.tan,
+                  "asin": math.asin, "ASIN": math.asin,
+                  "acos": math.acos, "ACOS": math.acos,
+                  "atan": math.atan, "ATAN": math.atan,
+                  "atan2": math.atan2, "ATAN2": math.atan2,
+                  "sinh": math.sinh, "SINH": math.sinh,
+                  "cosh": math.cosh, "COSH": math.cosh,
+                  "tanh": math.tanh, "TANH": math.tanh,
+                  "asinh": math.asinh, "ASINH": math.asinh,
+                  "acosh": math.acosh, "ACOSH": math.acosh,
+                  "atanh": math.atanh, "ATANH": math.atanh,
                   # Date & Time
                   "DATE": _DATE, "TODAY": _TODAY, "NOW": _NOW,
                   "TIME": _TIME, "YEAR": _YEAR, "MONTH": _MONTH,
@@ -1098,6 +1115,24 @@ class SheetWidget(QWidget):
                   "DEGREES": _DEGREES, "RADIANS": _RADIANS,
                   "LN": math.log, "PRODUCT": math.prod,
                   }
+
+            # 0. Normalise function names: Sqrt → SQRT, Sin → SIN, etc.
+            # Map any word followed by '(' to its matching ns key.
+            _ns_lower = {}
+            for k in ns:
+                _ns_lower.setdefault(k.lower(), k)
+
+            def _normalise_func(m):
+                word = m.group(1)
+                if word in ns:
+                    return m.group(0)  # already valid
+                canon = _ns_lower.get(word.lower())
+                if canon:
+                    return canon + "("
+                return m.group(0)
+
+            expr = re.sub(r'\b([A-Za-z_]\w*)\s*\(', _normalise_func,
+                          expr)
 
             # 1. Expand range functions: SUM(A1:A10)
             expr = self._expand_range_functions(expr)
