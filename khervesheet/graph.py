@@ -554,6 +554,23 @@ class EmbeddedChart(QWidget):
         except ValueError:
             pass
 
+    def _invert_axis(self, axis, inverted):
+        """Invert or restore the given axis direction."""
+        ax = self._ax
+        if axis == "x":
+            lo, hi = ax.get_xlim()
+            if inverted and lo < hi:
+                ax.set_xlim(hi, lo)
+            elif not inverted and lo > hi:
+                ax.set_xlim(hi, lo)
+        else:
+            lo, hi = ax.get_ylim()
+            if inverted and lo < hi:
+                ax.set_ylim(hi, lo)
+            elif not inverted and lo > hi:
+                ax.set_ylim(hi, lo)
+        self._canvas.draw_idle()
+
     # ── Axis properties dialog ─────────────────────────────────────
     SWITCH_TO_PLOT_DETAILS = 3
 
@@ -580,6 +597,11 @@ class EmbeddedChart(QWidget):
         xm.addAction("Log\u2081\u2080",
                       lambda: self._set_scale("x", "log"))
         xm.addSeparator()
+        x_inv = xm.addAction("Invert Axis")
+        x_inv.setCheckable(True)
+        x_inv.setChecked(self._ax.get_xlim()[0] > self._ax.get_xlim()[1])
+        x_inv.toggled.connect(lambda c: self._invert_axis("x", c))
+        xm.addSeparator()
         xm.addAction("Axis Properties\u2026",
                       lambda: self._open_axis_dialog("Bottom"))
 
@@ -588,6 +610,11 @@ class EmbeddedChart(QWidget):
         ym.addAction("Linear", lambda: self._set_scale("y", "linear"))
         ym.addAction("Log\u2081\u2080",
                       lambda: self._set_scale("y", "log"))
+        ym.addSeparator()
+        y_inv = ym.addAction("Invert Axis")
+        y_inv.setCheckable(True)
+        y_inv.setChecked(self._ax.get_ylim()[0] > self._ax.get_ylim()[1])
+        y_inv.toggled.connect(lambda c: self._invert_axis("y", c))
         ym.addSeparator()
         ym.addAction("Axis Properties\u2026",
                       lambda: self._open_axis_dialog("Left"))
