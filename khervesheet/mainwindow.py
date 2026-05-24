@@ -217,7 +217,11 @@ class MainWindow(QMainWindow):
                   self._open_format_cells_dialog)
 
         # ── Formulas ─────────────────────────────────────────────────
-        build_formulas_menu(mb, self._insert_function)
+        fmenu = build_formulas_menu(mb, self._insert_function)
+        fmenu.addSeparator()
+        fx_act = fmenu.addAction(
+            "Insert Function\u2026",
+            self._open_insert_function_dialog, "Shift+F3")
 
         # ── Data ─────────────────────────────────────────────────────
         data_menu = mb.addMenu("&Data")
@@ -2266,6 +2270,12 @@ class MainWindow(QMainWindow):
         bar.setFocus()
         # Place cursor between the parentheses.
         bar.setCursorPosition(len(bar.text()) - 1)
+
+    def _open_insert_function_dialog(self):
+        """Open the Insert Function dialog (Shift+F3)."""
+        s = self._active_sheet()
+        if s:
+            s._open_insert_function()
 
     # ── Data operations ──────────────────────────────────────────────
     def _set_designation(self, desig: str):

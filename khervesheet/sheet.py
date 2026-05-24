@@ -317,8 +317,16 @@ class SheetWidget(QWidget):
         self._cell_ref_label.setStyleSheet(
             "background:#fafafa; border:1px solid #b8bcc3; "
             "padding:1px 4px;")
-        fx_lbl = QLabel(" = ")
-        fx_lbl.setStyleSheet("color:#3a78b4; font-weight:bold;")
+        from PyQt5.QtWidgets import QToolButton
+        self._fx_btn = QToolButton()
+        self._fx_btn.setText("fx")
+        self._fx_btn.setStyleSheet(
+            "QToolButton { color:#3a78b4; font-weight:bold; "
+            "font-style:italic; border:1px solid #b8bcc3; "
+            "padding:1px 6px; background:#fafafa; }"
+            "QToolButton:hover { background:#e0ecf8; }")
+        self._fx_btn.setToolTip("Insert Function (Shift+F3)")
+        self._fx_btn.clicked.connect(self._open_insert_function)
         self._formula_bar = QLineEdit()
         self._formula_bar.setPlaceholderText(
             "Value or =formula  (e.g. =SUM(A1:A10), =B1+C1)")
@@ -327,7 +335,7 @@ class SheetWidget(QWidget):
 
         fbar.addWidget(cell_lbl)
         fbar.addWidget(self._cell_ref_label)
-        fbar.addWidget(fx_lbl)
+        fbar.addWidget(self._fx_btn)
         fbar.addWidget(self._formula_bar, stretch=1)
         layout.addWidget(fbar_widget)
 
@@ -724,6 +732,18 @@ class SheetWidget(QWidget):
         self._arrow_nav_pos = None
         self._arrow_nav_ref_span = None
         self._clear_ref_highlights()
+
+    def _open_insert_function(self):
+        """Open the Insert Function dialog and insert the chosen
+        function into the formula bar."""
+        from .formulas import InsertFunctionDialog
+        dlg = InsertFunctionDialog(self)
+        if dlg.exec_() == dlg.Accepted and dlg.selected_function:
+            fn = dlg.selected_function
+            bar = self._formula_bar
+            bar.setText(f"={fn}()")
+            bar.setFocus()
+            bar.setCursorPosition(len(bar.text()) - 1)
 
     def _apply_formula_bar(self):
         self._formula_entry_cell = None
