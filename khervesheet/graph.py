@@ -277,6 +277,9 @@ class EmbeddedChart(QWidget):
                 sd["fill_target"] = s.get("fill_target", 0)
                 sd["fill_color"] = s.get("fill_color", "#1f77b4")
                 sd["fill_alpha"] = s.get("fill_alpha", 0.3)
+            # Per-series X column (if different from chart default).
+            if s.get("x_col") is not None:
+                sd["x_col"] = s["x_col"]
             # Row range info for data tab persistence.
             for rk in ("x_row_start", "x_row_end",
                         "y_row_start", "y_row_end"):
@@ -385,7 +388,9 @@ class EmbeddedChart(QWidget):
                 if sd.get("visible") is False:
                     if hasattr(artist, 'set_visible'):
                         artist.set_visible(False)
-            # Restore row range info.
+            # Restore per-series X column and row range info.
+            if "x_col" in sd:
+                chart._series[i]["x_col"] = sd["x_col"]
             for rk in ("x_row_start", "x_row_end",
                         "y_row_start", "y_row_end"):
                 if rk in sd:
@@ -1489,7 +1494,7 @@ class PlotDetailsDialog(QDialog):
         else:
             chart = self._chart
             n_pts = len(s.get("x", []))
-            x_col = chart._x_col
+            x_col = s.get("x_col", chart._x_col)
             y_cols = chart._y_cols
             # Use stored row range if available, otherwise full range.
             x_r1 = s.get("x_row_start", 0)
@@ -1668,8 +1673,10 @@ class PlotDetailsDialog(QDialog):
         if x_parsed is not None:
             x_col, xr1, xr2 = x_parsed
             chart._x_col = x_col
+            # Store per-series x_col so refresh/update uses it.
+            chart._series[row]["x_col"] = x_col
         else:
-            x_col = chart._x_col
+            x_col = chart._series[row].get("x_col", chart._x_col)
             xr1, xr2 = 0, sheet.row_count() - 1
 
         if y_parsed is not None:
