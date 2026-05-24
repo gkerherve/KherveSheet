@@ -451,12 +451,16 @@ class SheetWidget(QWidget):
 
     def set_designation(self, col: int, desig: str):
         self._col_designations[col] = desig
+        self._refresh_headers()
 
     def get_designation(self, col: int) -> str:
         return self._col_designations.get(col, "Y" if col > 0 else "X")
 
     def column_display_name(self, col: int) -> str:
-        return col_index_to_letter(col)
+        letter = col_index_to_letter(col)
+        desig = self._col_designations.get(
+            col, "x" if col == 0 else "y")
+        return f"{letter}({desig.lower()})"
 
     # ── Merge cells ─────────────────────────────────────────────────
     def merge_selection(self):
@@ -556,9 +560,13 @@ class SheetWidget(QWidget):
 
     # ── Headers ──────────────────────────────────────────────────────
     def _refresh_headers(self):
-        # Column headers: A, B, C, ... Z, AA, AB...
-        labels = [col_index_to_letter(i)
-                  for i in range(self.table.columnCount())]
+        # Column headers: A(x), B(y), C(y), ... showing designation.
+        labels = []
+        for i in range(self.table.columnCount()):
+            letter = col_index_to_letter(i)
+            desig = self._col_designations.get(
+                i, "x" if i == 0 else "y")
+            labels.append(f"{letter}({desig.lower()})")
         self.table.setHorizontalHeaderLabels(labels)
         # Row headers: 1, 2, 3...
         row_labels = [str(i + 1) for i in range(self.table.rowCount())]
