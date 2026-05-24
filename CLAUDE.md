@@ -40,6 +40,8 @@ into a new module and import.
   - `formula_engine.py` — cell formula parser & evaluator.
   - `undo_commands.py` — QUndoCommand classes.
   - `icons.py`      — qtawesome icon factory (themed MDI + custom QPainter plot glyphs).
+  - `git_backend.py` — per-document Git repo: auto-commit, push, pull, history, branches (pygit2).
+  - `history_dialog.py` — `HistoryDialog` commit browser with DAG graph, diff view, restore.
 - `requirements.txt`, `LICENSE` (GPL-3.0).
 
 ## UI conventions

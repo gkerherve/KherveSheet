@@ -1767,6 +1767,98 @@ class MainWindow(QMainWindow):
         self._align_center_act.setIcon(icons.align_center_icon(28))
         self._align_right_act.setIcon(icons.align_right_icon(28))
 
+    # ── Version control ─────────────────────────────────────────────
+    def _vc_repo_dir(self):
+        """Return the directory of the current file for git ops."""
+        if self._current_file:
+            from pathlib import Path
+            return Path(self._current_file).parent
+        return None
+
+    def _open_history(self):
+        from . import git_backend
+        repo_dir = self._vc_repo_dir()
+        if not repo_dir:
+            QMessageBox.information(
+                self, "No File",
+                "Save the file first to enable version history.")
+            return
+        if not git_backend.is_available():
+            QMessageBox.warning(
+                self, "Missing Library",
+                "pygit2 is required for version history.\n"
+                "Install with: pip install pygit2")
+            return
+        from pathlib import Path
+        from .history_dialog import HistoryDialog
+        stem = Path(self._current_file).stem
+        dlg = HistoryDialog(repo_dir, parent=self, file_stem=stem)
+        dlg.exec_()
+
+    def _vc_push(self):
+        from . import git_backend
+        repo_dir = self._vc_repo_dir()
+        if not repo_dir:
+            QMessageBox.information(self, "No File", "Save first.")
+            return
+        if not git_backend.is_available():
+            QMessageBox.warning(self, "Missing Library",
+                                "pygit2 is required.")
+            return
+        ok, msg = git_backend.push(repo_dir)
+        if ok:
+            self._status_msg(msg, 5000)
+        else:
+            QMessageBox.warning(self, "Push failed", msg)
+
+    def _vc_pull(self):
+        from . import git_backend
+        repo_dir = self._vc_repo_dir()
+        if not repo_dir:
+            QMessageBox.information(self, "No File", "Save first.")
+            return
+        if not git_backend.is_available():
+            QMessageBox.warning(self, "Missing Library",
+                                "pygit2 is required.")
+            return
+        ok, msg = git_backend.pull(repo_dir)
+        if ok:
+            self._status_msg(msg, 5000)
+            # Reload the file after pull.
+            if self._current_file:
+                self._load_ksheet(self._current_file)
+        else:
+            QMessageBox.warning(self, "Pull failed", msg)
+
+    def _vc_configure_remote(self):
+        from . import git_backend
+        repo_dir = self._vc_repo_dir()
+        if not repo_dir:
+            QMessageBox.information(self, "No File", "Save first.")
+            return
+        if not git_backend.is_available():
+            QMessageBox.warning(self, "Missing Library",
+                                "pygit2 is required.")
+            return
+        remotes = git_backend.get_remotes(repo_dir)
+        current_url = ""
+        for name, url in remotes:
+            if name == "origin":
+                current_url = url
+                break
+        from PyQt5.QtWidgets import QInputDialog
+        url, ok = QInputDialog.getText(
+            self, "Configure Remote",
+            "Remote URL (origin):", text=current_url)
+        if ok and url.strip():
+            git_backend.set_remote(repo_dir, "origin", url.strip())
+            self._status_msg("Remote 'origin' configured.", 3000)
+
+    def _reload_current(self):
+        """Reload the current .ksheet file from disk (after restore)."""
+        if self._current_file and self._current_file.endswith(".ksheet"):
+            self._load_ksheet(self._current_file)
+
     # ── Zoom ─────────────────────────────────────────────────────────
     def _zoom_in(self):
         v = min(200, self._zoom_slider.value() + 10)

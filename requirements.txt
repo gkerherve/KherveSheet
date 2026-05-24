@@ -3,3 +3,4 @@ matplotlib>=3.5
 numpy>=1.21
 openpyxl>=3.0
 h5py>=3.7
+pygit2>=1.12
