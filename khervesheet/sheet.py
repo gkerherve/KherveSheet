@@ -523,6 +523,7 @@ class SheetWidget(QWidget):
         from .cellformat import CellFormat
         cf = self._cell_formats.setdefault((row, col), CellFormat())
         cf.bg_color = color_hex
+        self.table.blockSignals(True)
         it = self.table.item(row, col)
         if it is None:
             it = QTableWidgetItem("")
@@ -531,6 +532,7 @@ class SheetWidget(QWidget):
             it.setBackground(QColor(color_hex))
         else:
             it.setBackground(QBrush())   # reset to default
+        self.table.blockSignals(False)
         if cf.is_empty():
             self._cell_formats.pop((row, col), None)
 
@@ -553,9 +555,11 @@ class SheetWidget(QWidget):
     def clear_cell_format(self, row: int, col: int):
         """Remove all formatting from a cell."""
         self._cell_formats.pop((row, col), None)
+        self.table.blockSignals(True)
         it = self.table.item(row, col)
         if it:
             it.setBackground(QBrush())
+        self.table.blockSignals(False)
         self.table.viewport().update()
 
     # ── Headers ──────────────────────────────────────────────────────

@@ -1514,6 +1514,8 @@ class MainWindow(QMainWindow):
         s = self._active_sheet()
         keys = self._selected_cell_keys()
         old = self._push_format_undo(s, keys) if s else None
+        if s:
+            s.table.blockSignals(True)
         for it in self._selected_items():
             f = it.font()
             f.setFamily(font.family())
@@ -1521,6 +1523,8 @@ class MainWindow(QMainWindow):
             if s:
                 r, c = it.row(), it.column()
                 self._cell_fmt(s, r, c).font_family = font.family()
+        if s:
+            s.table.blockSignals(False)
         if s and old:
             self._finish_format_undo(s, old, "Font Family")
 
@@ -1534,6 +1538,8 @@ class MainWindow(QMainWindow):
         s = self._active_sheet()
         keys = self._selected_cell_keys()
         old = self._push_format_undo(s, keys) if s else None
+        if s:
+            s.table.blockSignals(True)
         for it in self._selected_items():
             f = it.font()
             f.setPointSizeF(size)
@@ -1541,6 +1547,8 @@ class MainWindow(QMainWindow):
             if s:
                 r, c = it.row(), it.column()
                 self._cell_fmt(s, r, c).font_size = size
+        if s:
+            s.table.blockSignals(False)
         if s and old:
             self._finish_format_undo(s, old, "Font Size")
 
@@ -1549,6 +1557,8 @@ class MainWindow(QMainWindow):
         s = self._active_sheet()
         keys = self._selected_cell_keys()
         old = self._push_format_undo(s, keys) if s else None
+        if s:
+            s.table.blockSignals(True)
         for it in self._selected_items():
             f = it.font()
             f.setBold(checked)
@@ -1556,6 +1566,8 @@ class MainWindow(QMainWindow):
             if s:
                 r, c = it.row(), it.column()
                 self._cell_fmt(s, r, c).bold = checked
+        if s:
+            s.table.blockSignals(False)
         if s and old:
             self._finish_format_undo(s, old, "Bold")
 
@@ -1564,6 +1576,8 @@ class MainWindow(QMainWindow):
         s = self._active_sheet()
         keys = self._selected_cell_keys()
         old = self._push_format_undo(s, keys) if s else None
+        if s:
+            s.table.blockSignals(True)
         for it in self._selected_items():
             f = it.font()
             f.setItalic(checked)
@@ -1571,6 +1585,8 @@ class MainWindow(QMainWindow):
             if s:
                 r, c = it.row(), it.column()
                 self._cell_fmt(s, r, c).italic = checked
+        if s:
+            s.table.blockSignals(False)
         if s and old:
             self._finish_format_undo(s, old, "Italic")
 
@@ -1579,6 +1595,8 @@ class MainWindow(QMainWindow):
         s = self._active_sheet()
         keys = self._selected_cell_keys()
         old = self._push_format_undo(s, keys) if s else None
+        if s:
+            s.table.blockSignals(True)
         for it in self._selected_items():
             f = it.font()
             f.setUnderline(checked)
@@ -1586,6 +1604,8 @@ class MainWindow(QMainWindow):
             if s:
                 r, c = it.row(), it.column()
                 self._cell_fmt(s, r, c).underline = checked
+        if s:
+            s.table.blockSignals(False)
         if s and old:
             self._finish_format_undo(s, old, "Underline")
 
@@ -1598,11 +1618,15 @@ class MainWindow(QMainWindow):
         s = self._active_sheet()
         keys = self._selected_cell_keys()
         old = self._push_format_undo(s, keys) if s else None
+        if s:
+            s.table.blockSignals(True)
         for it in self._selected_items():
             it.setTextAlignment(int(alignment))
             if s:
                 r, c = it.row(), it.column()
                 self._cell_fmt(s, r, c).alignment = int(alignment)
+        if s:
+            s.table.blockSignals(False)
         if s and old:
             self._finish_format_undo(s, old, "Alignment")
 
@@ -2445,59 +2469,64 @@ class MainWindow(QMainWindow):
         old = self._push_format_undo(s, keys)
 
         from PyQt5.QtWidgets import QTableWidgetItem
-        for r in range(r0, r1 + 1):
-            is_header = (r == r0 and use_header)
-            data_row = r - r0 - (1 if use_header else 0)
-            for c in range(c0, c1 + 1):
-                cf = self._cell_fmt(s, r, c)
-                it = s.table.item(r, c)
-                if it is None:
-                    it = QTableWidgetItem("")
-                    s.table.setItem(r, c, it)
+        s.table.blockSignals(True)
+        try:
+            for r in range(r0, r1 + 1):
+                is_header = (r == r0 and use_header)
+                data_row = r - r0 - (1 if use_header else 0)
+                for c in range(c0, c1 + 1):
+                    cf = self._cell_fmt(s, r, c)
+                    it = s.table.item(r, c)
+                    if it is None:
+                        it = QTableWidgetItem("")
+                        s.table.setItem(r, c, it)
 
-                # Background.
-                if is_header:
-                    bg = style.header_bg
-                elif use_banding and data_row % 2 == 1:
-                    bg = style.odd_bg
-                else:
-                    bg = style.even_bg
-                cf.bg_color = bg
-                it.setBackground(QColor(bg))
+                    # Background.
+                    if is_header:
+                        bg = style.header_bg
+                    elif use_banding and data_row % 2 == 1:
+                        bg = style.odd_bg
+                    else:
+                        bg = style.even_bg
+                    cf.bg_color = bg
+                    it.setBackground(QColor(bg))
 
-                # Text colour & font.
-                fg = style.header_fg if is_header else style.text_fg
-                cf.font_color = fg
-                it.setForeground(QColor(fg))
-                if is_header and style.header_bold:
-                    cf.bold = True
-                    ft = it.font()
-                    ft.setBold(True)
-                    it.setFont(ft)
+                    # Text colour & font.
+                    fg = style.header_fg if is_header else style.text_fg
+                    cf.font_color = fg
+                    it.setForeground(QColor(fg))
+                    if is_header and style.header_bold:
+                        cf.bold = True
+                        ft = it.font()
+                        ft.setBold(True)
+                        it.setFont(ft)
 
-                # Borders.
-                bc = style.border_color
-                if bc:
-                    if style.border_outer:
-                        if r == r0:
-                            cf.border_top = BorderSpec(color=bc)
-                        if r == r1:
-                            cf.border_bottom = BorderSpec(color=bc)
-                        if c == c0:
-                            cf.border_left = BorderSpec(color=bc)
-                        if c == c1:
-                            cf.border_right = BorderSpec(color=bc)
-                    if style.border_inner:
-                        if c < c1:
-                            cf.border_right = BorderSpec(color=bc)
-                        if r < r1:
-                            cf.border_bottom = BorderSpec(color=bc)
-                    if is_header and style.border_header_bottom:
-                        cf.border_bottom = BorderSpec(
-                            color=bc, width=2.0)
-                    elif not is_header and r == r0 and style.border_header_bottom:
-                        cf.border_top = BorderSpec(
-                            color=bc, width=2.0)
+                    # Borders.
+                    bc = style.border_color
+                    if bc:
+                        if style.border_outer:
+                            if r == r0:
+                                cf.border_top = BorderSpec(color=bc)
+                            if r == r1:
+                                cf.border_bottom = BorderSpec(color=bc)
+                            if c == c0:
+                                cf.border_left = BorderSpec(color=bc)
+                            if c == c1:
+                                cf.border_right = BorderSpec(color=bc)
+                        if style.border_inner:
+                            if c < c1:
+                                cf.border_right = BorderSpec(color=bc)
+                            if r < r1:
+                                cf.border_bottom = BorderSpec(color=bc)
+                        if is_header and style.border_header_bottom:
+                            cf.border_bottom = BorderSpec(
+                                color=bc, width=2.0)
+                        elif (not is_header and r == r0
+                              and style.border_header_bottom):
+                            cf.border_top = BorderSpec(
+                                color=bc, width=2.0)
+        finally:
+            s.table.blockSignals(False)
 
         self._finish_format_undo(s, keys, old)
         s.table.viewport().update()
