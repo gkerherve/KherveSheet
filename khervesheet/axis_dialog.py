@@ -158,6 +158,11 @@ class AxisPropertiesDialog(QDialog):
         self._build_secondary_tab()
 
         # ── Footer ────────────────────────────────────────────────
+        footer = QHBoxLayout()
+        pd_btn = QPushButton("Plot Details\u2026")
+        pd_btn.clicked.connect(self._switch_to_plot_details)
+        footer.addWidget(pd_btn)
+        footer.addStretch()
         bb = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Apply
             | QDialogButtonBox.Cancel)
@@ -165,7 +170,8 @@ class AxisPropertiesDialog(QDialog):
         bb.rejected.connect(self.reject)
         bb.button(QDialogButtonBox.Apply).clicked.connect(
             self._apply_current)
-        outer.addWidget(bb)
+        footer.addWidget(bb)
+        outer.addLayout(footer)
 
         # ── Per-direction state cache ─────────────────────────────
         # Pre-load from chart's saved axis properties so that manual
@@ -1009,6 +1015,14 @@ class AxisPropertiesDialog(QDialog):
         self.sec_title_rotation.setCurrentText("0")
 
     # ── Apply ──────────────────────────────────────────────────────
+
+    # Custom result code for dialog switching.
+    SWITCH_TO_PLOT_DETAILS = 3
+
+    def _switch_to_plot_details(self):
+        """Apply settings, close, and signal to open Plot Details."""
+        self.apply_to_chart(self._chart)
+        self.done(self.SWITCH_TO_PLOT_DETAILS)
 
     def _apply_current(self):
         """Apply current direction to the chart without closing."""

@@ -544,11 +544,16 @@ class EmbeddedChart(QWidget):
             pass
 
     # ── Axis properties dialog ─────────────────────────────────────
+    SWITCH_TO_PLOT_DETAILS = 3
+
     def _open_axis_dialog(self, side):
         from .axis_dialog import AxisPropertiesDialog
         dlg = AxisPropertiesDialog(self, side)
-        if dlg.exec_() == QDialog.Accepted:
+        result = dlg.exec_()
+        if result == QDialog.Accepted:
             dlg.apply_to_chart(self)
+        elif result == self.SWITCH_TO_PLOT_DETAILS:
+            self._open_plot_details()
 
     # ── Context menu ────────────────────────────────────────────────
     def contextMenuEvent(self, event):
@@ -591,8 +596,11 @@ class EmbeddedChart(QWidget):
     # ── Plot Details dialog ─────────────────────────────────────────
     def _open_plot_details(self):
         dlg = PlotDetailsDialog(self)
-        if dlg.exec_() == QDialog.Accepted:
+        result = dlg.exec_()
+        if result == QDialog.Accepted:
             dlg.apply_to_chart(self)
+        elif result == PlotDetailsDialog.SWITCH_TO_AXIS:
+            self._open_axis_dialog("Bottom")
 
     # ── Properties dialog ───────────────────────────────────────────
     def mouseDoubleClickEvent(self, event):
@@ -1130,12 +1138,13 @@ class PlotDetailsDialog(QDialog):
 
         self._tabs.addTab(w, "Data")
 
+    # Custom result code for dialog switching.
+    SWITCH_TO_AXIS = 2
+
     def _open_axis_props(self):
-        """Open the Axis Properties dialog for the chart."""
-        from .axis_dialog import AxisPropertiesDialog
-        dlg = AxisPropertiesDialog(self._chart, "Bottom", parent=self)
-        if dlg.exec_() == QDialog.Accepted:
-            dlg.apply_to_chart(self._chart)
+        """Close Plot Details and signal to open Axis Properties."""
+        self.apply_to_chart(self._chart)
+        self.done(self.SWITCH_TO_AXIS)
 
     def _add_series(self):
         """Add a new series from a column range entered by the user."""
