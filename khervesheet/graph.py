@@ -1588,8 +1588,8 @@ class PlotDetailsDialog(QDialog):
                 row, mode, self.fill_target.currentIndex(),
                 self.fill_color.color(), self.fill_alpha.value())
 
-            # Refresh legend (only include visible series).
-            if self.legend_check.isChecked():
+            # Refresh legend if one exists.
+            if ax.get_legend() is not None:
                 leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
                 if leg:
                     leg.set_draggable(True)
