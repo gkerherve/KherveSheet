@@ -195,6 +195,8 @@ class MainWindow(QMainWindow):
         self._wrap_act.setCheckable(True)
         format_menu.addSeparator()
         self._table_design_menu = format_menu.addMenu("Table Design")
+        self._table_design_menu.setIcon(
+            icons.themed_icon("mdi.table-large"))
         self._table_design_menu.aboutToShow.connect(
             self._build_table_design_menu)
         format_menu.addSeparator()
