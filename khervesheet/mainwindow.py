@@ -112,6 +112,16 @@ class MainWindow(QMainWindow):
         self._rebuild_recent_menu()
 
         file_menu.addSeparator()
+        vc_menu = file_menu.addMenu("Version Control")
+        vc_menu.setIcon(icons.themed_icon("mdi.source-branch"))
+        vc_menu.addAction("Version History…", self._open_history)
+        vc_menu.addSeparator()
+        vc_menu.addAction("Push", self._vc_push)
+        vc_menu.addAction("Pull", self._vc_pull)
+        vc_menu.addSeparator()
+        vc_menu.addAction("Configure Remote…", self._vc_configure_remote)
+
+        file_menu.addSeparator()
         file_menu.addAction("E&xit", self.close, "Ctrl+Q")
 
         # ── Edit ─────────────────────────────────────────────────────
@@ -836,10 +846,23 @@ class MainWindow(QMainWindow):
                             data=np.frombuffer(raw, dtype=np.uint8))
 
             self._status_msg(f"Saved to {path}", 5000)
+            # Auto-commit for version history.
+            self._auto_commit(path)
         except Exception as e:
             QMessageBox.warning(self, "Save Error", str(e))
         finally:
             self._show_progress(False)
+
+    def _auto_commit(self, path: str):
+        """Commit the saved file to a per-directory git repo."""
+        from . import git_backend
+        if not git_backend.is_available():
+            return
+        from pathlib import Path
+        p = Path(path)
+        repo_dir = p.parent
+        file_stem = p.stem
+        git_backend.commit_all(repo_dir, file_stem=file_stem)
 
     def _load_ksheet(self, path: str):
         try:
@@ -1070,13 +1093,21 @@ class MainWindow(QMainWindow):
                         if ig_key not in sg:
                             continue
                         ig = sg[ig_key]
+                        # Read PNG data — handle both old scalar
+                        # datasets and new uint8 array datasets.
+                        ds = ig["png_data"]
+                        if ds.shape == ():
+                            # Scalar dataset (old format).
+                            raw_png = bytes(ds[()])
+                        else:
+                            raw_png = bytes(ds[:])
                         imd = {
                             "pos_x": int(ig.attrs['pos_x']),
                             "pos_y": int(ig.attrs['pos_y']),
                             "width": int(ig.attrs['width']),
                             "height": int(ig.attrs['height']),
                             "data": _b64.b64encode(
-                                bytes(ig["png_data"][:])).decode("ascii"),
+                                raw_png).decode("ascii"),
                         }
                         crop_json = ig.attrs.get('crop', '')
                         if crop_json:
@@ -1753,10 +1784,12 @@ class MainWindow(QMainWindow):
         sheet = self._active_sheet()
         if not sheet:
             return
-        # Scale row/column sizes proportionally
+        factor = value / 100.0
+        old_factor = getattr(sheet, '_zoom_factor', 1.0)
+
+        # Scale row/column sizes proportionally.
         base_row = 20
         base_col = 80
-        factor = value / 100.0
         sheet.table.verticalHeader().setDefaultSectionSize(
             int(base_row * factor))
         sheet.table.horizontalHeader().setDefaultSectionSize(
@@ -1764,6 +1797,24 @@ class MainWindow(QMainWindow):
         font = sheet.table.font()
         font.setPointSizeF(9 * factor)
         sheet.table.setFont(font)
+
+        # Scale charts and images proportionally.
+        if old_factor != factor:
+            ratio = factor / old_factor
+            for chart in getattr(sheet, '_charts', []):
+                pos = chart.pos()
+                chart.move(int(pos.x() * ratio),
+                           int(pos.y() * ratio))
+                chart.resize(int(chart.width() * ratio),
+                             int(chart.height() * ratio))
+            for img in getattr(sheet, '_images', []):
+                pos = img.pos()
+                img.move(int(pos.x() * ratio),
+                         int(pos.y() * ratio))
+                img.resize(int(img.width() * ratio),
+                           int(img.height() * ratio))
+
+        sheet._zoom_factor = factor
 
     # ── Bring forward / send backward ────────────────────────────────
     def _selected_overlay(self):
