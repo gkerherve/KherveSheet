@@ -194,8 +194,9 @@ class MainWindow(QMainWindow):
             "Wrap Text", self._toggle_wrap_text)
         self._wrap_act.setCheckable(True)
         format_menu.addSeparator()
-        format_menu.addAction(
-            "Table Design\u2026", self._open_table_design)
+        self._table_design_menu = format_menu.addMenu("Table Design")
+        self._table_design_menu.aboutToShow.connect(
+            self._build_table_design_menu)
         format_menu.addSeparator()
         fc_act = format_menu.addAction(
             "Format Cells\u2026\tCtrl+1", self._open_format_cells_dialog)
@@ -1907,11 +1908,76 @@ class MainWindow(QMainWindow):
         if ok:
             s.table.verticalHeader().setDefaultSectionSize(h)
 
-    # ── Table Design ──────────────────────────────────────────────────
-    def _open_table_design(self):
-        """Open the Table Design gallery and apply to selection."""
-        from .table_styles import TableDesignDialog
-        from .cellformat import CellFormat, BorderSpec
+    # ── Table Design (inline menu gallery) ──────────────────────────
+    def _build_table_design_menu(self):
+        """Populate the Table Design submenu with style thumbnails."""
+        from .table_styles import BUILTIN_STYLES, _render_thumbnail
+        from PyQt5.QtWidgets import (
+            QWidgetAction, QWidget, QVBoxLayout, QGridLayout,
+            QHBoxLayout, QCheckBox, QLabel, QPushButton, QGroupBox,
+        )
+        from PyQt5.QtGui import QIcon
+        menu = self._table_design_menu
+        menu.clear()
+
+        # Options row (header / banding checkboxes).
+        opts_widget = QWidget()
+        opts_layout = QHBoxLayout(opts_widget)
+        opts_layout.setContentsMargins(8, 4, 8, 4)
+        self._td_header_check = QCheckBox("Header Row")
+        self._td_header_check.setChecked(True)
+        self._td_banded_check = QCheckBox("Banded Rows")
+        self._td_banded_check.setChecked(True)
+        opts_layout.addWidget(self._td_header_check)
+        opts_layout.addWidget(self._td_banded_check)
+        opts_layout.addStretch()
+        opts_action = QWidgetAction(menu)
+        opts_action.setDefaultWidget(opts_widget)
+        menu.addAction(opts_action)
+        menu.addSeparator()
+
+        # Gallery per category.
+        for category in ("Plain", "Grid", "List"):
+            cat_styles = [s for s in BUILTIN_STYLES
+                          if s.category == category]
+            # Category label.
+            lbl_widget = QWidget()
+            lbl_layout = QHBoxLayout(lbl_widget)
+            lbl_layout.setContentsMargins(8, 4, 8, 2)
+            lbl = QLabel(f"<b>{category} Tables</b>")
+            lbl_layout.addWidget(lbl)
+            lbl_action = QWidgetAction(menu)
+            lbl_action.setDefaultWidget(lbl_widget)
+            menu.addAction(lbl_action)
+
+            # Grid of thumbnails.
+            grid_widget = QWidget()
+            grid_layout = QGridLayout(grid_widget)
+            grid_layout.setContentsMargins(8, 2, 8, 6)
+            grid_layout.setSpacing(4)
+            cols_per_row = 7
+            for i, style in enumerate(cat_styles):
+                btn = QPushButton()
+                pm = _render_thumbnail(style)
+                btn.setIcon(QIcon(pm))
+                btn.setIconSize(pm.size())
+                btn.setFixedSize(pm.width() + 6, pm.height() + 6)
+                btn.setToolTip(style.name)
+                btn.setFlat(True)
+                btn.setStyleSheet(
+                    "QPushButton:hover { border: 2px solid #3078c6; }")
+                btn.clicked.connect(
+                    lambda _, s=style: self._apply_table_style(s))
+                grid_layout.addWidget(btn, i // cols_per_row,
+                                      i % cols_per_row)
+            grid_action = QWidgetAction(menu)
+            grid_action.setDefaultWidget(grid_widget)
+            menu.addAction(grid_action)
+
+    def _apply_table_style(self, style):
+        """Apply a table style to the current selection."""
+        from .cellformat import BorderSpec
+        self._table_design_menu.close()
         s = self._active_sheet()
         if not s:
             return
@@ -1922,15 +1988,11 @@ class MainWindow(QMainWindow):
                 self, "No Selection",
                 "Select the cell range to format first.")
             return
-        dlg = TableDesignDialog(self)
-        if dlg.exec_() != QDialog.Accepted or not dlg.selected_style:
-            return
-        style = dlg.selected_style
         rng = sel[0]
         r0, r1 = rng.topRow(), rng.bottomRow()
         c0, c1 = rng.leftColumn(), rng.rightColumn()
-        use_header = dlg.use_header
-        use_banding = dlg.use_banding
+        use_header = self._td_header_check.isChecked()
+        use_banding = self._td_banded_check.isChecked()
 
         keys = []
         for r in range(r0, r1 + 1):
