@@ -79,7 +79,11 @@ class EmbeddedChart(QWidget):
         self._figure = Figure(figsize=(5, 3), dpi=100)
         self._canvas = FigureCanvas(self._figure)
         self._canvas.setMouseTracking(True)
-        self._ax = self._figure.add_subplot(111)
+        if plot_type == "3D Surface":
+            from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+            self._ax = self._figure.add_subplot(111, projection='3d')
+        else:
+            self._ax = self._figure.add_subplot(111)
         layout.addWidget(self._canvas, stretch=1)
 
         # No toolbar — right-click menu provides all actions.
@@ -161,6 +165,24 @@ class EmbeddedChart(QWidget):
         elif plot_type == "Box":
             bp = ax.boxplot([y], labels=[label], patch_artist=True)
             return bp
+        elif plot_type == "Heatmap":
+            # For heatmap, y is expected to be a 2D array; if 1D,
+            # reshape into a single-row matrix.
+            data = np.atleast_2d(np.asarray(y))
+            im = ax.imshow(data, aspect='auto', origin='lower',
+                           cmap='viridis')
+            return im
+        elif plot_type == "3D Surface":
+            # 3D surface expects y to be a 2D array (Z matrix).
+            # x is ignored here; X/Y are generated from shape.
+            data = np.atleast_2d(np.asarray(y))
+            rows, cols = data.shape
+            X = np.arange(cols)
+            Y = np.arange(rows)
+            X, Y = np.meshgrid(X, Y)
+            surf = ax.plot_surface(X, Y, data, cmap='viridis',
+                                   edgecolor='none', alpha=0.9)
+            return surf
         else:
             lines = ax.plot(x, y, label=label)
             return lines[0] if lines else None

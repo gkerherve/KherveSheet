@@ -383,7 +383,7 @@ class MainWindow(QMainWindow):
         self._border_btn.setMenu(brd_menu)
         fmt.addWidget(self._border_btn)
 
-        # Plot toolbar — all plot types with custom icons
+        # Plot toolbar — single dropdown button with all plot types
         from .sheet import SheetWidget
         plot_bar = self.addToolBar("Plot")
         plot_bar.setIconSize(icon_size)
@@ -398,14 +398,55 @@ class MainWindow(QMainWindow):
             "Stem":        icons.plot_icon_stem,
             "Histogram":   icons.plot_icon_histogram,
             "Box":         icons.plot_icon_box,
+            "Heatmap":     icons.plot_icon_heatmap,
+            "3D Surface":  icons.plot_icon_3d_surface,
         }
+        self._plot_btn = QToolButton()
+        self._plot_btn.setToolTip("Insert Chart")
+        self._plot_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        self._last_plot_type = "Line"
+        self._plot_btn.setIcon(icons.plot_icon_line(28))
+        self._plot_btn.clicked.connect(
+            lambda: self._insert_chart(self._last_plot_type))
+        plot_menu = QMenu(self._plot_btn)
         for pt in SheetWidget.PLOT_TYPES:
             fn = _plot_icon_fns.get(pt)
             ic = fn(28) if fn else icons.themed_icon("mdi.chart-line")
-            act = plot_bar.addAction(
-                ic, "",
-                lambda t=pt: self._insert_chart(t))
-            act.setToolTip(pt)
+            act = plot_menu.addAction(ic, pt,
+                                      lambda t=pt: self._plot_from_menu(t))
+        self._plot_btn.setMenu(plot_menu)
+        self._plot_icon_fns = _plot_icon_fns
+        plot_bar.addWidget(self._plot_btn)
+
+        # ── Table Design button ──────────────────────────────────
+        self._table_design_btn = QToolButton()
+        self._table_design_btn.setIcon(
+            icons.themed_icon("mdi.table-large"))
+        self._table_design_btn.setToolTip("Table Design")
+        self._table_design_btn.setPopupMode(QToolButton.InstantPopup)
+        self._table_design_btn.setMenu(self._table_design_menu)
+        plot_bar.addWidget(self._table_design_btn)
+
+        # ── Symbol insertion button ──────────────────────────────
+        self._symbol_btn = QToolButton()
+        self._symbol_btn.setIcon(
+            icons.themed_icon("mdi.omega"))
+        self._symbol_btn.setToolTip("Insert Symbol")
+        self._symbol_btn.setPopupMode(QToolButton.InstantPopup)
+        sym_menu = QMenu(self._symbol_btn)
+        sym_action = QWidgetAction(sym_menu)
+        sym_action.setDefaultWidget(self._build_symbol_grid(sym_menu))
+        sym_menu.addAction(sym_action)
+        self._symbol_btn.setMenu(sym_menu)
+        plot_bar.addWidget(self._symbol_btn)
+
+        # ── Merge/Unmerge button (in formatting toolbar) ─────────
+        self._merge_btn = QToolButton()
+        self._merge_btn.setIcon(
+            icons.themed_icon("mdi.table-merge-cells"))
+        self._merge_btn.setToolTip("Merge / Unmerge Cells")
+        self._merge_btn.clicked.connect(self._toggle_merge)
+        fmt.addWidget(self._merge_btn)
 
     # ── Status bar ───────────────────────────────────────────────────
     def _status_msg(self, text: str, timeout: int = 0):
@@ -1954,6 +1995,83 @@ class MainWindow(QMainWindow):
     def _insert_chart(self, plot_type: str):
         self.plot_from_sheet(self._active_sheet(), plot_type)
 
+    def _plot_from_menu(self, plot_type: str):
+        """Insert chart and remember last-used type for the button."""
+        self._last_plot_type = plot_type
+        fn = self._plot_icon_fns.get(plot_type)
+        if fn:
+            self._plot_btn.setIcon(fn(28))
+        self._insert_chart(plot_type)
+
+    def _build_symbol_grid(self, parent_menu):
+        """Build a grid widget with symbol buttons for insertion."""
+        greek = list("αβγδεζηθικλμνξπρστυφχψω"
+                     "ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΠΡΣΤΥΦΧΨΩ")
+        math_syms = list("±×÷√∞≠≤≥≈∑∏∫∂∇°′″")
+        arrows = list("←→↑↓↔⇐⇒⇑⇓⇔")
+        all_syms = greek + math_syms + arrows
+
+        container = QWidget()
+        grid = QGridLayout(container)
+        grid.setSpacing(1)
+        grid.setContentsMargins(4, 4, 4, 4)
+        cols = 10
+        for i, sym in enumerate(all_syms):
+            btn = QPushButton(sym)
+            btn.setFixedSize(28, 28)
+            btn.setStyleSheet("font-size: 14px;")
+            btn.clicked.connect(
+                lambda checked, s=sym, m=parent_menu:
+                    self._insert_symbol(s, m))
+            grid.addWidget(btn, i // cols, i % cols)
+        return container
+
+    def _insert_symbol(self, symbol: str, menu):
+        """Insert a symbol character into the current cell."""
+        menu.close()
+        sheet = self._active_sheet()
+        if not sheet:
+            return
+        row = sheet.table.currentRow()
+        col = sheet.table.currentColumn()
+        if row < 0 or col < 0:
+            return
+        from PyQt5.QtWidgets import QTableWidgetItem
+        it = sheet.table.item(row, col)
+        old = it.text() if it else ""
+        new_val = old + symbol
+        if it is None:
+            it = QTableWidgetItem(new_val)
+            sheet.table.setItem(row, col, it)
+        else:
+            it.setText(new_val)
+        sheet._shadow[(row, col)] = new_val
+        if sheet._undo_stack:
+            from .undo_commands import CellEditCmd
+            sheet._undo_stack.push(
+                CellEditCmd(sheet, row, col, old, new_val))
+
+    def _toggle_merge(self):
+        """Toggle merge/unmerge on the active sheet selection."""
+        sheet = self._active_sheet()
+        if not sheet:
+            return
+        sel = sheet.table.selectedRanges()
+        if not sel:
+            return
+        rng = sel[0]
+        # Check if already merged at this position
+        r, c = rng.topRow(), rng.leftColumn()
+        is_merged = False
+        for (mr, mc, rs, cs) in sheet._merged_ranges:
+            if mr == r and mc == c:
+                is_merged = True
+                break
+        if is_merged:
+            sheet.unmerge_selection()
+        else:
+            sheet.merge_selection()
+
     # ── Plot from sheet ──────────────────────────────────────────────
     def plot_from_sheet(self, sheet: SheetWidget, plot_type: str):
         """Create an embedded chart from selected columns."""
@@ -1970,6 +2088,47 @@ class MainWindow(QMainWindow):
         if len(cols) < 1:
             return
 
+        import numpy as np
+        from .graph import EmbeddedChart
+        if not hasattr(sheet, '_charts'):
+            sheet._charts = []
+
+        # ── Heatmap / 3D Surface: read selection as 2D matrix ────
+        if plot_type in ("Heatmap", "3D Surface"):
+            rows = list(range(s.topRow(), s.bottomRow() + 1))
+            matrix = np.full((len(rows), len(cols)), np.nan)
+            for ri, r in enumerate(rows):
+                for ci, c in enumerate(cols):
+                    it = sheet.table.item(r, c)
+                    if it:
+                        try:
+                            matrix[ri, ci] = float(it.text())
+                        except (ValueError, TypeError):
+                            pass
+            # Remove all-nan rows/cols
+            mask_r = ~np.all(np.isnan(matrix), axis=1)
+            mask_c = ~np.all(np.isnan(matrix), axis=0)
+            matrix = matrix[np.ix_(mask_r, mask_c)]
+            if matrix.size == 0:
+                QMessageBox.information(
+                    self, "No Data",
+                    "Selected range contains no numeric data.")
+                return
+            # Replace remaining NaN with 0 for plotting
+            matrix = np.nan_to_num(matrix, nan=0.0)
+            # x is dummy (unused for these types); y is the matrix
+            x_dummy = np.arange(matrix.shape[1], dtype=float)
+            viewport = sheet.table.viewport()
+            chart = EmbeddedChart(
+                x_dummy, matrix, "Data", plot_type, sheet, viewport)
+            offset = len(sheet._charts) * 30
+            chart.move(40 + offset, 40 + offset)
+            sheet._charts.append(chart)
+            sheet.data_changed.connect(chart._on_data_changed)
+            self._status_msg(f"Created {plot_type} chart", 3000)
+            return
+
+        # ── Standard 1D plot types ───────────────────────────────
         # Find X and Y columns
         x_col = None
         y_cols = []
@@ -1988,16 +2147,10 @@ class MainWindow(QMainWindow):
             y_cols = cols
 
         # Collect data
-        import numpy as np
         if x_col is not None:
             x_data = sheet.numeric_column(x_col)
         else:
             x_data = np.arange(sheet.row_count(), dtype=float)
-
-        # Create embedded chart on the grid viewport
-        from .graph import EmbeddedChart
-        if not hasattr(sheet, '_charts'):
-            sheet._charts = []
 
         # Build one chart with all Y columns as series
         first_chart = None

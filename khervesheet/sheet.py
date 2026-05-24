@@ -1331,7 +1331,7 @@ class SheetWidget(QWidget):
     # ── Plot types ───────────────────────────────────────────────────
     PLOT_TYPES = [
         "Line", "Scatter", "Line+Symbol", "Bar", "Step",
-        "Stem", "Histogram", "Box",
+        "Stem", "Histogram", "Box", "Heatmap", "3D Surface",
     ]
 
     def _add_plot_submenu(self, menu, cols=None):
@@ -1522,8 +1522,19 @@ class SheetWidget(QWidget):
                 BulkCellEditCmd(self, changes, "Paste Values"))
 
     def _paste_clipboard(self):
-        text = QApplication.clipboard().text()
+        clipboard = QApplication.clipboard()
+        text = clipboard.text()
         if not text:
+            # If no text but clipboard has an image, paste as embedded
+            mime = clipboard.mimeData()
+            if mime and mime.hasImage():
+                from PyQt5.QtGui import QPixmap
+                pm = QPixmap(mime.imageData())
+                if not pm.isNull():
+                    # Delegate to MainWindow's _place_image via window()
+                    win = self.window()
+                    if hasattr(win, '_place_image'):
+                        win._place_image(pm, "Paste Image")
             return
         row = self.table.currentRow()
         col = self.table.currentColumn()
