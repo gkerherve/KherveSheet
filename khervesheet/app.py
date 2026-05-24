@@ -277,12 +277,166 @@ _WARM_LIGHT_PALETTE = {
     "HighlightedText": "#ffffff", "Link": "#8a6a20",
 }
 
+# ── Quick theme generator ────────────────────────────────────────
+
+def _gen_theme(bg, bg2, fg, fg2, accent, border, base, alt_base,
+               btn, btn_hover, menu_sel, link, is_dark=False):
+    """Generate (QSS, palette) from a compact colour spec."""
+    qss = _COMMON_QSS + f"""
+QMainWindow, QDialog {{ background: {bg}; }}
+QMenuBar {{
+    background: {bg2}; color: {fg};
+    border-bottom: 1px solid {border}; padding: 2px;
+}}
+QMenuBar::item:selected {{ background: {menu_sel}; }}
+QMenu {{ background: {bg2}; color: {fg}; border: 1px solid {border}; }}
+QMenu::item:selected {{ background: {menu_sel}; }}
+QToolBar {{ background: {bg2}; border-bottom: 1px solid {border}; }}
+QStatusBar {{ background: {alt_base}; color: {fg2};
+    border-top: 1px solid {border}; }}
+QTabBar::tab {{
+    background: {alt_base}; color: {fg2};
+    border: 1px solid {border}; padding: 3px 10px; margin-right: 1px;
+}}
+QTabBar::tab:selected {{ background: {bg}; color: {fg};
+    border-bottom-color: {bg}; }}
+QTabBar::tab:hover {{ background: {btn_hover}; }}
+QPushButton {{
+    background: {btn}; color: {fg};
+    border: 1px solid {border}; padding: 3px 10px; border-radius: 3px;
+}}
+QPushButton:hover  {{ background: {btn_hover}; border-color: {accent}; }}
+QPushButton:pressed {{ background: {menu_sel}; }}
+QToolButton {{ color: {fg}; }}
+QToolButton:hover {{ background: {btn_hover}; border-radius: 3px; }}
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {{
+    background: {base}; color: {fg};
+    border: 1px solid {border}; border-radius: 2px; padding: 2px 4px;
+}}
+QComboBox QAbstractItemView {{ background: {base}; color: {fg}; }}
+QTreeWidget, QListWidget, QTableWidget {{
+    background: {base}; color: {fg};
+    alternate-background-color: {alt_base};
+    border: 1px solid {border}; gridline-color: {border};
+}}
+QHeaderView::section {{
+    background: {bg2}; color: {fg2};
+    border: 1px solid {border}; padding: 2px 4px;
+}}
+QLabel {{ color: {fg}; }}
+QScrollBar:vertical, QScrollBar:horizontal {{ background: {bg2}; }}
+QScrollBar::handle {{ background: {border}; border-radius: 3px; }}
+QScrollBar::handle:hover {{ background: {accent}; }}
+"""
+    pal = {
+        "Window": bg, "WindowText": fg,
+        "Base": base, "AlternateBase": alt_base,
+        "ToolTipBase": btn, "ToolTipText": fg,
+        "Text": fg, "Button": btn,
+        "ButtonText": fg, "Highlight": accent,
+        "HighlightedText": "#ffffff", "Link": link,
+    }
+    return qss, pal
+
+
 # ── Theme registry ───────────────────────────────────────────────
 THEMES = {
     "Light":      (_LIGHT_QSS,      _LIGHT_PALETTE),
     "Dark":       (_DARK_QSS,       _DARK_PALETTE),
     "Blue Dark":  (_BLUE_DARK_QSS,  _BLUE_DARK_PALETTE),
     "Warm Light": (_WARM_LIGHT_QSS, _WARM_LIGHT_PALETTE),
+
+    # ── Additional light themes ─────────────────────────────────
+    "Arctic": _gen_theme(
+        "#f0f5fa", "#ffffff", "#1a2a3a", "#5a6a7a", "#2a8ad0",
+        "#c8d4e0", "#ffffff", "#eaf0f6", "#f5f8fc",
+        "#dce8f4", "#bcd4f0", "#1a6fbb"),
+    "Mint": _gen_theme(
+        "#f0faf5", "#f8fffc", "#1a3a2a", "#5a7a6a", "#28a060",
+        "#c0dcc8", "#ffffff", "#e8f5ee", "#f2faf6",
+        "#d0f0dc", "#b0e0c4", "#1a8a50"),
+    "Rose": _gen_theme(
+        "#faf0f3", "#fff8fa", "#3a1a22", "#7a5a62", "#c0506a",
+        "#e0c0ca", "#fff5f8", "#f8eaef", "#fcf2f5",
+        "#f4d8e0", "#e8bcc8", "#a83050"),
+    "Lavender": _gen_theme(
+        "#f4f0fa", "#faf8ff", "#2a1a3a", "#6a5a7a", "#7a50b0",
+        "#d0c0e0", "#fdf8ff", "#eeE8f5", "#f6f2fa",
+        "#e4d8f0", "#d0c0e4", "#6a40a0"),
+    "Peach": _gen_theme(
+        "#fdf6f0", "#fffaf5", "#3a2a1a", "#7a6a5a", "#d08040",
+        "#e4d0b8", "#fffcf8", "#f8f0e8", "#fdf8f2",
+        "#f4e0cc", "#e8ccb0", "#b06820"),
+    "Sage": _gen_theme(
+        "#f2f5f0", "#f8faf6", "#2a3020", "#5a6450", "#5a8a40",
+        "#c8d4c0", "#fafcf8", "#eef2ea", "#f4f8f2",
+        "#dce8d4", "#c0d8b4", "#488830"),
+    "Sky": _gen_theme(
+        "#f0f8ff", "#f8fcff", "#1a2838", "#5a6878", "#3090d0",
+        "#c0d8f0", "#ffffff", "#eaf4ff", "#f4faff",
+        "#d4e8fa", "#b8d8f4", "#2070b0"),
+    "Sand": _gen_theme(
+        "#f8f4ee", "#fffcf5", "#38301a", "#7a7060", "#b89040",
+        "#dcd0b8", "#fffcf4", "#f4eee4", "#faf6ee",
+        "#f0e0c8", "#e0ccaa", "#987020"),
+    "Coral": _gen_theme(
+        "#fef5f2", "#fff9f7", "#3a2020", "#7a5050", "#e06050",
+        "#e8c8c0", "#fff8f5", "#faefeb", "#fcf5f2",
+        "#f4d4cc", "#e8b8b0", "#c04030"),
+
+    # ── Additional dark themes ──────────────────────────────────
+    "Charcoal": _gen_theme(
+        "#222226", "#2c2c32", "#d8d8dc", "#909098", "#5898d0",
+        "#3c3c44", "#1e1e22", "#282830", "#343438",
+        "#40404a", "#3a6090", "#70b0e8", is_dark=True),
+    "Midnight": _gen_theme(
+        "#0e1420", "#141c2a", "#c8d0e0", "#8090a8", "#4488cc",
+        "#202838", "#0a1018", "#121a28", "#1c2838",
+        "#283850", "#2a5588", "#5ea0e0", is_dark=True),
+    "Dracula": _gen_theme(
+        "#282a36", "#343746", "#f8f8f2", "#a0a0b0", "#bd93f9",
+        "#44475a", "#21222c", "#2c2e3a", "#3a3d50",
+        "#44475a", "#6272a4", "#8be9fd", is_dark=True),
+    "Monokai": _gen_theme(
+        "#272822", "#3e3d32", "#f8f8f2", "#a0a090", "#a6e22e",
+        "#49483e", "#1e1f1a", "#2e2f28", "#3a3b32",
+        "#49483e", "#66d9ef", "#fd971f", is_dark=True),
+    "Nord": _gen_theme(
+        "#2e3440", "#3b4252", "#d8dee9", "#8090a0", "#88c0d0",
+        "#434c5e", "#272d38", "#323845", "#434c5e",
+        "#4c566a", "#5e81ac", "#81a1c1", is_dark=True),
+    "Solarized Dark": _gen_theme(
+        "#002b36", "#073642", "#839496", "#657b83", "#268bd2",
+        "#2a4a55", "#001e28", "#073642", "#0a3845",
+        "#1a4a5a", "#2aa198", "#6c71c4", is_dark=True),
+    "Solarized Light": _gen_theme(
+        "#fdf6e3", "#eee8d5", "#586e75", "#839496", "#268bd2",
+        "#d3c6a6", "#fdf6e3", "#f5efd7", "#f0e8cc",
+        "#e8dcc0", "#ccd6a0", "#6c71c4"),
+    "Gruvbox Dark": _gen_theme(
+        "#282828", "#3c3836", "#ebdbb2", "#a89984", "#d79921",
+        "#504945", "#1d2021", "#32302f", "#3c3836",
+        "#504945", "#83a598", "#fe8019", is_dark=True),
+    "Gruvbox Light": _gen_theme(
+        "#fbf1c7", "#f2e5bc", "#3c3836", "#7c6f64", "#d79921",
+        "#d5c4a1", "#fbf1c7", "#f2e5bc", "#ebdbb2",
+        "#d5c4a1", "#b8bb26", "#af3a03"),
+    "Forest": _gen_theme(
+        "#1a2418", "#222e20", "#c8d8c0", "#80a070", "#50a850",
+        "#304830", "#141e14", "#1e2a1c", "#2a3828",
+        "#384838", "#508848", "#70c870", is_dark=True),
+    "Ocean": _gen_theme(
+        "#0c1a28", "#142232", "#b0c8e0", "#7090b0", "#3098d0",
+        "#1c3048", "#081420", "#10202e", "#1c3040",
+        "#244058", "#2878a8", "#50b8f0", is_dark=True),
+    "Plum": _gen_theme(
+        "#1e1628", "#281e34", "#d0c0e0", "#9080a8", "#a060c8",
+        "#382850", "#161020", "#201828", "#302240",
+        "#402e58", "#7848a0", "#c080f0", is_dark=True),
+    "Copper": _gen_theme(
+        "#2a2018", "#342820", "#e0d0c0", "#a89080", "#c88040",
+        "#483828", "#201810", "#2e221a", "#3c3028",
+        "#504038", "#a86828", "#e0a050", is_dark=True),
 }
 
 

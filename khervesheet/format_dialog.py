@@ -94,22 +94,38 @@ def _format_preview(raw: str, fmt: str) -> str:
 # ── Line style helpers ──────────────────────────────────────────────
 
 _LINE_STYLES = [
-    ("Solid",       Qt.SolidLine),
-    ("Dashed",      Qt.DashLine),
-    ("Dotted",      Qt.DotLine),
-    ("Dash-Dot",    Qt.DashDotLine),
-    ("Dash-Dot-Dot", Qt.DashDotDotLine),
+    # (display name, Qt pen style, line width)
+    ("Hair",              Qt.SolidLine,      0.5),
+    ("Thin",              Qt.SolidLine,      1.0),
+    ("Medium",            Qt.SolidLine,      2.0),
+    ("Thick",             Qt.SolidLine,      3.0),
+    ("Dashed",            Qt.DashLine,       1.0),
+    ("Dashed Medium",     Qt.DashLine,       2.0),
+    ("Dashed Thick",      Qt.DashLine,       3.0),
+    ("Dotted",            Qt.DotLine,        1.0),
+    ("Dotted Medium",     Qt.DotLine,        2.0),
+    ("Dash-Dot",          Qt.DashDotLine,    1.0),
+    ("Dash-Dot Medium",   Qt.DashDotLine,    2.0),
+    ("Dash-Dot-Dot",      Qt.DashDotDotLine, 1.0),
+    ("Dash-Dot-Dot Medium", Qt.DashDotDotLine, 2.0),
+    ("Double",            Qt.SolidLine,      1.0),  # drawn as two lines
 ]
 
 
-def _line_style_icon(style: int, size: int = 60) -> QIcon:
-    """Create a small icon showing the given line style."""
-    pix = QPixmap(size, 16)
+def _line_style_icon(style: int, width: float = 1.0,
+                     size: int = 80, double: bool = False) -> QIcon:
+    """Create a small icon showing the given line style and width."""
+    pix = QPixmap(size, 20)
     pix.fill(Qt.transparent)
     p = QPainter(pix)
     p.setRenderHint(QPainter.Antialiasing)
-    p.setPen(QPen(QColor("#000000"), 1.5, Qt.PenStyle(style)))
-    p.drawLine(4, 8, size - 4, 8)
+    pen = QPen(QColor("#000000"), width, Qt.PenStyle(style))
+    p.setPen(pen)
+    if double:
+        p.drawLine(4, 7, size - 4, 7)
+        p.drawLine(4, 13, size - 4, 13)
+    else:
+        p.drawLine(4, 10, size - 4, 10)
     p.end()
     return QIcon(pix)
 
@@ -622,12 +638,14 @@ class FormatCellsDialog(QDialog):
         style_grp = QGroupBox("Line style")
         style_lay = QVBoxLayout(style_grp)
         self._line_style_list = QListWidget()
-        self._line_style_list.setMaximumHeight(100)
-        for name, style in _LINE_STYLES:
+        self._line_style_list.setMaximumHeight(180)
+        for name, style, width in _LINE_STYLES:
             item = QListWidgetItem()
             item.setText(name)
-            item.setIcon(_line_style_icon(style))
-            item.setData(Qt.UserRole, style)
+            is_double = (name == "Double")
+            item.setIcon(_line_style_icon(style, width,
+                                          double=is_double))
+            item.setData(Qt.UserRole, (style, width))
             self._line_style_list.addItem(item)
         self._line_style_list.setCurrentRow(0)
         style_lay.addWidget(self._line_style_list)
@@ -696,9 +714,16 @@ class FormatCellsDialog(QDialog):
     def _current_border_spec(self) -> BorderSpec:
         """Build a BorderSpec from current line style/color selections."""
         item = self._line_style_list.currentItem()
-        style = item.data(Qt.UserRole) if item else Qt.SolidLine
+        if item:
+            data = item.data(Qt.UserRole)
+            if isinstance(data, tuple):
+                style, width = data
+            else:
+                style, width = data, 1.0
+        else:
+            style, width = Qt.SolidLine, 1.0
         color = self._brd_color_btn.color()
-        return BorderSpec(style=style, color=color, width=1.0)
+        return BorderSpec(style=style, color=color, width=width)
 
     def _brd_preset_none(self):
         for side in self._border_preview.borders:
@@ -725,9 +750,16 @@ class FormatCellsDialog(QDialog):
         self._border_preview.update()
 
     def _on_line_style_changed(self, row):
-        self._border_preview.set_line_style(
-            self._line_style_list.item(row).data(Qt.UserRole)
-            if row >= 0 else Qt.SolidLine)
+        if row >= 0:
+            data = self._line_style_list.item(row).data(Qt.UserRole)
+            if isinstance(data, tuple):
+                style, width = data
+            else:
+                style, width = data, 1.0
+        else:
+            style, width = Qt.SolidLine, 1.0
+        self._border_preview.set_line_style(style)
+        self._border_preview.set_line_width(width)
 
     def _on_border_color_changed(self, color):
         self._border_preview.set_line_color(color)

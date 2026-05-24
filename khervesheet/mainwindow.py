@@ -306,6 +306,18 @@ class MainWindow(QMainWindow):
 
         # ── Help ─────────────────────────────────────────────────────
         help_menu = mb.addMenu("&Help")
+        # Examples submenu — organized by category.
+        from .examples import EXAMPLES
+        examples_menu = help_menu.addMenu("Examples")
+        cats: dict = {}
+        for name, cat, builder in EXAMPLES:
+            cats.setdefault(cat, []).append((name, builder))
+        for cat in cats:
+            cm = examples_menu.addMenu(cat)
+            for name, builder in cats[cat]:
+                cm.addAction(name,
+                             lambda b=builder: self._load_example(b))
+        help_menu.addSeparator()
         help_menu.addAction("&About", self._show_about)
         help_menu.addAction("GitHub Repository", self._open_github)
 
@@ -648,6 +660,47 @@ class MainWindow(QMainWindow):
         self._undo_stack.clear()
         self._update_title()
         self._status_msg("New workbook created", 3000)
+
+    def _load_example(self, builder):
+        """Create a new workbook from an example builder function."""
+        from PyQt5.QtWidgets import QTableWidgetItem
+        sheets = builder()
+        self._new_workbook()
+        wb = self._workbook
+        # Remove default sheets.
+        while wb.tabs.count() > 0:
+            wb.tabs.removeTab(0)
+        for sheet_name, headers, rows in sheets:
+            s = wb.add_sheet(sheet_name)
+            n_cols = max(len(headers), max(
+                (len(r) for r in rows), default=0)) if rows else len(headers)
+            if n_cols > s.table.columnCount():
+                s.table.setColumnCount(n_cols)
+            s.table.blockSignals(True)
+            # Write header row.
+            for c, h in enumerate(headers):
+                it = QTableWidgetItem(h)
+                font = it.font()
+                font.setBold(True)
+                it.setFont(font)
+                s.table.setItem(0, c, it)
+                s._shadow[(0, c)] = h
+            # Write data rows.
+            for ri, row in enumerate(rows):
+                r = ri + 1
+                for c, val in enumerate(row):
+                    it = QTableWidgetItem(val)
+                    s.table.setItem(r, c, it)
+                    s._shadow[(r, c)] = val
+            s.table.blockSignals(False)
+            # Evaluate formulas.
+            for ri, row in enumerate(rows):
+                r = ri + 1
+                for c, val in enumerate(row):
+                    if val.startswith("="):
+                        s._on_cell_changed(r, c)
+        wb.tabs.setCurrentIndex(0)
+        self._status_msg("Example loaded", 3000)
 
     def _open_file(self):
         path, _ = QFileDialog.getOpenFileName(
