@@ -752,8 +752,14 @@ class SheetWidget(QWidget):
         else:
             self._formula_bar.clear()
         self._formula_bar.blockSignals(False)
-        # Also close any active inline editor without committing.
-        self.table.closePersistentEditor(self.table.currentIndex())
+        # Restore the cell's display text (discard partial formula).
+        if row >= 0 and col >= 0:
+            old_text = self._shadow.get((row, col), "")
+            self.table.blockSignals(True)
+            it = self.table.item(row, col)
+            if it:
+                it.setText(old_text)
+            self.table.blockSignals(False)
         self.table.setFocus()
 
     def _open_insert_function(self):
