@@ -14,9 +14,11 @@ import json
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
-from PyQt5.QtCore import Qt, QRectF, QModelIndex
-from PyQt5.QtGui import QPen, QColor, QPainter
-from PyQt5.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
+from PyQt5.QtCore import Qt, QRect, QRectF, QModelIndex
+from PyQt5.QtGui import QPen, QColor, QPainter, QFontMetrics
+from PyQt5.QtWidgets import (
+    QStyledItemDelegate, QStyleOptionViewItem, QTableWidget,
+)
 
 
 # ── Data classes ────────────────────────────────────────────────────
@@ -193,6 +195,9 @@ class CellFormatDelegate(QStyledItemDelegate):
 
         super().paint(painter, option, index)
 
+        # ── Text overflow into empty right-hand neighbours ────────
+        self._paint_overflow(painter, option, index)
+
         # Draw cell format borders.
         cf = self._formats.get(key)
         if cf is not None:
@@ -205,6 +210,70 @@ class CellFormatDelegate(QStyledItemDelegate):
             painter.setPen(pen)
             painter.drawRect(option.rect.adjusted(1, 1, -1, -1))
             painter.restore()
+
+    def _paint_overflow(self, painter, option, index):
+        """If this cell's text is wider than the column, paint the
+        overflow portion across empty cells to the right."""
+        table = self.parent()
+        if not isinstance(table, QTableWidget):
+            return
+        row, col = index.row(), index.column()
+
+        # Check if wrap-text is enabled — overflow doesn't apply.
+        cf = self._formats.get((row, col))
+        if cf and cf.wrap_text:
+            return
+
+        text = index.data(Qt.DisplayRole)
+        if not text:
+            return
+
+        # Measure text width.
+        font = index.data(Qt.FontRole) or option.font
+        fm = QFontMetrics(font)
+        text_w = fm.horizontalAdvance(text)
+        cell_w = option.rect.width() - 6  # 3px padding each side
+
+        if text_w <= cell_w:
+            return
+
+        # Count how many empty columns to the right we can spill into.
+        total_w = option.rect.width()
+        max_col = table.columnCount()
+        for nc in range(col + 1, max_col):
+            item = table.item(row, nc)
+            if item and item.text():
+                break
+            total_w += table.columnWidth(nc)
+            if total_w >= text_w + 6:
+                break
+
+        if total_w <= option.rect.width():
+            return
+
+        # Paint overflow text with an extended rect.
+        painter.save()
+        overflow_rect = QRect(option.rect)
+        overflow_rect.setWidth(total_w)
+        painter.setClipRect(overflow_rect)
+        # Fill background (use cell bg or white).
+        bg = index.data(Qt.BackgroundRole)
+        if bg:
+            painter.fillRect(overflow_rect, bg)
+        else:
+            painter.fillRect(overflow_rect, QColor("#ffffff"))
+        # Draw text.
+        fg = index.data(Qt.ForegroundRole)
+        if fg:
+            painter.setPen(QPen(fg.color()))
+        else:
+            painter.setPen(QPen(QColor("#000000")))
+        painter.setFont(font)
+        align = int(index.data(Qt.TextAlignmentRole) or
+                    (Qt.AlignLeft | Qt.AlignVCenter))
+        text_rect = overflow_rect.adjusted(3, 0, -3, 0)
+        painter.drawText(text_rect, align, text)
+        painter.restore()
 
     def _draw_borders(self, painter, rect, cf):
         """Draw cell format borders."""
