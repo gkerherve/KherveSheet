@@ -445,11 +445,10 @@ class EmbeddedChart(QWidget):
         pass
 
     def _on_canvas_click(self, event):
-        """Handle double-click: label edit, legend edit, or axis props."""
+        """Handle double-click: label edit or axis properties."""
         if event.dblclick:
-            # Double-click on legend → open legend editor.
+            # Ignore double-click on legend (use right-click menu).
             if self._hit_legend_mpl(event):
-                self._open_legend_editor()
                 return
             if self._try_edit_axis_label(event):
                 return
