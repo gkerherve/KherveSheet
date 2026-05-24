@@ -1053,6 +1053,12 @@ class PlotDetailsDialog(QDialog):
         axis_btn = QPushButton("Axis Properties\u2026")
         axis_btn.clicked.connect(self._open_axis_props)
         footer.addWidget(axis_btn)
+        add_btn = QPushButton("Add Series")
+        add_btn.clicked.connect(self._add_series)
+        footer.addWidget(add_btn)
+        remove_btn = QPushButton("Remove Series")
+        remove_btn.clicked.connect(self._remove_series)
+        footer.addWidget(remove_btn)
         footer.addStretch()
         bb = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Apply
@@ -1118,6 +1124,90 @@ class PlotDetailsDialog(QDialog):
         dlg = AxisPropertiesDialog(self._chart, "Bottom", parent=self)
         if dlg.exec_() == QDialog.Accepted:
             dlg.apply_to_chart(self._chart)
+
+    def _add_series(self):
+        """Add a new series from a column range entered by the user."""
+        chart = self._chart
+        sheet = chart._source_sheet
+        if not sheet:
+            return
+        rng, ok = QInputDialog.getText(
+            self, "Add Series", "Y data range (e.g. C1:C50):")
+        if not ok or not rng.strip():
+            return
+        parsed = self._parse_range(rng)
+        if parsed is None:
+            return
+        col, r1, r2 = parsed
+        label = self._col_letter(col)
+        y_all = sheet.numeric_column(col)
+        # X data: use chart's existing X column or row index.
+        if chart._x_col is not None:
+            x_all = sheet.numeric_column(chart._x_col)
+        else:
+            x_all = np.arange(sheet.row_count(), dtype=float)
+        x_slice = x_all[r1:r2 + 1]
+        y_slice = y_all[r1:r2 + 1]
+        mask = ~(np.isnan(x_slice) | np.isnan(y_slice))
+        x, y = x_slice[mask], y_slice[mask]
+        if len(x) == 0:
+            return
+        chart.add_series(x, y, label, "Line", y_col=col)
+        # Update the series list in the dialog.
+        from PyQt5.QtWidgets import QListWidgetItem
+        item = QListWidgetItem(label)
+        item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+        item.setCheckState(Qt.Checked)
+        self._series_list.addItem(item)
+        # Update fill target combo.
+        self.fill_target.addItem(label)
+        self._series_list.setCurrentRow(self._series_list.count() - 1)
+
+    def _remove_series(self):
+        """Remove the currently selected series."""
+        chart = self._chart
+        row = self._series_list.currentRow()
+        if row < 0 or row >= len(chart._series):
+            return
+        if len(chart._series) <= 1:
+            return  # keep at least one series
+        # Remove artist from axes.
+        s = chart._series[row]
+        artist = s.get("artist")
+        if artist is not None:
+            try:
+                artist.remove()
+            except Exception:
+                if hasattr(artist, '__iter__'):
+                    for child in artist:
+                        try:
+                            child.remove()
+                        except Exception:
+                            pass
+        # Remove fill artists for this series.
+        chart._remove_fill(row)
+        # Update fill indices for remaining series.
+        chart._fill_artists = [
+            (i if i < row else i - 1, a)
+            for i, a in chart._fill_artists]
+        # Remove from data structures.
+        chart._series.pop(row)
+        if row < len(chart._y_cols):
+            chart._y_cols.pop(row)
+        # Update dialog list.
+        self._series_list.takeItem(row)
+        # Refresh fill target combo.
+        self.fill_target.clear()
+        for s in chart._series:
+            self.fill_target.addItem(s["label"])
+        # Refresh legend.
+        leg = chart._ax.legend(loc="best", framealpha=0.8, fontsize=8)
+        if leg:
+            leg.set_draggable(True)
+        chart._canvas.draw_idle()
+        if self._series_list.count():
+            self._series_list.setCurrentRow(
+                min(row, self._series_list.count() - 1))
 
     @staticmethod
     def _col_letter(col_idx):
@@ -1409,37 +1499,52 @@ class PlotDetailsDialog(QDialog):
 
     def _apply_range_edits(self, chart, row, sheet):
         """Re-read data if the user changed X or Y range strings."""
-        # Check if X range changed.
+        # Parse ranges — use row bounds from the range string.
         x_parsed = self._parse_range(self.x_range_edit.text())
-        if x_parsed is not None:
-            new_x_col, xr1, xr2 = x_parsed
-            if new_x_col != chart._x_col:
-                chart._x_col = new_x_col
-        # Check if Y range changed.
         y_parsed = self._parse_range(self.y_range_edit.text())
-        if y_parsed is not None and row < len(chart._y_cols):
-            new_y_col, yr1, yr2 = y_parsed
-            chart._y_cols[row] = new_y_col
-        # Re-read data from sheet for this series.
-        if chart._x_col is not None:
-            x_data = sheet.numeric_column(chart._x_col)
+
+        if x_parsed is not None:
+            x_col, xr1, xr2 = x_parsed
+            chart._x_col = x_col
         else:
-            x_data = np.arange(sheet.row_count(), dtype=float)
-        if row < len(chart._y_cols):
-            y_data = sheet.numeric_column(chart._y_cols[row])
-            mask = ~(np.isnan(x_data) | np.isnan(y_data))
-            x = x_data[mask]
-            y = y_data[mask]
-            s = chart._series[row]
-            s["x"], s["y"] = x, y
-            artist = s.get("artist")
-            if artist is not None:
-                if hasattr(artist, 'set_data'):
-                    artist.set_data(x, y)
-                elif hasattr(artist, 'set_offsets'):
-                    artist.set_offsets(np.column_stack([x, y]))
-            chart._ax.relim()
-            chart._ax.autoscale_view()
+            x_col = chart._x_col
+            xr1, xr2 = 0, sheet.row_count() - 1
+
+        if y_parsed is not None and row < len(chart._y_cols):
+            y_col, yr1, yr2 = y_parsed
+            chart._y_cols[row] = y_col
+        elif row < len(chart._y_cols):
+            y_col = chart._y_cols[row]
+            yr1, yr2 = 0, sheet.row_count() - 1
+        else:
+            return
+
+        # Use the intersection of X and Y row ranges.
+        r1 = max(xr1, yr1)
+        r2 = min(xr2, yr2)
+        if r1 > r2:
+            return
+
+        # Read data for the specific row range.
+        x_all = sheet.numeric_column(x_col) if x_col is not None \
+            else np.arange(sheet.row_count(), dtype=float)
+        y_all = sheet.numeric_column(y_col)
+        x_slice = x_all[r1:r2 + 1]
+        y_slice = y_all[r1:r2 + 1]
+        mask = ~(np.isnan(x_slice) | np.isnan(y_slice))
+        x = x_slice[mask]
+        y = y_slice[mask]
+
+        s = chart._series[row]
+        s["x"], s["y"] = x, y
+        artist = s.get("artist")
+        if artist is not None:
+            if hasattr(artist, 'set_data'):
+                artist.set_data(x, y)
+            elif hasattr(artist, 'set_offsets'):
+                artist.set_offsets(np.column_stack([x, y]))
+        chart._ax.relim()
+        chart._ax.autoscale_view()
 
 
 # ── Legend Editor Dialog ──────────────────────────────────────────
