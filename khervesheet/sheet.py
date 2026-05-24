@@ -1242,10 +1242,10 @@ class SheetWidget(QWidget):
             # 2. Expand whole-column functions: max(A), min(B), etc.
             expr = self._expand_column_functions(expr)
 
-            # 3. Replace cell refs like A1, B5 with numeric values.
+            # 3. Replace cell refs like A1, $B$5, A$1, $A1 with values.
             def _cell_ref(m):
-                letters = m.group(1)
-                rnum = int(m.group(2)) - 1
+                letters = m.group(2)
+                rnum = int(m.group(4)) - 1
                 c = letter_to_col_index(letters)
                 it = self.table.item(rnum, c)
                 if it and it.text():
@@ -1255,7 +1255,8 @@ class SheetWidget(QWidget):
                         return "0"
                 return "0"
 
-            # Match cell refs: 1-3 letters + digits (A1, AB12, etc.)
+            # Match cell refs: optional $ + 1-3 letters + optional $ +
+            # digits (A1, $A1, A$1, $A$1, AB12, etc.)
             # but not known functions like log10, exp2.
             _SKIP = {"log", "exp", "sin", "cos", "tan", "sqrt",
                      "abs", "int", "sum", "min", "max", "len",
@@ -1282,12 +1283,12 @@ class SheetWidget(QWidget):
                      "LN", "PRODUCT"}
 
             def _safe_cell_ref(m):
-                name = m.group(1)
+                name = m.group(2)
                 if name.lower() in {s.lower() for s in _SKIP}:
                     return m.group(0)
                 return _cell_ref(m)
 
-            expr = re.sub(r'\b([A-Za-z]{1,3})(\d+)\b',
+            expr = re.sub(r'(\$?)([A-Za-z]{1,3})(\$?)(\d+)\b',
                           _safe_cell_ref, expr)
 
             # 4. Replace ^ with ** for exponentiation.
@@ -1342,7 +1343,8 @@ class SheetWidget(QWidget):
 
         pattern = (r'(SUM|AVERAGE|AVG|MEAN|MIN|MAX|COUNT|STDEV)'
                    r'\s*\(\s*'
-                   r'([A-Z]+)(\d+)\s*:\s*([A-Z]+)(\d+)\s*\)')
+                   r'\$?([A-Z]+)\$?(\d+)\s*:\s*'
+                   r'\$?([A-Z]+)\$?(\d+)\s*\)')
         return re.sub(pattern, _expand_range, expr,
                       flags=re.IGNORECASE)
 
@@ -1907,6 +1909,39 @@ class SheetWidget(QWidget):
         self._update_ref_highlights(new_text)
         return True
 
+    def _toggle_absolute_ref(self, editor):
+        """Cycle cell reference under cursor through A1→$A$1→A$1→$A1.
+
+        Pressing F4 in the formula bar toggles the absolute/relative
+        state of the nearest cell reference, matching Excel behaviour.
+        """
+        import re
+        text = editor.text()
+        cp = editor.cursorPosition()
+        # Find all cell refs (with optional $ markers).
+        pat = re.compile(r'(\$?)([A-Za-z]{1,3})(\$?)(\d{1,7})')
+        for m in pat.finditer(text):
+            if m.start() <= cp <= m.end():
+                dc, letters, dr, digits = (
+                    m.group(1), m.group(2), m.group(3), m.group(4))
+                # Cycle: A1 → $A$1 → A$1 → $A1 → A1
+                if not dc and not dr:
+                    new = f"${letters}${digits}"
+                elif dc and dr:
+                    new = f"{letters}${digits}"
+                elif not dc and dr:
+                    new = f"${letters}{digits}"
+                else:
+                    new = f"{letters}{digits}"
+                new_text = text[:m.start()] + new + text[m.end():]
+                editor.blockSignals(True)
+                editor.setText(new_text)
+                # Place cursor at end of the replaced reference.
+                editor.setCursorPosition(
+                    m.start() + len(new))
+                editor.blockSignals(False)
+                break
+
     def eventFilter(self, obj, event):
         # ── Formula bar focus-in: show highlights for existing formula ──
         if obj is self._formula_bar and event.type() == QEvent.FocusIn:
@@ -1924,6 +1959,9 @@ class SheetWidget(QWidget):
                         return True
             elif key == Qt.Key_Escape:
                 self._exit_formula_mode()
+            elif key == Qt.Key_F4:
+                self._toggle_absolute_ref(self._formula_bar)
+                return True
             else:
                 # Any non-arrow key breaks arrow nav mode.
                 self._arrow_nav_active = False
