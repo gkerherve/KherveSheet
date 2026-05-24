@@ -139,6 +139,11 @@ class MainWindow(QMainWindow):
         view_menu.addAction("Zoom Out", self._zoom_out, "Ctrl+-")
         view_menu.addAction("Reset Zoom", self._zoom_reset, "Ctrl+0")
         view_menu.addSeparator()
+        bf_act = view_menu.addAction("Bring Forward", self._bring_forward)
+        bf_act.setIcon(icons.themed_icon("mdi.arrange-bring-forward"))
+        sb_act = view_menu.addAction("Send Backward", self._send_backward)
+        sb_act.setIcon(icons.themed_icon("mdi.arrange-send-backward"))
+        view_menu.addSeparator()
         theme_menu = view_menu.addMenu("Theme")
         from .app import THEMES
         for name in THEMES:
@@ -1755,6 +1760,30 @@ class MainWindow(QMainWindow):
         font = sheet.table.font()
         font.setPointSizeF(9 * factor)
         sheet.table.setFont(font)
+
+    # ── Bring forward / send backward ────────────────────────────────
+    def _selected_overlay(self):
+        """Return the currently selected chart or image widget, if any."""
+        s = self._active_sheet()
+        if not s:
+            return None
+        for chart in getattr(s, '_charts', []):
+            if getattr(chart, '_selected', False):
+                return chart
+        for img in getattr(s, '_images', []):
+            if getattr(img, '_selected', False):
+                return img
+        return None
+
+    def _bring_forward(self):
+        w = self._selected_overlay()
+        if w:
+            w.raise_()
+
+    def _send_backward(self):
+        w = self._selected_overlay()
+        if w:
+            w.lower()
 
     # ── Insert operations ────────────────────────────────────────────
     def _insert_row_above(self):
