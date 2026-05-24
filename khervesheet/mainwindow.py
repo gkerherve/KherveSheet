@@ -2575,9 +2575,16 @@ class MainWindow(QMainWindow):
         sel = s.table.selectedRanges()
         if not sel:
             return
+        from .sheet import SetNumberFormatCmd
+        changes = []
         for rng in sel:
             for c in range(rng.leftColumn(), rng.rightColumn() + 1):
+                old_fmt = s._col_formats.get(c)
                 s._col_formats[c] = fmt
+                changes.append((c, old_fmt, fmt))
+        if changes and self._undo_stack:
+            self._undo_stack.push(
+                SetNumberFormatCmd(s, changes, "Number Format"))
 
     def _format_col_width(self):
         s = self._active_sheet()
@@ -2749,7 +2756,7 @@ class MainWindow(QMainWindow):
         finally:
             s.table.blockSignals(False)
 
-        self._finish_format_undo(s, keys, old)
+        self._finish_format_undo(s, old, "Table Style")
         s.table.viewport().update()
 
     # ── Merge / Wrap ──────────────────────────────────────────────────
@@ -2785,7 +2792,7 @@ class MainWindow(QMainWindow):
                 flags &= ~Qt.TextWordWrap
             it.setFlags(flags)
             s.table.resizeRowToContents(r)
-        self._finish_format_undo(s, keys, old)
+        self._finish_format_undo(s, old, "Wrap Text")
 
     # ── Format Cells dialog ────────────────────────────────────────
     def _open_format_cells_dialog(self):

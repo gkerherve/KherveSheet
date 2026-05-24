@@ -267,6 +267,317 @@ def _snapshot_format(cf):
     return new
 
 
+class InsertRowCmd(QUndoCommand):
+    """Undo/redo for inserting a row."""
+
+    def __init__(self, sheet, row):
+        super().__init__(f"Insert row {row + 1}")
+        self.sheet = sheet
+        self.row = row
+
+    def undo(self):
+        self.sheet.table.blockSignals(True)
+        self.sheet.table.removeRow(self.row)
+        self.sheet.table.blockSignals(False)
+        self.sheet._refresh_headers()
+
+    def redo(self):
+        if not getattr(self, "_first_redo_done", False):
+            self._first_redo_done = True
+            return
+        self.sheet.table.blockSignals(True)
+        self.sheet.table.insertRow(self.row)
+        self.sheet.table.blockSignals(False)
+        self.sheet._refresh_headers()
+
+
+class DeleteRowsCmd(QUndoCommand):
+    """Undo/redo for deleting one or more rows."""
+
+    def __init__(self, sheet, rows_data, label="Delete rows"):
+        super().__init__(label)
+        self.sheet = sheet
+        # rows_data: sorted list of (row_index, [(col, text, formula), ...])
+        self.rows_data = rows_data
+
+    def undo(self):
+        self.sheet.table.blockSignals(True)
+        for row_idx, cells in self.rows_data:
+            self.sheet.table.insertRow(row_idx)
+            for col, text, formula in cells:
+                it = QTableWidgetItem(text)
+                self.sheet.table.setItem(row_idx, col, it)
+                self.sheet._shadow[(row_idx, col)] = text
+                if formula:
+                    self.sheet._cell_formulas[(row_idx, col)] = formula
+        self.sheet.table.blockSignals(False)
+        self.sheet._refresh_headers()
+
+    def redo(self):
+        if not getattr(self, "_first_redo_done", False):
+            self._first_redo_done = True
+            return
+        self.sheet.table.blockSignals(True)
+        for row_idx, _cells in reversed(self.rows_data):
+            self.sheet.table.removeRow(row_idx)
+        self.sheet.table.blockSignals(False)
+        self.sheet._refresh_headers()
+
+
+class InsertColumnCmd(QUndoCommand):
+    """Undo/redo for inserting a column."""
+
+    def __init__(self, sheet, col, old_designations):
+        super().__init__(f"Insert column {col_index_to_letter(col)}")
+        self.sheet = sheet
+        self.col = col
+        self.old_desigs = dict(old_designations)
+
+    def undo(self):
+        self.sheet.table.blockSignals(True)
+        self.sheet.table.removeColumn(self.col)
+        self.sheet._col_designations = dict(self.old_desigs)
+        self.sheet.table.blockSignals(False)
+        self.sheet._refresh_headers()
+
+    def redo(self):
+        if not getattr(self, "_first_redo_done", False):
+            self._first_redo_done = True
+            return
+        self.sheet.table.blockSignals(True)
+        self.sheet.table.insertColumn(self.col)
+        # Shift designations.
+        new_desigs = {}
+        for c, d in self.old_desigs.items():
+            if c >= self.col:
+                new_desigs[c + 1] = d
+            else:
+                new_desigs[c] = d
+        self.sheet._col_designations = new_desigs
+        self.sheet.table.blockSignals(False)
+        self.sheet._refresh_headers()
+
+
+class DeleteColumnCmd(QUndoCommand):
+    """Undo/redo for deleting a column."""
+
+    def __init__(self, sheet, col, col_data, old_designations):
+        super().__init__(
+            f"Delete column {col_index_to_letter(col)}")
+        self.sheet = sheet
+        self.col = col
+        # col_data: [(row, text, formula), ...]
+        self.col_data = col_data
+        self.old_desigs = dict(old_designations)
+
+    def undo(self):
+        self.sheet.table.blockSignals(True)
+        self.sheet.table.insertColumn(self.col)
+        for row, text, formula in self.col_data:
+            it = QTableWidgetItem(text)
+            self.sheet.table.setItem(row, self.col, it)
+            self.sheet._shadow[(row, self.col)] = text
+            if formula:
+                self.sheet._cell_formulas[(row, self.col)] = formula
+        self.sheet._col_designations = dict(self.old_desigs)
+        self.sheet.table.blockSignals(False)
+        self.sheet._refresh_headers()
+
+    def redo(self):
+        if not getattr(self, "_first_redo_done", False):
+            self._first_redo_done = True
+            return
+        self.sheet.table.blockSignals(True)
+        self.sheet.table.removeColumn(self.col)
+        # Shift designations.
+        new_desigs = {}
+        for c, d in self.old_desigs.items():
+            if c == self.col:
+                continue
+            if c > self.col:
+                new_desigs[c - 1] = d
+            else:
+                new_desigs[c] = d
+        self.sheet._col_designations = new_desigs
+        self.sheet.table.blockSignals(False)
+        self.sheet._refresh_headers()
+
+
+class SortColumnCmd(QUndoCommand):
+    """Undo/redo for sorting by a column."""
+
+    def __init__(self, sheet, old_data, label="Sort"):
+        super().__init__(label)
+        self.sheet = sheet
+        # old_data: [(row, [(col, text, formula), ...]), ...]
+        self.old_data = old_data
+
+    def undo(self):
+        self._restore(self.old_data)
+
+    def redo(self):
+        if not getattr(self, "_first_redo_done", False):
+            self._first_redo_done = True
+            # Snapshot new state for redo.
+            self.new_data = self._snapshot()
+            return
+        self._restore(self.new_data)
+
+    def _snapshot(self):
+        s = self.sheet
+        data = []
+        for r in range(s.table.rowCount()):
+            cells = []
+            for c in range(s.table.columnCount()):
+                it = s.table.item(r, c)
+                text = it.text() if it else ""
+                formula = s._cell_formulas.get((r, c))
+                cells.append((c, text, formula))
+            data.append((r, cells))
+        return data
+
+    def _restore(self, data):
+        s = self.sheet
+        s.table.blockSignals(True)
+        s._cell_formulas.clear()
+        s._shadow.clear()
+        for r, cells in data:
+            for c, text, formula in cells:
+                it = s.table.item(r, c)
+                if it is None:
+                    it = QTableWidgetItem(text)
+                    s.table.setItem(r, c, it)
+                else:
+                    it.setText(text)
+                s._shadow[(r, c)] = text
+                if formula:
+                    s._cell_formulas[(r, c)] = formula
+        s.table.blockSignals(False)
+
+
+class MergeCellsCmd(QUndoCommand):
+    """Undo/redo for merging cells."""
+
+    def __init__(self, sheet, r, c, rs, cs, cleared_cells):
+        super().__init__("Merge cells")
+        self.sheet = sheet
+        self.r, self.c, self.rs, self.cs = r, c, rs, cs
+        # cleared_cells: [(row, col, old_text), ...]
+        self.cleared = cleared_cells
+
+    def undo(self):
+        self.sheet.table.blockSignals(True)
+        self.sheet.table.setSpan(self.r, self.c, 1, 1)
+        # Remove from merged_ranges.
+        self.sheet._merged_ranges = [
+            m for m in self.sheet._merged_ranges
+            if m != (self.r, self.c, self.rs, self.cs)]
+        # Restore cleared cells.
+        for row, col, text in self.cleared:
+            it = self.sheet.table.item(row, col)
+            if it is None:
+                it = QTableWidgetItem(text)
+                self.sheet.table.setItem(row, col, it)
+            else:
+                it.setText(text)
+            self.sheet._shadow[(row, col)] = text
+        self.sheet.table.blockSignals(False)
+
+    def redo(self):
+        if not getattr(self, "_first_redo_done", False):
+            self._first_redo_done = True
+            return
+        self.sheet.table.blockSignals(True)
+        for row, col, _text in self.cleared:
+            it = self.sheet.table.item(row, col)
+            if it:
+                it.setText("")
+            self.sheet._shadow[(row, col)] = ""
+        self.sheet.table.setSpan(self.r, self.c, self.rs, self.cs)
+        self.sheet._merged_ranges.append(
+            (self.r, self.c, self.rs, self.cs))
+        self.sheet.table.blockSignals(False)
+
+
+class UnmergeCellsCmd(QUndoCommand):
+    """Undo/redo for unmerging cells."""
+
+    def __init__(self, sheet, unmerged):
+        super().__init__("Unmerge cells")
+        self.sheet = sheet
+        # unmerged: [(r, c, rs, cs), ...]
+        self.unmerged = unmerged
+
+    def undo(self):
+        self.sheet.table.blockSignals(True)
+        for r, c, rs, cs in self.unmerged:
+            self.sheet.table.setSpan(r, c, rs, cs)
+            self.sheet._merged_ranges.append((r, c, rs, cs))
+        self.sheet.table.blockSignals(False)
+
+    def redo(self):
+        if not getattr(self, "_first_redo_done", False):
+            self._first_redo_done = True
+            return
+        self.sheet.table.blockSignals(True)
+        for r, c, rs, cs in self.unmerged:
+            self.sheet.table.setSpan(r, c, 1, 1)
+            self.sheet._merged_ranges = [
+                m for m in self.sheet._merged_ranges
+                if m != (r, c, rs, cs)]
+        self.sheet.table.blockSignals(False)
+
+
+class SetDesignationCmd(QUndoCommand):
+    """Undo/redo for column designation changes."""
+
+    def __init__(self, sheet, col, old_desig, new_desig):
+        super().__init__(
+            f"Set {col_index_to_letter(col)} = {new_desig}")
+        self.sheet = sheet
+        self.col = col
+        self.old_desig = old_desig
+        self.new_desig = new_desig
+
+    def undo(self):
+        if self.old_desig is None:
+            self.sheet._col_designations.pop(self.col, None)
+        else:
+            self.sheet._col_designations[self.col] = self.old_desig
+        self.sheet._refresh_headers()
+
+    def redo(self):
+        if not getattr(self, "_first_redo_done", False):
+            self._first_redo_done = True
+            return
+        self.sheet._col_designations[self.col] = self.new_desig
+        self.sheet._refresh_headers()
+
+
+class SetNumberFormatCmd(QUndoCommand):
+    """Undo/redo for column number format changes."""
+
+    def __init__(self, sheet, changes, label="Number Format"):
+        super().__init__(label)
+        self.sheet = sheet
+        # changes: [(col, old_fmt, new_fmt), ...]
+        self.changes = changes
+
+    def undo(self):
+        for col, old_fmt, _new_fmt in self.changes:
+            if old_fmt:
+                self.sheet._col_formats[col] = old_fmt
+            else:
+                self.sheet._col_formats.pop(col, None)
+
+    def redo(self):
+        if not getattr(self, "_first_redo_done", False):
+            self._first_redo_done = True
+            return
+        for col, _old_fmt, new_fmt in self.changes:
+            self.sheet._col_formats[col] = new_fmt
+
+
 def _format_number(value, decimals=3):
     """Format a numeric result for cell display.
 
@@ -450,8 +761,12 @@ class SheetWidget(QWidget):
         return np.array(vals)
 
     def set_designation(self, col: int, desig: str):
+        old_desig = self._col_designations.get(col)
         self._col_designations[col] = desig
         self._refresh_headers()
+        if self._undo_stack:
+            self._undo_stack.push(
+                SetDesignationCmd(self, col, old_desig, desig))
 
     def get_designation(self, col: int) -> str:
         return self._col_designations.get(col, "Y" if col > 0 else "X")
@@ -481,15 +796,21 @@ class SheetWidget(QWidget):
         cs = rng.columnCount()
         if rs <= 1 and cs <= 1:
             return
-        # Keep top-left value, clear rest.
+        # Keep top-left value, clear rest — track for undo.
+        cleared = []
         for mr in range(r, r + rs):
             for mc in range(c, c + cs):
                 if (mr, mc) != (r, c):
                     it = self.table.item(mr, mc)
+                    old_text = it.text() if it else ""
                     if it:
                         it.setText("")
+                    cleared.append((mr, mc, old_text))
         self.table.setSpan(r, c, rs, cs)
         self._merged_ranges.append((r, c, rs, cs))
+        if self._undo_stack:
+            self._undo_stack.push(
+                MergeCellsCmd(self, r, c, rs, cs, cleared))
 
     def unmerge_selection(self):
         """Unmerge any merged cells in the selection."""
@@ -498,13 +819,17 @@ class SheetWidget(QWidget):
             return
         rng = sel[0]
         keep = []
+        unmerged = []
         for (mr, mc, rs, cs) in self._merged_ranges:
             if (rng.topRow() <= mr <= rng.bottomRow() and
                     rng.leftColumn() <= mc <= rng.rightColumn()):
                 self.table.setSpan(mr, mc, 1, 1)
+                unmerged.append((mr, mc, rs, cs))
             else:
                 keep.append((mr, mc, rs, cs))
         self._merged_ranges = keep
+        if unmerged and self._undo_stack:
+            self._undo_stack.push(UnmergeCellsCmd(self, unmerged))
 
     def _apply_cell_number_format(self, text: str, row: int,
                                    col: int) -> str:
@@ -1739,6 +2064,8 @@ class SheetWidget(QWidget):
             row = 0
         self.table.insertRow(row)
         self._refresh_headers()
+        if self._undo_stack:
+            self._undo_stack.push(InsertRowCmd(self, row))
 
     def _insert_row_below(self):
         row = self.table.currentRow()
@@ -1746,13 +2073,27 @@ class SheetWidget(QWidget):
             row = self.row_count() - 1
         self.table.insertRow(row + 1)
         self._refresh_headers()
+        if self._undo_stack:
+            self._undo_stack.push(InsertRowCmd(self, row + 1))
 
     def _delete_selected_rows(self):
         rows = sorted(set(idx.row() for idx in self.table.selectedIndexes()),
                       reverse=True)
+        # Snapshot row data for undo (ascending order for restore).
+        rows_data = []
+        for r in sorted(rows):
+            cells = []
+            for c in range(self.table.columnCount()):
+                it = self.table.item(r, c)
+                text = it.text() if it else ""
+                formula = self._cell_formulas.get((r, c))
+                cells.append((c, text, formula))
+            rows_data.append((r, cells))
         for r in rows:
             self.table.removeRow(r)
         self._refresh_headers()
+        if rows_data and self._undo_stack:
+            self._undo_stack.push(DeleteRowsCmd(self, rows_data))
 
     def _add_10_rows(self):
         cur = self.row_count()
@@ -1762,24 +2103,36 @@ class SheetWidget(QWidget):
         self._refresh_headers()
 
     def _insert_column(self, col: int):
+        old_desigs = dict(self._col_designations)
         self.table.insertColumn(col)
         # Shift designations
         new_desigs = {}
-        for c, d in self._col_designations.items():
+        for c, d in old_desigs.items():
             if c >= col:
                 new_desigs[c + 1] = d
             else:
                 new_desigs[c] = d
         self._col_designations = new_desigs
         self._refresh_headers()
+        if self._undo_stack:
+            self._undo_stack.push(
+                InsertColumnCmd(self, col, old_desigs))
 
     def _delete_column(self, col: int):
         if self.column_count() <= 1:
             return
+        # Snapshot column data for undo.
+        col_data = []
+        for r in range(self.table.rowCount()):
+            it = self.table.item(r, col)
+            text = it.text() if it else ""
+            formula = self._cell_formulas.get((r, col))
+            col_data.append((r, text, formula))
+        old_desigs = dict(self._col_designations)
         self.table.removeColumn(col)
         # Shift designations
         new_desigs = {}
-        for c, d in self._col_designations.items():
+        for c, d in old_desigs.items():
             if c == col:
                 continue
             if c > col:
@@ -1788,6 +2141,9 @@ class SheetWidget(QWidget):
                 new_desigs[c] = d
         self._col_designations = new_desigs
         self._refresh_headers()
+        if self._undo_stack:
+            self._undo_stack.push(
+                DeleteColumnCmd(self, col, col_data, old_desigs))
 
     def _set_column_width(self, col: int):
         cur = self.table.columnWidth(col)
@@ -1797,7 +2153,19 @@ class SheetWidget(QWidget):
             self.table.setColumnWidth(col, w)
 
     def _sort_column(self, col: int, order):
+        # Snapshot all data for undo.
+        old_data = []
+        for r in range(self.table.rowCount()):
+            cells = []
+            for c in range(self.table.columnCount()):
+                it = self.table.item(r, c)
+                text = it.text() if it else ""
+                formula = self._cell_formulas.get((r, c))
+                cells.append((c, text, formula))
+            old_data.append((r, cells))
         self.table.sortItems(col, order)
+        if self._undo_stack:
+            self._undo_stack.push(SortColumnCmd(self, old_data, "Sort"))
 
     # ── Drag-fill (Excel-style auto-fill) ────────────────────────────
     _HANDLE_PX = 6
