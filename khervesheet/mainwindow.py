@@ -812,11 +812,13 @@ class MainWindow(QMainWindow):
                             ig.attrs['brightness'] = d['brightness']
                         if not d.get('keep_aspect_ratio', True):
                             ig.attrs['keep_aspect_ratio'] = False
-                        # Store PNG data as raw bytes.
+                        # Store PNG data as raw bytes (uint8 array
+                        # to avoid VLEN string null-byte issues).
                         import base64
+                        raw = base64.b64decode(d['data'])
                         ig.create_dataset(
                             "png_data",
-                            data=base64.b64decode(d['data']))
+                            data=np.frombuffer(raw, dtype=np.uint8))
 
             self._status_msg(f"Saved to {path}", 5000)
         except Exception as e:
