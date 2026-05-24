@@ -2283,32 +2283,38 @@ class MainWindow(QMainWindow):
             return
 
         # ── Standard 1D plot types ───────────────────────────────
-        # Find X and Y columns
-        x_col = None
+        # Separate selected columns into Y columns (to plot) and
+        # determine each Y column's X source: the nearest X-designated
+        # column to its left (scanning all sheet columns, not just the
+        # selection).
         y_cols = []
         for c in cols:
-            if sheet.get_designation(c) == "X":
-                x_col = c
-            else:
+            if sheet.get_designation(c) != "X":
                 y_cols.append(c)
 
-        # If no X designated, use first column as X
-        if x_col is None and len(cols) >= 2:
-            x_col = cols[0]
+        # If no Y columns found (all selected are X), treat all but
+        # the first as Y.
+        if not y_cols and len(cols) >= 2:
             y_cols = cols[1:]
-        elif x_col is None:
-            # Single column: plot against row index
-            y_cols = cols
 
-        # Collect data
-        if x_col is not None:
-            x_data = sheet.numeric_column(x_col)
-        else:
-            x_data = np.arange(sheet.row_count(), dtype=float)
+        # Single column with no X to its left: plot against row index.
+        def _find_x_for(y_col):
+            """Return the nearest X-designated column to the left of
+            *y_col*, or None if there is none."""
+            for c in range(y_col - 1, -1, -1):
+                if sheet.get_designation(c) == "X":
+                    return c
+            return None
 
         # Build one chart with all Y columns as series
         first_chart = None
         for yc in y_cols:
+            x_col = _find_x_for(yc)
+            if x_col is not None:
+                x_data = sheet.numeric_column(x_col)
+            else:
+                x_data = np.arange(sheet.row_count(), dtype=float)
+
             y_data = sheet.numeric_column(yc)
             label = col_index_to_letter(yc)
 
@@ -2334,7 +2340,7 @@ class MainWindow(QMainWindow):
                 first_chart = chart
             else:
                 first_chart.add_series(x, y, label, plot_type,
-                                       y_col=yc)
+                                       x_col=x_col, y_col=yc)
 
         self._status_msg(
             f"Created {plot_type} chart", 3000)

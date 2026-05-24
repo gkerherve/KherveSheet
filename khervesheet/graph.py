@@ -96,7 +96,7 @@ class EmbeddedChart(QWidget):
         self._canvas.mpl_connect("button_press_event", self._on_canvas_click)
 
         # Add the initial series.
-        self.add_series(x, y, label, plot_type, y_col=y_col)
+        self.add_series(x, y, label, plot_type, x_col=x_col, y_col=y_col)
 
         try:
             self._figure.set_layout_engine("tight")
@@ -116,13 +116,15 @@ class EmbeddedChart(QWidget):
         self.raise_()
 
     # ── Series management ───────────────────────────────────────────
-    def add_series(self, x, y, label, plot_type="Line", y_col=None):
+    def add_series(self, x, y, label, plot_type="Line",
+                   x_col=None, y_col=None):
         ax = self._ax
         artist = self._plot_one(ax, x, y, label, plot_type)
 
         self._series.append({
             "x": x, "y": y, "label": label,
             "plot_type": plot_type, "artist": artist,
+            "x_col": x_col,
         })
         if y_col is not None:
             self._y_cols.append(y_col)
@@ -420,19 +422,24 @@ class EmbeddedChart(QWidget):
         column changes on the sheet."""
         if not self._source_sheet:
             return
-        # Check if this column is one we care about.
-        relevant = (col == self._x_col) or (col in self._y_cols)
+        # Check if this column is relevant (any series' X or Y col).
+        x_cols = set()
+        for s in self._series:
+            xc = s.get("x_col", self._x_col)
+            if xc is not None:
+                x_cols.add(xc)
+        relevant = (col in x_cols) or (col in self._y_cols)
         if not relevant:
             return
         sheet = self._source_sheet
-        # Re-read X data (full column, sliced per-series below).
-        if self._x_col is not None:
-            x_full = sheet.numeric_column(self._x_col)
-        else:
-            x_full = np.arange(sheet.row_count(), dtype=float)
-        # Update each series respecting row ranges.
+        # Update each series respecting per-series X column.
         for i, (s, yc) in enumerate(
                 zip(self._series, self._y_cols)):
+            xc = s.get("x_col", self._x_col)
+            if xc is not None:
+                x_full = sheet.numeric_column(xc)
+            else:
+                x_full = np.arange(sheet.row_count(), dtype=float)
             y_full = sheet.numeric_column(yc)
             # Apply row range bounds if set.
             x_r0 = s.get("x_row_start", 0)
