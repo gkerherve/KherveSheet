@@ -1499,3 +1499,15 @@ def image_icon(size: int = 28) -> QIcon:
             QPointF(m + (r - m) * 0.6, m + (r - m) * 0.55),
             QPointF(r, r)]))
     return _fmt_icon(size, _draw)
+
+
+def fx_icon(size: int = 28) -> QIcon:
+    """f(x) icon for the function insertion toolbar button."""
+    def _draw(p, s):
+        f = QFont("Segoe UI", int(s * 0.38))
+        f.setItalic(True)
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QPen(QColor("#3a78b4"), max(1.0, s / 18)))
+        p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "f(x)")
+    return _fmt_icon(size, _draw)

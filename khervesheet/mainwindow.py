@@ -507,6 +507,24 @@ class MainWindow(QMainWindow):
         self._symbol_btn.setMenu(sym_menu)
         plot_bar.addWidget(self._symbol_btn)
 
+        # ── f(x) Function insertion button ──────────────────────────
+        self._fx_toolbar_btn = QToolButton()
+        self._fx_toolbar_btn.setIcon(icons.fx_icon(28))
+        self._fx_toolbar_btn.setToolTip("Insert Function")
+        self._fx_toolbar_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        self._fx_toolbar_btn.clicked.connect(
+            self._open_insert_function_dialog)
+        fx_menu = QMenu(self._fx_toolbar_btn)
+        from .formulas import FUNCTION_CATEGORIES, CATEGORY_ORDER
+        for cat in CATEGORY_ORDER:
+            funcs = FUNCTION_CATEGORIES.get(cat, [])
+            sub = fx_menu.addMenu(cat)
+            for fn in funcs:
+                sub.addAction(
+                    fn, lambda f=fn: self._insert_function(f))
+        self._fx_toolbar_btn.setMenu(fx_menu)
+        plot_bar.addWidget(self._fx_toolbar_btn)
+
         # ── Merge/Unmerge button (in formatting toolbar) ─────────
         self._merge_btn = QToolButton()
         self._merge_btn.setIcon(icons.merge_cells_icon(28))
@@ -575,10 +593,18 @@ class MainWindow(QMainWindow):
         self._progress.hide()
         sb.addPermanentWidget(self._progress)
 
-        # Selection summary (left of zoom): Average | Count | Sum
+        # Spacer pushes summary + zoom to far right
+        spacer = QWidget()
+        spacer.setSizePolicy(spacer.sizePolicy())
+        from PyQt5.QtWidgets import QSizePolicy
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        sb.addPermanentWidget(spacer)
+
+        # Selection summary: Average | Count | Sum (right-aligned)
         self._sum_label = QLabel("")
         self._sum_label.setMinimumWidth(300)
         self._sum_label.setStyleSheet("padding: 0 8px;")
+        self._sum_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         sb.addPermanentWidget(self._sum_label)
 
         # Zoom slider (far right)
