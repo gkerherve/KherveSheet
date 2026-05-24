@@ -1025,15 +1025,18 @@ class MainWindow(QMainWindow):
             self._show_progress(False)
 
     def _auto_commit(self, path: str):
-        """Commit the saved file to a per-directory git repo."""
+        """Commit the saved file to its own isolated version repo."""
         from . import git_backend
         if not git_backend.is_available():
             return
+        import shutil
         from pathlib import Path
         p = Path(path)
-        repo_dir = p.parent
-        file_stem = p.stem
-        git_backend.commit_all(repo_dir, file_stem=file_stem)
+        repo_dir = p.parent / ".ksheet_versions" / p.stem
+        repo_dir.mkdir(parents=True, exist_ok=True)
+        # Copy the saved file into the version repo.
+        shutil.copy2(str(p), str(repo_dir / p.name))
+        git_backend.commit_all(repo_dir, file_stem=p.stem)
 
     def _load_ksheet(self, path: str):
         try:
@@ -1131,6 +1134,7 @@ class MainWindow(QMainWindow):
                         d = json.loads(desig_json)
                         sheet._col_designations = {
                             int(k): v for k, v in d.items()}
+                        sheet._refresh_headers()
 
                     # Cell formats (fill, borders, font).
                     fmt_json = sg.attrs.get('cell_formats', '')
@@ -1964,10 +1968,16 @@ class MainWindow(QMainWindow):
 
     # ── Version control ─────────────────────────────────────────────
     def _vc_repo_dir(self):
-        """Return the directory of the current file for git ops."""
+        """Return the per-document version repo directory.
+
+        Each .ksheet file gets its own isolated git repo at
+        ``<file_dir>/.ksheet_versions/<stem>/`` so document history
+        is never mixed with the application's source repo.
+        """
         if self._current_file:
             from pathlib import Path
-            return Path(self._current_file).parent
+            p = Path(self._current_file)
+            return p.parent / ".ksheet_versions" / p.stem
         return None
 
     def _open_history(self):
@@ -2050,9 +2060,21 @@ class MainWindow(QMainWindow):
             self._status_msg("Remote 'origin' configured.", 3000)
 
     def _reload_current(self):
-        """Reload the current .ksheet file from disk (after restore)."""
-        if self._current_file and self._current_file.endswith(".ksheet"):
-            self._load_ksheet(self._current_file)
+        """Reload the current .ksheet file from disk (after restore).
+
+        After a version restore, the file lives in the version repo dir;
+        copy it back to the original location before reloading.
+        """
+        if not self._current_file or not self._current_file.endswith(
+                ".ksheet"):
+            return
+        import shutil
+        from pathlib import Path
+        p = Path(self._current_file)
+        repo_copy = p.parent / ".ksheet_versions" / p.stem / p.name
+        if repo_copy.exists():
+            shutil.copy2(str(repo_copy), str(p))
+        self._load_ksheet(self._current_file)
 
     # ── Zoom ─────────────────────────────────────────────────────────
     def _zoom_in(self):

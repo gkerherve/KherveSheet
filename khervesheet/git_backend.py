@@ -45,27 +45,29 @@ def _find_enclosing_repo(repo_dir: Path) -> Path | None:
 
 
 def init_repo(repo_dir: Path) -> bool:
-    """Initialise a git repo in `repo_dir` if one doesn't already exist."""
+    """Initialise a standalone git repo in `repo_dir`.
+
+    Each document gets its own isolated repo — we never reuse an
+    enclosing repo to keep document versions separate from any
+    application source control.
+    """
     if not _PYGIT2_OK:
         return False
     repo_dir.mkdir(parents=True, exist_ok=True)
     if (repo_dir / ".git").exists():
         return True
-    if _find_enclosing_repo(repo_dir) is not None:
-        return True
     pygit2.init_repository(str(repo_dir), bare=False)
     head_file = repo_dir / ".git" / "HEAD"
-    head_file.write_text("ref: refs/heads/dev\n", encoding="utf-8")
+    head_file.write_text("ref: refs/heads/main\n", encoding="utf-8")
     return True
 
 
 def _repo_for(repo_dir: Path) -> "pygit2.Repository | None":
-    """Return the pygit2.Repository governing `repo_dir`."""
+    """Return the pygit2.Repository at exactly `repo_dir`."""
     try:
         if (repo_dir / ".git").exists():
             return pygit2.Repository(str(repo_dir))
-        enclosing = _find_enclosing_repo(repo_dir)
-        return pygit2.Repository(str(enclosing)) if enclosing else None
+        return None
     except Exception:
         return None
 
