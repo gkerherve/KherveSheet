@@ -24,7 +24,7 @@ from PyQt5.QtGui import (
 from PyQt5.QtWidgets import (
     QWidget, QMenu, QFileDialog, QDialog, QVBoxLayout, QHBoxLayout,
     QLabel, QSlider, QDialogButtonBox, QGroupBox, QFormLayout,
-    QRubberBand, QPushButton,
+    QRubberBand, QPushButton, QSpinBox,
 )
 
 # Resize handle size in pixels.
@@ -55,6 +55,10 @@ class EmbeddedImage(QWidget):
         self._drag_widget_pos = None
         self._resizing = False
         self._resize_edge = None
+
+        # Aspect ratio lock (default: keep proportions).
+        self._keep_aspect_ratio = True
+        self._aspect_ratio = pixmap.width() / max(pixmap.height(), 1)
 
         # Crop rubber-band state.
         self._crop_origin = None
@@ -166,6 +170,21 @@ class EmbeddedImage(QWidget):
                 geo.setTop(geo.top() + delta.y())
             if "b" in e:
                 geo.setBottom(geo.bottom() + delta.y())
+            # Enforce aspect ratio if locked.
+            if self._keep_aspect_ratio and self._aspect_ratio > 0:
+                ar = self._aspect_ratio
+                if "r" in e or "l" in e:
+                    new_h = int(geo.width() / ar)
+                    if "t" in e:
+                        geo.setTop(geo.bottom() - new_h)
+                    else:
+                        geo.setBottom(geo.top() + new_h)
+                elif "t" in e or "b" in e:
+                    new_w = int(geo.height() * ar)
+                    if "l" in e:
+                        geo.setLeft(geo.right() - new_w)
+                    else:
+                        geo.setRight(geo.left() + new_w)
             if geo.width() >= self.minimumWidth() and \
                geo.height() >= self.minimumHeight():
                 self.setGeometry(geo)
@@ -220,6 +239,12 @@ class EmbeddedImage(QWidget):
 
     def contextMenuEvent(self, ev):
         menu = QMenu(self)
+        menu.addAction("Resize…", self._resize_dialog)
+        ar_act = menu.addAction("Lock Aspect Ratio")
+        ar_act.setCheckable(True)
+        ar_act.setChecked(self._keep_aspect_ratio)
+        ar_act.toggled.connect(self._toggle_aspect_ratio)
+        menu.addSeparator()
         menu.addAction("Crop", self._start_crop)
         menu.addAction("Reset Crop", self._reset_crop)
         menu.addSeparator()
@@ -300,6 +325,53 @@ class EmbeddedImage(QWidget):
                 result.setPixel(x, y, c.rgba())
         return result
 
+    # ── Size / aspect ratio ──────────────────────────────────────────
+
+    def _toggle_aspect_ratio(self, checked):
+        self._keep_aspect_ratio = checked
+        if checked:
+            # Update ratio from current size.
+            self._aspect_ratio = self.width() / max(self.height(), 1)
+
+    def _resize_dialog(self):
+        """Open a dialog to set exact width and height."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Resize Image")
+        layout = QVBoxLayout(dlg)
+        form = QFormLayout()
+        w_spin = QSpinBox()
+        w_spin.setRange(40, 4000)
+        w_spin.setValue(self.width())
+        h_spin = QSpinBox()
+        h_spin.setRange(40, 4000)
+        h_spin.setValue(self.height())
+
+        def _w_changed(val):
+            if self._keep_aspect_ratio and self._aspect_ratio > 0:
+                h_spin.blockSignals(True)
+                h_spin.setValue(int(val / self._aspect_ratio))
+                h_spin.blockSignals(False)
+
+        def _h_changed(val):
+            if self._keep_aspect_ratio and self._aspect_ratio > 0:
+                w_spin.blockSignals(True)
+                w_spin.setValue(int(val * self._aspect_ratio))
+                w_spin.blockSignals(False)
+
+        w_spin.valueChanged.connect(_w_changed)
+        h_spin.valueChanged.connect(_h_changed)
+        form.addRow("Width:", w_spin)
+        form.addRow("Height:", h_spin)
+        layout.addLayout(form)
+        bb = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        layout.addWidget(bb)
+        if dlg.exec_() == QDialog.Accepted:
+            self.resize(w_spin.value(), h_spin.value())
+            self._aspect_ratio = self.width() / max(self.height(), 1)
+
     # ── Other actions ─────────────────────────────────────────────────
 
     def _replace_image(self):
@@ -355,6 +427,8 @@ class EmbeddedImage(QWidget):
             d["saturation"] = self._saturation
         if self._brightness != 0:
             d["brightness"] = self._brightness
+        if not self._keep_aspect_ratio:
+            d["keep_aspect_ratio"] = False
         return d
 
     @classmethod
@@ -374,6 +448,8 @@ class EmbeddedImage(QWidget):
         img._hue_shift = d.get("hue_shift", 0)
         img._saturation = d.get("saturation", 0)
         img._brightness = d.get("brightness", 0)
+        img._keep_aspect_ratio = d.get("keep_aspect_ratio", True)
+        img._aspect_ratio = img.width() / max(img.height(), 1)
         # Re-apply if anything changed.
         if img._crop_rect != QRectF(0, 0, 1, 1) or \
                 img._hue_shift or img._saturation or img._brightness:
