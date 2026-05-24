@@ -39,6 +39,7 @@ into a new module and import.
   - `mainwindow.py` — `MainWindow` shell: menus, toolbars, status bar, I/O (CSV/Excel/HDF5).
   - `formula_engine.py` — cell formula parser & evaluator.
   - `undo_commands.py` — QUndoCommand classes.
+  - `insert_ops.py`  — Insert menu ops: checkbox, dropdown, link, comment/note, emoji, transpose, spell-check.
   - `icons.py`      — qtawesome icon factory (themed MDI + custom QPainter plot glyphs).
   - `git_backend.py` — per-document Git repo: auto-commit, push, pull, history, branches (pygit2).
   - `history_dialog.py` — `HistoryDialog` commit browser with DAG graph, diff view, restore.

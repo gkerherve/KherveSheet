@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
     QToolBar, QToolButton, QFileDialog, QMessageBox, QProgressBar,
     QSlider, QHBoxLayout, QWidget, QUndoStack, QComboBox,
     QInputDialog, QApplication, QFontComboBox, QPushButton,
-    QWidgetAction, QGridLayout, QDialog,
+    QWidgetAction, QGridLayout, QDialog, QShortcut,
 )
 
 from . import APP_NAME, __version__
@@ -217,6 +217,65 @@ class MainWindow(QMainWindow):
 
         # ── Insert ───────────────────────────────────────────────────
         insert_menu = mb.addMenu("&Insert")
+
+        # Chart submenu.
+        chart_menu = insert_menu.addMenu("Chart")
+        from .sheet import SheetWidget
+        for pt in SheetWidget.PLOT_TYPES:
+            act = chart_menu.addAction(pt)
+            act.triggered.connect(
+                lambda _, t=pt: self._insert_chart(t))
+
+        # Pivot / Transpose.
+        insert_menu.addAction("Pivot / Transpose",
+                              self._transpose_selection)
+        insert_menu.addSeparator()
+
+        # Image.
+        insert_menu.addAction("Image\u2026", self._insert_image)
+        insert_menu.addSeparator()
+
+        # Function submenu (mirrors Formulas menu).
+        func_sub = insert_menu.addMenu("Function")
+        from .formulas import FUNCTION_CATEGORIES, CATEGORY_ORDER
+        for cat in CATEGORY_ORDER:
+            funcs = FUNCTION_CATEGORIES.get(cat, [])
+            cat_sub = func_sub.addMenu(cat)
+            for fn in funcs:
+                cat_sub.addAction(
+                    fn, lambda f=fn: self._insert_function(f))
+
+        # Link.
+        from PyQt5.QtGui import QKeySequence
+        insert_menu.addAction(
+            "Link\tCtrl+K", self._insert_link)
+        QShortcut(QKeySequence("Ctrl+K"), self, self._insert_link)
+        insert_menu.addSeparator()
+
+        # Checkbox, Dropdown, Emoji.
+        insert_menu.addAction("Checkbox", self._insert_checkbox)
+        insert_menu.addAction("Dropdown\u2026", self._insert_dropdown)
+
+        # Emoji submenu.
+        emoji_menu = insert_menu.addMenu("Emoji")
+        from . import insert_ops
+        emoji_wa = QWidgetAction(emoji_menu)
+        emoji_wa.setDefaultWidget(
+            insert_ops.build_emoji_grid(
+                emoji_menu,
+                lambda e: self._insert_emoji(e, emoji_menu)))
+        emoji_menu.addAction(emoji_wa)
+        insert_menu.addSeparator()
+
+        # Comment / Note.
+        insert_menu.addAction(
+            "Comment\tCtrl+Alt+M", self._insert_comment)
+        insert_menu.addAction(
+            "Note\tShift+F2", self._insert_note)
+        QShortcut(QKeySequence("Shift+F2"), self, self._insert_note)
+        insert_menu.addSeparator()
+
+        # Row / Column / Sheet.
         insert_menu.addAction("Row Above",
                               self._insert_row_above)
         insert_menu.addAction("Row Below",
@@ -226,17 +285,6 @@ class MainWindow(QMainWindow):
         insert_menu.addSeparator()
         insert_menu.addAction("Sheet",
                               lambda: self._workbook.add_sheet())
-        insert_menu.addSeparator()
-
-        insert_menu.addAction("Image\u2026", self._insert_image)
-        insert_menu.addSeparator()
-
-        chart_menu = insert_menu.addMenu("Chart")
-        from .sheet import SheetWidget
-        for pt in SheetWidget.PLOT_TYPES:
-            act = chart_menu.addAction(pt)
-            act.triggered.connect(
-                lambda _, t=pt: self._insert_chart(t))
 
         # ── Format ───────────────────────────────────────────────────
         format_menu = mb.addMenu("F&ormat")
@@ -301,6 +349,9 @@ class MainWindow(QMainWindow):
 
         # ── Tools ────────────────────────────────────────────────────
         tools_menu = mb.addMenu("&Tools")
+        tools_menu.addAction("Spelling\u2026\tF7", self._spell_check)
+        QShortcut(QKeySequence("F7"), self, self._spell_check)
+        tools_menu.addSeparator()
         tools_menu.addAction("Statistics on Selection",
                              self._show_statistics)
 
@@ -976,6 +1027,12 @@ class MainWindow(QMainWindow):
                             {str(k): v
                              for k, v in sheet._col_designations.items()})
 
+                    # Insert-ops metadata (notes, links, dropdowns).
+                    from .insert_ops import save_insert_data
+                    iops_json = save_insert_data(sheet)
+                    if iops_json:
+                        sg.attrs['insert_ops'] = iops_json
+
                     # Column widths.
                     widths = [sheet.table.columnWidth(c)
                               for c in range(n_cols)]
@@ -1188,6 +1245,14 @@ class MainWindow(QMainWindow):
                         sheet._col_designations = {
                             int(k): v for k, v in d.items()}
                         sheet._refresh_headers()
+
+                    # Insert-ops metadata (notes, links, dropdowns).
+                    iops_json = sg.attrs.get('insert_ops', '')
+                    if isinstance(iops_json, bytes):
+                        iops_json = iops_json.decode('utf-8')
+                    if iops_json:
+                        from .insert_ops import load_insert_data
+                        load_insert_data(sheet, iops_json)
 
                     # Cell formats (fill, borders, font).
                     fmt_json = sg.attrs.get('cell_formats', '')
@@ -2276,9 +2341,58 @@ class MainWindow(QMainWindow):
             it.setText(new_val)
         sheet._shadow[(row, col)] = new_val
         if sheet._undo_stack:
-            from .undo_commands import CellEditCmd
+            from .sheet import CellEditCmd
             sheet._undo_stack.push(
                 CellEditCmd(sheet, row, col, old, new_val))
+
+    def _insert_emoji(self, emoji, menu):
+        """Insert an emoji character into the current cell."""
+        menu.close()
+        self._insert_symbol(emoji, menu)
+
+    def _insert_checkbox(self):
+        s = self._active_sheet()
+        if s:
+            from . import insert_ops
+            insert_ops.insert_checkbox(s)
+
+    def _insert_dropdown(self):
+        s = self._active_sheet()
+        if s:
+            from . import insert_ops
+            insert_ops.insert_dropdown(s, self)
+
+    def _insert_link(self):
+        s = self._active_sheet()
+        if s:
+            from . import insert_ops
+            insert_ops.insert_link(s, self)
+
+    def _insert_comment(self):
+        s = self._active_sheet()
+        if s:
+            from . import insert_ops
+            insert_ops.insert_comment(s, self)
+
+    def _insert_note(self):
+        s = self._active_sheet()
+        if s:
+            from . import insert_ops
+            insert_ops.insert_note(s, self)
+
+    def _transpose_selection(self):
+        s = self._active_sheet()
+        if s:
+            from . import insert_ops
+            insert_ops.transpose_selection(s, self._undo_stack)
+
+    def _spell_check(self):
+        s = self._active_sheet()
+        if not s:
+            return
+        from .insert_ops import SpellCheckDialog
+        dlg = SpellCheckDialog(s, self)
+        dlg.exec_()
 
     def _toggle_merge(self):
         """Toggle merge/unmerge on the active sheet selection."""
