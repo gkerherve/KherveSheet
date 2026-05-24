@@ -2,7 +2,7 @@
 
 Images float as child widgets of the sheet's table viewport, just like
 embedded charts.  They can be dragged to reposition and resized via
-edge handles.
+edge handles.  Supports crop and colour-filter adjustments.
 
 Copyright (C) 2026 Gwilherm Kerherve
 
@@ -16,9 +16,16 @@ from __future__ import annotations
 
 import base64
 
-from PyQt5.QtCore import Qt, QRect, QPoint
-from PyQt5.QtGui import QPixmap, QPainter, QPen, QColor, QCursor, QImage
-from PyQt5.QtWidgets import QWidget, QMenu, QFileDialog
+from PyQt5.QtCore import Qt, QRect, QRectF, QPoint, QBuffer, QIODevice
+from PyQt5.QtGui import (
+    QPixmap, QPainter, QPen, QColor, QCursor, QImage,
+    QBrush, QPainterPath,
+)
+from PyQt5.QtWidgets import (
+    QWidget, QMenu, QFileDialog, QDialog, QVBoxLayout, QHBoxLayout,
+    QLabel, QSlider, QDialogButtonBox, QGroupBox, QFormLayout,
+    QRubberBand, QPushButton,
+)
 
 # Resize handle size in pixels.
 _HANDLE = 6
@@ -30,14 +37,28 @@ class EmbeddedImage(QWidget):
     def __init__(self, pixmap: QPixmap, parent=None):
         super().__init__(parent)
         self.setMouseTracking(True)
-        self._pixmap = pixmap
+        self._original_pixmap = pixmap   # unmodified source
+        self._pixmap = pixmap            # displayed (after filters)
         self._selected = False
+        self._cropping = False
+
+        # Crop state: normalized rect (0..1) relative to original.
+        self._crop_rect = QRectF(0, 0, 1, 1)
+
+        # Colour filter state (all in degrees / percent offsets).
+        self._hue_shift = 0        # -180..180
+        self._saturation = 0       # -100..100
+        self._brightness = 0       # -100..100
 
         # Dragging / resizing state.
         self._drag_origin = None
         self._drag_widget_pos = None
         self._resizing = False
         self._resize_edge = None
+
+        # Crop rubber-band state.
+        self._crop_origin = None
+        self._rubber_band = None
 
         # Size to pixmap, capped to reasonable dimensions.
         pw = min(pixmap.width(), 600)
@@ -47,7 +68,7 @@ class EmbeddedImage(QWidget):
                                    Qt.SmoothTransformation)
             pw, ph = scaled.width(), scaled.height()
         self.setMinimumSize(40, 40)
-        self.resize(pw + 4, ph + 4)  # small border margin
+        self.resize(pw + 4, ph + 4)
         self.show()
 
     # ── Painting ──────────────────────────────────────────────────────
@@ -55,7 +76,6 @@ class EmbeddedImage(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
-        # Draw scaled pixmap inside widget bounds (with 2px margin).
         target = self.rect().adjusted(2, 2, -2, -2)
         p.drawPixmap(target, self._pixmap)
         # Selection border.
@@ -63,7 +83,6 @@ class EmbeddedImage(QWidget):
             pen = QPen(QColor("#3078c6"), 2, Qt.DashLine)
             p.setPen(pen)
             p.drawRect(self.rect().adjusted(0, 0, -1, -1))
-            # Draw resize handles at corners and midpoints.
             p.setPen(Qt.NoPen)
             p.setBrush(QColor("#3078c6"))
             for hx, hy in self._handle_positions():
@@ -72,7 +91,6 @@ class EmbeddedImage(QWidget):
         p.end()
 
     def _handle_positions(self):
-        """Yield (x, y) of the 8 resize handles."""
         r = self.rect()
         mx = r.width() // 2
         my = r.height() // 2
@@ -86,7 +104,6 @@ class EmbeddedImage(QWidget):
     # ── Mouse interaction ─────────────────────────────────────────────
 
     def _edge_at(self, pos):
-        """Return resize-edge string (combination of t/b/l/r) or ''."""
         r = self.rect()
         edge = ""
         if pos.y() <= _HANDLE:
@@ -110,6 +127,15 @@ class EmbeddedImage(QWidget):
 
     def mousePressEvent(self, ev):
         if ev.button() == Qt.LeftButton:
+            if self._cropping:
+                self._crop_origin = ev.pos()
+                if not self._rubber_band:
+                    self._rubber_band = QRubberBand(
+                        QRubberBand.Rectangle, self)
+                self._rubber_band.setGeometry(
+                    QRect(self._crop_origin, self._crop_origin))
+                self._rubber_band.show()
+                return
             self._selected = True
             self.update()
             edge = self._edge_at(ev.pos()) if self._selected else ""
@@ -124,6 +150,10 @@ class EmbeddedImage(QWidget):
             self.raise_()
 
     def mouseMoveEvent(self, ev):
+        if self._cropping and self._crop_origin:
+            rect = QRect(self._crop_origin, ev.pos()).normalized()
+            self._rubber_band.setGeometry(rect)
+            return
         if self._resizing and self._drag_origin:
             delta = ev.globalPos() - self._drag_origin
             geo = QRect(self._drag_widget_pos)
@@ -143,24 +173,134 @@ class EmbeddedImage(QWidget):
             delta = ev.globalPos() - self._drag_origin
             self.move(self._drag_widget_pos + delta)
         else:
-            edge = self._edge_at(ev.pos()) if self._selected else ""
-            if edge:
-                self.setCursor(self._cursor_for_edge(edge))
+            if self._cropping:
+                self.setCursor(Qt.CrossCursor)
             else:
-                self.setCursor(Qt.SizeAllCursor)
+                edge = self._edge_at(ev.pos()) if self._selected else ""
+                if edge:
+                    self.setCursor(self._cursor_for_edge(edge))
+                else:
+                    self.setCursor(Qt.SizeAllCursor)
 
     def mouseReleaseEvent(self, ev):
+        if self._cropping and self._crop_origin:
+            rect = QRect(self._crop_origin, ev.pos()).normalized()
+            self._crop_origin = None
+            if self._rubber_band:
+                self._rubber_band.hide()
+            # Apply crop if region is meaningful.
+            w = self.width() - 4
+            h = self.height() - 4
+            if rect.width() > 10 and rect.height() > 10 and w > 0 and h > 0:
+                # Convert widget coords to normalized crop within
+                # current displayed image.
+                x1 = max(0.0, (rect.left() - 2) / w)
+                y1 = max(0.0, (rect.top() - 2) / h)
+                x2 = min(1.0, (rect.right() - 2) / w)
+                y2 = min(1.0, (rect.bottom() - 2) / h)
+                # Compose with existing crop.
+                cr = self._crop_rect
+                new_x1 = cr.x() + x1 * cr.width()
+                new_y1 = cr.y() + y1 * cr.height()
+                new_w = (x2 - x1) * cr.width()
+                new_h = (y2 - y1) * cr.height()
+                self._crop_rect = QRectF(new_x1, new_y1, new_w, new_h)
+                self._apply_filters()
+            self._cropping = False
+            self.setCursor(Qt.SizeAllCursor)
+            return
         self._drag_origin = None
         self._drag_widget_pos = None
         self._resizing = False
         self._resize_edge = None
 
+    def mouseDoubleClickEvent(self, ev):
+        """Double-click opens the image adjustments dialog."""
+        self._open_adjustments()
+
     def contextMenuEvent(self, ev):
         menu = QMenu(self)
+        menu.addAction("Crop", self._start_crop)
+        menu.addAction("Reset Crop", self._reset_crop)
+        menu.addSeparator()
+        menu.addAction("Adjustments…", self._open_adjustments)
+        menu.addSeparator()
         menu.addAction("Replace Image…", self._replace_image)
         menu.addSeparator()
         menu.addAction("Delete", self._delete)
         menu.exec_(ev.globalPos())
+
+    # ── Crop ──────────────────────────────────────────────────────────
+
+    def _start_crop(self):
+        """Enter crop mode — next drag selects crop region."""
+        self._cropping = True
+        self.setCursor(Qt.CrossCursor)
+
+    def _reset_crop(self):
+        """Remove any cropping."""
+        self._crop_rect = QRectF(0, 0, 1, 1)
+        self._apply_filters()
+
+    # ── Colour adjustments ────────────────────────────────────────────
+
+    def _open_adjustments(self):
+        dlg = ImageAdjustDialog(
+            self._hue_shift, self._saturation, self._brightness,
+            parent=self)
+        if dlg.exec_() == QDialog.Accepted:
+            self._hue_shift = dlg.hue_shift
+            self._saturation = dlg.saturation
+            self._brightness = dlg.brightness
+            self._apply_filters()
+
+    def _apply_filters(self):
+        """Rebuild _pixmap from _original_pixmap applying crop + colour."""
+        src = self._original_pixmap.toImage()
+        # Apply crop.
+        cr = self._crop_rect
+        sx = int(cr.x() * src.width())
+        sy = int(cr.y() * src.height())
+        sw = int(cr.width() * src.width())
+        sh = int(cr.height() * src.height())
+        if sw < 1:
+            sw = 1
+        if sh < 1:
+            sh = 1
+        cropped = src.copy(sx, sy, sw, sh)
+
+        # Apply colour adjustments if any are non-zero.
+        if self._hue_shift != 0 or self._saturation != 0 \
+                or self._brightness != 0:
+            cropped = self._adjust_colors(cropped)
+
+        self._pixmap = QPixmap.fromImage(cropped)
+        self.update()
+
+    def _adjust_colors(self, img: QImage) -> QImage:
+        """Apply hue shift, saturation, and brightness to image."""
+        # Work on a copy in ARGB32 format for pixel access.
+        result = img.convertToFormat(QImage.Format_ARGB32)
+        w, h = result.width(), result.height()
+        for y in range(h):
+            for x in range(w):
+                c = QColor(result.pixel(x, y))
+                hue, sat, val, alpha = c.getHsv()
+                if hue < 0:
+                    hue = 0
+                # Shift hue.
+                hue = (hue + self._hue_shift) % 360
+                # Adjust saturation.
+                sat = max(0, min(255, sat + int(
+                    self._saturation * 2.55)))
+                # Adjust brightness (value).
+                val = max(0, min(255, val + int(
+                    self._brightness * 2.55)))
+                c.setHsv(hue, sat, val, alpha)
+                result.setPixel(x, y, c.rgba())
+        return result
+
+    # ── Other actions ─────────────────────────────────────────────────
 
     def _replace_image(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -169,6 +309,11 @@ class EmbeddedImage(QWidget):
         if path:
             pm = QPixmap(path)
             if not pm.isNull():
+                self._original_pixmap = pm
+                self._crop_rect = QRectF(0, 0, 1, 1)
+                self._hue_shift = 0
+                self._saturation = 0
+                self._brightness = 0
                 self._pixmap = pm
                 self.update()
 
@@ -176,7 +321,6 @@ class EmbeddedImage(QWidget):
         """Remove this image from the sheet."""
         sheet = self.parent()
         if sheet and hasattr(sheet, 'parent'):
-            # Walk up to find the SheetWidget that owns _images.
             sw = sheet.parent()
             while sw and not hasattr(sw, '_images'):
                 sw = sw.parent()
@@ -189,20 +333,29 @@ class EmbeddedImage(QWidget):
 
     def to_dict(self) -> dict:
         """Serialise image to a dict for persistence."""
-        # Encode pixmap as PNG base64.
-        from PyQt5.QtCore import QBuffer, QIODevice
         buf = QBuffer()
         buf.open(QIODevice.WriteOnly)
-        self._pixmap.save(buf, "PNG")
+        self._original_pixmap.save(buf, "PNG")
         data = base64.b64encode(bytes(buf.data())).decode("ascii")
         buf.close()
-        return {
+        d = {
             "pos_x": self.pos().x(),
             "pos_y": self.pos().y(),
             "width": self.width(),
             "height": self.height(),
             "data": data,
         }
+        # Persist crop and colour adjustments.
+        cr = self._crop_rect
+        if cr != QRectF(0, 0, 1, 1):
+            d["crop"] = [cr.x(), cr.y(), cr.width(), cr.height()]
+        if self._hue_shift != 0:
+            d["hue_shift"] = self._hue_shift
+        if self._saturation != 0:
+            d["saturation"] = self._saturation
+        if self._brightness != 0:
+            d["brightness"] = self._brightness
+        return d
 
     @classmethod
     def from_dict(cls, d: dict, parent=None) -> EmbeddedImage:
@@ -213,4 +366,98 @@ class EmbeddedImage(QWidget):
         img = cls(pm, parent)
         img.move(d["pos_x"], d["pos_y"])
         img.resize(d["width"], d["height"])
+        # Restore crop.
+        if "crop" in d:
+            cx, cy, cw, ch = d["crop"]
+            img._crop_rect = QRectF(cx, cy, cw, ch)
+        # Restore colour adjustments.
+        img._hue_shift = d.get("hue_shift", 0)
+        img._saturation = d.get("saturation", 0)
+        img._brightness = d.get("brightness", 0)
+        # Re-apply if anything changed.
+        if img._crop_rect != QRectF(0, 0, 1, 1) or \
+                img._hue_shift or img._saturation or img._brightness:
+            img._apply_filters()
         return img
+
+
+# ── Image Adjustments Dialog ──────────────────────────────────────────
+
+class ImageAdjustDialog(QDialog):
+    """Slider dialog for hue, saturation, and brightness."""
+
+    def __init__(self, hue=0, saturation=0, brightness=0, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Image Adjustments")
+        self.resize(320, 200)
+
+        layout = QVBoxLayout(self)
+
+        form = QFormLayout()
+
+        # Hue slider (-180..180).
+        self._hue_slider = QSlider(Qt.Horizontal)
+        self._hue_slider.setRange(-180, 180)
+        self._hue_slider.setValue(hue)
+        self._hue_label = QLabel(str(hue))
+        self._hue_slider.valueChanged.connect(
+            lambda v: self._hue_label.setText(str(v)))
+        row = QHBoxLayout()
+        row.addWidget(self._hue_slider)
+        row.addWidget(self._hue_label)
+        form.addRow("Hue:", row)
+
+        # Saturation slider (-100..100).
+        self._sat_slider = QSlider(Qt.Horizontal)
+        self._sat_slider.setRange(-100, 100)
+        self._sat_slider.setValue(saturation)
+        self._sat_label = QLabel(str(saturation))
+        self._sat_slider.valueChanged.connect(
+            lambda v: self._sat_label.setText(str(v)))
+        row2 = QHBoxLayout()
+        row2.addWidget(self._sat_slider)
+        row2.addWidget(self._sat_label)
+        form.addRow("Saturation:", row2)
+
+        # Brightness slider (-100..100).
+        self._bri_slider = QSlider(Qt.Horizontal)
+        self._bri_slider.setRange(-100, 100)
+        self._bri_slider.setValue(brightness)
+        self._bri_label = QLabel(str(brightness))
+        self._bri_slider.valueChanged.connect(
+            lambda v: self._bri_label.setText(str(v)))
+        row3 = QHBoxLayout()
+        row3.addWidget(self._bri_slider)
+        row3.addWidget(self._bri_label)
+        form.addRow("Brightness:", row3)
+
+        layout.addLayout(form)
+
+        # Reset button.
+        reset_btn = QPushButton("Reset All")
+        reset_btn.clicked.connect(self._reset)
+        layout.addWidget(reset_btn)
+
+        # Buttons.
+        bb = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        layout.addWidget(bb)
+
+    def _reset(self):
+        self._hue_slider.setValue(0)
+        self._sat_slider.setValue(0)
+        self._bri_slider.setValue(0)
+
+    @property
+    def hue_shift(self):
+        return self._hue_slider.value()
+
+    @property
+    def saturation(self):
+        return self._sat_slider.value()
+
+    @property
+    def brightness(self):
+        return self._bri_slider.value()

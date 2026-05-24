@@ -800,6 +800,15 @@ class MainWindow(QMainWindow):
                         ig.attrs['pos_y'] = d['pos_y']
                         ig.attrs['width'] = d['width']
                         ig.attrs['height'] = d['height']
+                        # Crop and colour filter metadata.
+                        if 'crop' in d:
+                            ig.attrs['crop'] = json.dumps(d['crop'])
+                        if d.get('hue_shift', 0) != 0:
+                            ig.attrs['hue_shift'] = d['hue_shift']
+                        if d.get('saturation', 0) != 0:
+                            ig.attrs['saturation'] = d['saturation']
+                        if d.get('brightness', 0) != 0:
+                            ig.attrs['brightness'] = d['brightness']
                         # Store PNG data as raw bytes.
                         import base64
                         ig.create_dataset(
@@ -1041,14 +1050,26 @@ class MainWindow(QMainWindow):
                         if ig_key not in sg:
                             continue
                         ig = sg[ig_key]
-                        deferred_images.append({
+                        imd = {
                             "pos_x": int(ig.attrs['pos_x']),
                             "pos_y": int(ig.attrs['pos_y']),
                             "width": int(ig.attrs['width']),
                             "height": int(ig.attrs['height']),
                             "data": _b64.b64encode(
                                 bytes(ig["png_data"][:])).decode("ascii"),
-                        })
+                        }
+                        crop_json = ig.attrs.get('crop', '')
+                        if crop_json:
+                            imd["crop"] = json.loads(crop_json)
+                        if 'hue_shift' in ig.attrs:
+                            imd["hue_shift"] = int(ig.attrs['hue_shift'])
+                        if 'saturation' in ig.attrs:
+                            imd["saturation"] = int(
+                                ig.attrs['saturation'])
+                        if 'brightness' in ig.attrs:
+                            imd["brightness"] = int(
+                                ig.attrs['brightness'])
+                        deferred_images.append(imd)
                     if deferred_images:
                         sheet._deferred_images = deferred_images
 
@@ -1176,6 +1197,7 @@ class MainWindow(QMainWindow):
         s = self._active_sheet()
         if not s:
             return
+        # Check for chart clipboard first.
         from . import graph as _g
         cb = getattr(_g, '_chart_clipboard', None)
         if cb:
@@ -1198,8 +1220,26 @@ class MainWindow(QMainWindow):
                     first_chart.add_series(x, y, sr["label"], sr["plot_type"])
             _g._chart_clipboard = None
             self._status_msg("Chart pasted", 2000)
-        else:
-            s._paste_clipboard()
+            return
+        # Check for image in system clipboard.
+        clipboard = QApplication.clipboard()
+        mime = clipboard.mimeData()
+        if mime and mime.hasImage():
+            from PyQt5.QtGui import QPixmap
+            pm = QPixmap(clipboard.pixmap())
+            if not pm.isNull():
+                from .embedded_image import EmbeddedImage
+                viewport = s.table.viewport()
+                img = EmbeddedImage(pm, viewport)
+                offset = len(getattr(s, '_images', [])) * 30
+                img.move(40 + offset, 40 + offset)
+                if not hasattr(s, '_images'):
+                    s._images = []
+                s._images.append(img)
+                self._status_msg("Image pasted", 2000)
+                return
+        # Fall back to text paste.
+        s._paste_clipboard()
 
     def _paste_values(self):
         s = self._active_sheet()
