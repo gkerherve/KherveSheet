@@ -737,6 +737,24 @@ class SheetWidget(QWidget):
         self._arrow_nav_pos = None
         self._arrow_nav_ref_span = None
         self._clear_ref_highlights()
+        # Restore formula bar to the current cell's stored value
+        # and return focus to the grid so the cell is active again.
+        row = self.table.currentRow()
+        col = self.table.currentColumn()
+        self._formula_bar.blockSignals(True)
+        if row >= 0 and col >= 0:
+            formula = self._cell_formulas.get((row, col))
+            if formula:
+                self._formula_bar.setText(formula)
+            else:
+                it = self.table.item(row, col)
+                self._formula_bar.setText(it.text() if it else "")
+        else:
+            self._formula_bar.clear()
+        self._formula_bar.blockSignals(False)
+        # Also close any active inline editor without committing.
+        self.table.closePersistentEditor(self.table.currentIndex())
+        self.table.setFocus()
 
     def _open_insert_function(self):
         """Open the Insert Function dialog and insert the chosen
@@ -1795,7 +1813,11 @@ class SheetWidget(QWidget):
         # ── Table-level key interception for inline "=" editors ────
         if obj is self.table and event.type() == QEvent.KeyPress:
             key = event.key()
-            if key in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right):
+            if key == Qt.Key_Escape:
+                if self._formula_entry_cell is not None:
+                    self._exit_formula_mode()
+                    return True
+            elif key in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right):
                 # Find active inline editor.
                 editor = self._find_inline_editor()
                 if editor and editor.text().startswith("="):
