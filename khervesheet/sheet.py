@@ -353,6 +353,7 @@ class SheetWidget(QWidget):
         self.table.setShowGrid(True)
 
         # Column and row headers
+        self._col_designations: dict = {}  # col → "X" or "Y"
         self._refresh_headers()
 
         # Context menus
@@ -378,7 +379,6 @@ class SheetWidget(QWidget):
         self._cell_formulas: dict = {}   # (row, col) → "=formula"
         self._dependents: dict = {}      # (row, col) → set of (r, c) that depend on it
         self._col_formats: dict = {}     # col → format string
-        self._col_designations: dict = {}  # col → "X" or "Y"
         self._merged_ranges: list = []   # [(r, c, row_span, col_span), ...]
 
         # Formula entry mode: when editing a formula, clicking a cell
