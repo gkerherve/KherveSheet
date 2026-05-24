@@ -253,6 +253,11 @@ class EmbeddedChart(QWidget):
                 sd["fill_target"] = s.get("fill_target", 0)
                 sd["fill_color"] = s.get("fill_color", "#1f77b4")
                 sd["fill_alpha"] = s.get("fill_alpha", 0.3)
+            # Row range info for data tab persistence.
+            for rk in ("x_row_start", "x_row_end",
+                        "y_row_start", "y_row_end"):
+                if rk in s:
+                    sd[rk] = int(s[rk])
             series.append(sd)
         d = {
             "series": series,
@@ -356,6 +361,11 @@ class EmbeddedChart(QWidget):
                 if sd.get("visible") is False:
                     if hasattr(artist, 'set_visible'):
                         artist.set_visible(False)
+            # Restore row range info.
+            for rk in ("x_row_start", "x_row_end",
+                        "y_row_start", "y_row_end"):
+                if rk in sd:
+                    chart._series[i][rk] = int(sd[rk])
             fm = sd.get("fill_mode", "none")
             if fm != "none":
                 chart.apply_fill(
@@ -1044,6 +1054,8 @@ class PlotDetailsDialog(QDialog):
         self._build_symbol_tab()
         self._build_fill_tab()
 
+        # Per-series range edits: {row: (x_range_str, y_range_str)}
+        self._range_edits = {}
         self._series_list.currentRowChanged.connect(self._on_series)
         if self._series_list.count():
             self._series_list.setCurrentRow(0)
@@ -1309,8 +1321,20 @@ class PlotDetailsDialog(QDialog):
 
         self._tabs.addTab(w, "Fill")
 
+    def _save_current_range(self):
+        """Save range edit values for the previously selected series."""
+        prev = getattr(self, '_prev_series_row', -1)
+        if prev >= 0:
+            self._range_edits[prev] = (
+                self.x_range_edit.text(),
+                self.y_range_edit.text())
+
     def _on_series(self, row):
         """Populate widgets from the selected series."""
+        # Save range edits from the previous series before switching.
+        self._save_current_range()
+        self._prev_series_row = row
+
         if row < 0 or row >= len(self._chart._series):
             return
         s = self._chart._series[row]
@@ -1323,21 +1347,36 @@ class PlotDetailsDialog(QDialog):
         if idx >= 0:
             self.plot_type_combo.setCurrentIndex(idx)
 
-        # Data tab — populate range info.
-        chart = self._chart
+        # Data tab — restore saved range edits or build from data.
+        if row in self._range_edits:
+            x_rng, y_rng = self._range_edits[row]
+            self.x_range_edit.setText(x_rng)
+            self.y_range_edit.setText(y_rng)
+        else:
+            chart = self._chart
+            n_pts = len(s.get("x", []))
+            x_col = chart._x_col
+            y_cols = chart._y_cols
+            # Use stored row range if available, otherwise full range.
+            x_r1 = s.get("x_row_start", 0)
+            x_r2 = s.get("x_row_end", n_pts - 1) if n_pts else 0
+            if x_col is not None:
+                letter = self._col_letter(x_col)
+                self.x_range_edit.setText(
+                    f"{letter}{x_r1 + 1}:{letter}{x_r2 + 1}")
+            else:
+                self.x_range_edit.setText(f"1:{n_pts}  (row index)")
+            if row < len(y_cols):
+                y_r1 = s.get("y_row_start", 0)
+                y_r2 = s.get("y_row_end", n_pts - 1) if n_pts else 0
+                letter = self._col_letter(y_cols[row])
+                self.y_range_edit.setText(
+                    f"{letter}{y_r1 + 1}:{letter}{y_r2 + 1}")
+            else:
+                self.y_range_edit.setText("")
+
         n_pts = len(s.get("x", []))
         self.data_info.setText(str(n_pts))
-        x_col = chart._x_col
-        y_cols = chart._y_cols
-        if x_col is not None:
-            self.x_range_edit.setText(self._range_string(x_col, n_pts))
-        else:
-            self.x_range_edit.setText(f"1:{n_pts}  (row index)")
-        if row < len(y_cols):
-            self.y_range_edit.setText(
-                self._range_string(y_cols[row], n_pts))
-        else:
-            self.y_range_edit.setText("")
 
         # Try to read line properties from the artist.
         if hasattr(artist, 'get_linestyle'):
@@ -1443,12 +1482,17 @@ class PlotDetailsDialog(QDialog):
             if artist is not None and hasattr(artist, 'set_visible'):
                 artist.set_visible(visible)
 
-        # ── Apply data range changes ──────────────────────────────
-        row = self._series_list.currentRow()
+        # ── Apply data range changes for ALL series ────────────────
+        # Save the current series' range edits first.
+        self._save_current_range()
         sheet = chart._source_sheet
-        if sheet and 0 <= row < len(chart._series):
-            self._apply_range_edits(chart, row, sheet)
+        if sheet:
+            for sr, (x_rng, y_rng) in self._range_edits.items():
+                if 0 <= sr < len(chart._series):
+                    self._apply_range_edit_for(
+                        chart, sr, sheet, x_rng, y_rng)
 
+        row = self._series_list.currentRow()
         # Series settings for currently selected series
         if 0 <= row < len(chart._series):
             s = chart._series[row]
@@ -1497,11 +1541,11 @@ class PlotDetailsDialog(QDialog):
 
         chart._canvas.draw_idle()
 
-    def _apply_range_edits(self, chart, row, sheet):
-        """Re-read data if the user changed X or Y range strings."""
-        # Parse ranges — use row bounds from the range string.
-        x_parsed = self._parse_range(self.x_range_edit.text())
-        y_parsed = self._parse_range(self.y_range_edit.text())
+    def _apply_range_edit_for(self, chart, row, sheet,
+                              x_range_str, y_range_str):
+        """Re-read data for a single series from range strings."""
+        x_parsed = self._parse_range(x_range_str)
+        y_parsed = self._parse_range(y_range_str)
 
         if x_parsed is not None:
             x_col, xr1, xr2 = x_parsed
@@ -1510,8 +1554,11 @@ class PlotDetailsDialog(QDialog):
             x_col = chart._x_col
             xr1, xr2 = 0, sheet.row_count() - 1
 
-        if y_parsed is not None and row < len(chart._y_cols):
+        if y_parsed is not None:
             y_col, yr1, yr2 = y_parsed
+            # Extend y_cols list if needed.
+            while len(chart._y_cols) <= row:
+                chart._y_cols.append(y_col)
             chart._y_cols[row] = y_col
         elif row < len(chart._y_cols):
             y_col = chart._y_cols[row]
@@ -1537,6 +1584,11 @@ class PlotDetailsDialog(QDialog):
 
         s = chart._series[row]
         s["x"], s["y"] = x, y
+        # Store row ranges for persistence and re-display.
+        s["x_row_start"] = xr1
+        s["x_row_end"] = xr2
+        s["y_row_start"] = yr1
+        s["y_row_end"] = yr2
         artist = s.get("artist")
         if artist is not None:
             if hasattr(artist, 'set_data'):
