@@ -159,6 +159,9 @@ class MainWindow(QMainWindow):
                               lambda: self._workbook.add_sheet())
         insert_menu.addSeparator()
 
+        insert_menu.addAction("Image\u2026", self._insert_image)
+        insert_menu.addSeparator()
+
         chart_menu = insert_menu.addMenu("Chart")
         from .sheet import SheetWidget
         for pt in SheetWidget.PLOT_TYPES:
@@ -787,6 +790,22 @@ class MainWindow(QMainWindow):
                                 srg.attrs['props'] = json.dumps(
                                     props)
 
+                    # Images.
+                    images = getattr(sheet, '_images', [])
+                    sg.attrs['image_count'] = len(images)
+                    for ii, img in enumerate(images):
+                        ig = sg.create_group(f"image_{ii}")
+                        d = img.to_dict()
+                        ig.attrs['pos_x'] = d['pos_x']
+                        ig.attrs['pos_y'] = d['pos_y']
+                        ig.attrs['width'] = d['width']
+                        ig.attrs['height'] = d['height']
+                        # Store PNG data as raw bytes.
+                        import base64
+                        ig.create_dataset(
+                            "png_data",
+                            data=base64.b64decode(d['data']))
+
             self._status_msg(f"Saved to {path}", 5000)
         except Exception as e:
             QMessageBox.warning(self, "Save Error", str(e))
@@ -1013,6 +1032,26 @@ class MainWindow(QMainWindow):
                     if deferred_charts:
                         sheet._deferred_charts = deferred_charts
 
+                    # Collect image data.
+                    import base64 as _b64
+                    img_count = int(sg.attrs.get('image_count', 0))
+                    deferred_images = []
+                    for ii in range(img_count):
+                        ig_key = f"image_{ii}"
+                        if ig_key not in sg:
+                            continue
+                        ig = sg[ig_key]
+                        deferred_images.append({
+                            "pos_x": int(ig.attrs['pos_x']),
+                            "pos_y": int(ig.attrs['pos_y']),
+                            "width": int(ig.attrs['width']),
+                            "height": int(ig.attrs['height']),
+                            "data": _b64.b64encode(
+                                bytes(ig["png_data"][:])).decode("ascii"),
+                        })
+                    if deferred_images:
+                        sheet._deferred_images = deferred_images
+
                 wb.tabs.setCurrentIndex(0)
                 self.setCentralWidget(wb)
                 self._workbook = wb
@@ -1037,6 +1076,21 @@ class MainWindow(QMainWindow):
                         cd, sheet, viewport)
                     sheet._charts.append(chart)
                 del sheet._deferred_charts
+
+            # Create images.
+            from .embedded_image import EmbeddedImage
+            for si in range(wb.tabs.count()):
+                sheet = wb.tabs.widget(si)
+                img_dicts = getattr(sheet, '_deferred_images', [])
+                if not img_dicts:
+                    continue
+                if not hasattr(sheet, '_images'):
+                    sheet._images = []
+                viewport = sheet.table.viewport()
+                for imd in img_dicts:
+                    img = EmbeddedImage.from_dict(imd, viewport)
+                    sheet._images.append(img)
+                del sheet._deferred_images
 
             self._status_msg(
                 f"Loaded {path}", 5000)
@@ -1755,6 +1809,33 @@ class MainWindow(QMainWindow):
 
         self._status_msg(
             f"Created {plot_type} chart", 3000)
+
+    # ── Insert image ─────────────────────────────────────────────────
+
+    def _insert_image(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Insert Image", "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.svg);;All Files (*)")
+        if not path:
+            return
+        from PyQt5.QtGui import QPixmap
+        pm = QPixmap(path)
+        if pm.isNull():
+            QMessageBox.warning(self, "Image Error",
+                                f"Could not load image:\n{path}")
+            return
+        sheet = self._active_sheet()
+        if not sheet:
+            return
+        from .embedded_image import EmbeddedImage
+        viewport = sheet.table.viewport()
+        img = EmbeddedImage(pm, viewport)
+        offset = len(getattr(sheet, '_images', [])) * 30
+        img.move(40 + offset, 40 + offset)
+        if not hasattr(sheet, '_images'):
+            sheet._images = []
+        sheet._images.append(img)
+        self._status_msg("Inserted image", 3000)
 
     # ── Format operations ────────────────────────────────────────────
     def _set_number_format(self, fmt: str):
