@@ -458,9 +458,16 @@ class SheetWidget(QWidget):
 
     def column_display_name(self, col: int) -> str:
         letter = col_index_to_letter(col)
+        # Compute group number by counting X columns up to this one.
+        x_num = 0
+        for i in range(col + 1):
+            d = self._col_designations.get(
+                i, "X" if i == 0 else "Y").upper()
+            if d == "X":
+                x_num += 1
         desig = self._col_designations.get(
-            col, "x" if col == 0 else "y")
-        return f"{letter}({desig.lower()})"
+            col, "X" if col == 0 else "Y").lower()
+        return f"{letter}({desig}{x_num})"
 
     # ── Merge cells ─────────────────────────────────────────────────
     def merge_selection(self):
@@ -564,13 +571,23 @@ class SheetWidget(QWidget):
 
     # ── Headers ──────────────────────────────────────────────────────
     def _refresh_headers(self):
-        # Column headers: A(x), B(y), C(y), ... showing designation.
-        labels = []
-        for i in range(self.table.columnCount()):
-            letter = col_index_to_letter(i)
+        # Column headers: A(x1), B(y1), C(y1), D(x2), E(y2), ...
+        # Each X column gets a sequential number; Y columns inherit the
+        # number of the nearest X column to their left.
+        n = self.table.columnCount()
+        x_num = 0       # current X group number
+        col_labels = []  # (desig_letter, group_number) per column
+        for i in range(n):
             desig = self._col_designations.get(
-                i, "x" if i == 0 else "y")
-            labels.append(f"{letter}({desig.lower()})")
+                i, "X" if i == 0 else "Y").upper()
+            if desig == "X":
+                x_num += 1
+            col_labels.append((desig.lower(), x_num))
+        labels = []
+        for i in range(n):
+            letter = col_index_to_letter(i)
+            d, num = col_labels[i]
+            labels.append(f"{letter}({d}{num})")
         self.table.setHorizontalHeaderLabels(labels)
         # Row headers: 1, 2, 3...
         row_labels = [str(i + 1) for i in range(self.table.rowCount())]
