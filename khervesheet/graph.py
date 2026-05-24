@@ -1148,7 +1148,6 @@ class PlotDetailsDialog(QDialog):
         sp.addWidget(self._tabs)
         sp.setSizes([160, 480])
 
-        self._build_graph_tab()
         self._build_data_tab()
         self._build_line_tab()
         self._build_symbol_tab()
@@ -1181,35 +1180,6 @@ class PlotDetailsDialog(QDialog):
             lambda: self.apply_to_chart(self._chart))
         footer.addWidget(bb)
         outer.addLayout(footer)
-
-    def _build_graph_tab(self):
-        w = QWidget()
-        form = QFormLayout(w)
-        ax = self._chart._ax
-        self.title_edit = QLineEdit(ax.get_title())
-        self.xlabel_edit = QLineEdit(ax.get_xlabel())
-        self.ylabel_edit = QLineEdit(ax.get_ylabel())
-        self.grid_check = QCheckBox("Show Grid")
-        self.grid_check.setChecked(
-            ax.xaxis.get_gridlines()[0].get_visible()
-            if ax.xaxis.get_gridlines() else False)
-        self.legend_check = QCheckBox("Show Legend")
-        self.legend_check.setChecked(ax.get_legend() is not None)
-        self.xscale_combo = QComboBox()
-        self.xscale_combo.addItems(["linear", "log"])
-        self.xscale_combo.setCurrentText(ax.get_xscale())
-        self.yscale_combo = QComboBox()
-        self.yscale_combo.addItems(["linear", "log"])
-        self.yscale_combo.setCurrentText(ax.get_yscale())
-
-        form.addRow("Title:", self.title_edit)
-        form.addRow("X Label:", self.xlabel_edit)
-        form.addRow("Y Label:", self.ylabel_edit)
-        form.addRow(self.grid_check)
-        form.addRow(self.legend_check)
-        form.addRow("X Scale:", self.xscale_combo)
-        form.addRow("Y Scale:", self.yscale_combo)
-        self._tabs.addTab(w, "Graph")
 
     def _build_data_tab(self):
         """Data range tab — shows and allows editing the plotted range."""
@@ -1556,22 +1526,6 @@ class PlotDetailsDialog(QDialog):
     def apply_to_chart(self, chart):
         """Apply all settings to the chart."""
         ax = chart._ax
-
-        # Graph settings
-        ax.set_title(self.title_edit.text())
-        ax.set_xlabel(self.xlabel_edit.text())
-        ax.set_ylabel(self.ylabel_edit.text())
-        ax.grid(self.grid_check.isChecked())
-        ax.set_xscale(self.xscale_combo.currentText())
-        ax.set_yscale(self.yscale_combo.currentText())
-        if self.legend_check.isChecked():
-            leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
-            if leg:
-                leg.set_draggable(True)
-        else:
-            leg = ax.get_legend()
-            if leg:
-                leg.remove()
 
         # ── Apply visibility from checkboxes ──────────────────────
         for i in range(self._series_list.count()):
