@@ -613,16 +613,24 @@ class EmbeddedChart(QWidget):
         menu.addAction("Edit Legend\u2026", self._open_legend_editor)
         menu.addSeparator()
 
+        is_3d = hasattr(self._ax, 'get_zlim')
+
         # X Axis submenu
         xm = menu.addMenu("X Axis")
         xm.addAction("Linear", lambda: self._set_scale("x", "linear"))
         xm.addAction("Log\u2081\u2080",
                       lambda: self._set_scale("x", "log"))
-        xm.addSeparator()
-        x_inv = xm.addAction("Invert Axis")
-        x_inv.setCheckable(True)
-        x_inv.setChecked(self._ax.get_xlim()[0] > self._ax.get_xlim()[1])
-        x_inv.triggered.connect(lambda c: self._invert_axis("x", c))
+        if not is_3d:
+            xm.addSeparator()
+            x_inv = xm.addAction("Invert Axis")
+            x_inv.setCheckable(True)
+            try:
+                x_inv.setChecked(
+                    self._ax.get_xlim()[0] > self._ax.get_xlim()[1])
+            except Exception:
+                pass
+            x_inv.triggered.connect(
+                lambda c: self._invert_axis("x", c))
         xm.addSeparator()
         xm.addAction("Axis Properties\u2026",
                       lambda: self._open_axis_dialog("Bottom"))
@@ -632,11 +640,17 @@ class EmbeddedChart(QWidget):
         ym.addAction("Linear", lambda: self._set_scale("y", "linear"))
         ym.addAction("Log\u2081\u2080",
                       lambda: self._set_scale("y", "log"))
-        ym.addSeparator()
-        y_inv = ym.addAction("Invert Axis")
-        y_inv.setCheckable(True)
-        y_inv.setChecked(self._ax.get_ylim()[0] > self._ax.get_ylim()[1])
-        y_inv.triggered.connect(lambda c: self._invert_axis("y", c))
+        if not is_3d:
+            ym.addSeparator()
+            y_inv = ym.addAction("Invert Axis")
+            y_inv.setCheckable(True)
+            try:
+                y_inv.setChecked(
+                    self._ax.get_ylim()[0] > self._ax.get_ylim()[1])
+            except Exception:
+                pass
+            y_inv.triggered.connect(
+                lambda c: self._invert_axis("y", c))
         ym.addSeparator()
         ym.addAction("Axis Properties\u2026",
                       lambda: self._open_axis_dialog("Left"))
@@ -747,8 +761,14 @@ class EmbeddedChart(QWidget):
         # Only handle mouse events — other events (paint, resize, etc.)
         # don't carry a pos() and must pass through untouched.
         if etype not in (QEvent.MouseButtonPress, QEvent.MouseMove,
-                         QEvent.MouseButtonRelease):
+                         QEvent.MouseButtonRelease, QEvent.ContextMenu):
             return False
+
+        # Right-click context menu: handle ourselves, don't let
+        # matplotlib's canvas process it (can crash with 3D axes).
+        if etype == QEvent.ContextMenu:
+            self.contextMenuEvent(event)
+            return True
 
         # Map event pos to canvas-local and chart-widget coords.
         if obj is self._canvas:
@@ -759,6 +779,11 @@ class EmbeddedChart(QWidget):
         wpos = self._canvas.mapToParent(canvas_pos)
 
         if etype == QEvent.MouseButtonPress:
+            # Block right-click from reaching matplotlib (prevents
+            # crashes in 3D axes and lets our contextMenuEvent fire).
+            if event.button() == Qt.RightButton:
+                self._select()
+                return True
             if event.button() == Qt.LeftButton:
                 self._select()
                 edge = self._hit_edge(wpos)
