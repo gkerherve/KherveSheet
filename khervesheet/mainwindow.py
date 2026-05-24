@@ -40,6 +40,11 @@ class MainWindow(QMainWindow):
         self._recent_files: list = (
             self._settings.value("recent_files", []) or [])
         self._undo_stack = QUndoStack(self)
+        # Page setup defaults (used by Print).
+        self._page_orientation = "portrait"
+        self._page_size = ("A4", 210, 297)
+        self._page_margins_mm = {"top": 25.4, "bottom": 25.4,
+                                 "left": 19.05, "right": 19.05}
         self._init_ui()
 
     # ── UI setup ─────────────────────────────────────────────────────
@@ -75,6 +80,8 @@ class MainWindow(QMainWindow):
             if not getattr(s, '_fmt_connected', False):
                 s.table.currentCellChanged.connect(
                     lambda *_: self._update_format_toolbar())
+                s.table.itemSelectionChanged.connect(
+                    self._update_selection_summary)
                 s._fmt_connected = True
 
     # ── Title bar ────────────────────────────────────────────────────
@@ -145,6 +152,28 @@ class MainWindow(QMainWindow):
 
         # ── View ─────────────────────────────────────────────────────
         view_menu = mb.addMenu("&View")
+
+        # View modes.
+        self._view_normal_act = view_menu.addAction(
+            "Normal", lambda: self._set_view_mode("normal"))
+        self._view_normal_act.setCheckable(True)
+        self._view_normal_act.setChecked(True)
+        self._view_pagelayout_act = view_menu.addAction(
+            "Page Layout", lambda: self._set_view_mode("page_layout"))
+        self._view_pagelayout_act.setCheckable(True)
+        view_menu.addSeparator()
+
+        # Gridlines / Headings toggles.
+        self._gridlines_act = view_menu.addAction(
+            "Gridlines", self._toggle_gridlines)
+        self._gridlines_act.setCheckable(True)
+        self._gridlines_act.setChecked(True)
+        self._headings_act = view_menu.addAction(
+            "Headings", self._toggle_headings)
+        self._headings_act.setCheckable(True)
+        self._headings_act.setChecked(True)
+        view_menu.addSeparator()
+
         view_menu.addAction("Zoom In", self._zoom_in, "Ctrl+=")
         view_menu.addAction("Zoom Out", self._zoom_out, "Ctrl+-")
         view_menu.addAction("Reset Zoom", self._zoom_reset, "Ctrl+0")
@@ -160,6 +189,31 @@ class MainWindow(QMainWindow):
             act = theme_menu.addAction(name)
             act.triggered.connect(
                 lambda _, n=name: self._apply_theme(n))
+
+        # ── Page Layout ─────────────────────────────────────────────
+        page_menu = mb.addMenu("Page &Layout")
+
+        page_menu.addAction("Margins\u2026", self._page_margins)
+        orient_menu = page_menu.addMenu("Orientation")
+        self._orient_portrait = orient_menu.addAction(
+            "Portrait", lambda: self._set_orientation("portrait"))
+        self._orient_portrait.setCheckable(True)
+        self._orient_portrait.setChecked(True)
+        self._orient_landscape = orient_menu.addAction(
+            "Landscape", lambda: self._set_orientation("landscape"))
+        self._orient_landscape.setCheckable(True)
+
+        size_menu = page_menu.addMenu("Size")
+        for name, w, h in [("Letter", 215.9, 279.4),
+                            ("A4", 210, 297),
+                            ("A3", 297, 420),
+                            ("Legal", 215.9, 355.6)]:
+            size_menu.addAction(
+                f"{name} ({w:.0f} \u00d7 {h:.0f} mm)",
+                lambda n=name, ww=w, hh=h: self._set_page_size(
+                    n, ww, hh))
+        page_menu.addSeparator()
+        page_menu.addAction("Print\u2026", self._print_sheet, "Ctrl+P")
 
         # ── Insert ───────────────────────────────────────────────────
         insert_menu = mb.addMenu("&Insert")
@@ -279,6 +333,14 @@ class MainWindow(QMainWindow):
         self._redo_act = std.addAction(
             icons.redo_icon(28), "Redo", self._undo_stack.redo)
         self._redo_act.setToolTip("Redo (Ctrl+Y)")
+        std.addSeparator()
+        fx_btn = QToolButton()
+        fx_btn.setText("f(x)")
+        fx_btn.setStyleSheet(
+            "QToolButton { font-style:italic; font-weight:bold; }")
+        fx_btn.setToolTip("Insert Function (Shift+F3)")
+        fx_btn.clicked.connect(self._open_insert_function_dialog)
+        std.addWidget(fx_btn)
 
         # Font toolbar
         fmt = self.addToolBar("Font")
@@ -463,6 +525,43 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(
                 timeout, lambda: self._status_label.setText("Ready"))
 
+    def _update_selection_summary(self):
+        """Update status bar with Average, Count, Sum of selection."""
+        s = self._active_sheet()
+        if not s:
+            self._sum_label.setText("")
+            return
+        sel = s.table.selectedRanges()
+        if not sel:
+            self._sum_label.setText("")
+            return
+        values = []
+        for rng in sel:
+            for r in range(rng.topRow(), rng.bottomRow() + 1):
+                for c in range(rng.leftColumn(), rng.rightColumn() + 1):
+                    it = s.table.item(r, c)
+                    if it and it.text():
+                        try:
+                            values.append(float(it.text()))
+                        except ValueError:
+                            pass
+        if not values:
+            self._sum_label.setText("")
+            return
+        import numpy as np
+        avg = np.mean(values)
+        total = np.sum(values)
+        count = len(values)
+        # Format compactly.
+        def _fmt(v):
+            if abs(v) < 1e-10:
+                return "0"
+            if abs(v) >= 1e6 or (abs(v) < 0.01 and v != 0):
+                return f"{v:.4g}"
+            return f"{v:,.4f}".rstrip("0").rstrip(".")
+        self._sum_label.setText(
+            f"Average: {_fmt(avg)}   Count: {count}   Sum: {_fmt(total)}")
+
     def _build_status_bar(self):
         sb = QStatusBar()
         self.setStatusBar(sb)
@@ -476,9 +575,10 @@ class MainWindow(QMainWindow):
         self._progress.hide()
         sb.addPermanentWidget(self._progress)
 
-        # Selection summary (left of zoom)
+        # Selection summary (left of zoom): Average | Count | Sum
         self._sum_label = QLabel("")
-        self._sum_label.setMinimumWidth(120)
+        self._sum_label.setMinimumWidth(300)
+        self._sum_label.setStyleSheet("padding: 0 8px;")
         sb.addPermanentWidget(self._sum_label)
 
         # Zoom slider (far right)
@@ -2576,6 +2676,125 @@ class MainWindow(QMainWindow):
         s = self._active_sheet()
         if s:
             s._open_insert_function()
+
+    # ── View modes ───────────────────────────────────────────────────
+    def _set_view_mode(self, mode: str):
+        """Switch between Normal and Page Layout view."""
+        is_normal = mode == "normal"
+        self._view_normal_act.setChecked(is_normal)
+        self._view_pagelayout_act.setChecked(not is_normal)
+        s = self._active_sheet()
+        if not s:
+            return
+        if is_normal:
+            s.table.setAlternatingRowColors(False)
+            self._status_msg("Normal view", 2000)
+        else:
+            # Page Layout: show alternating row colors as a visual cue.
+            s.table.setAlternatingRowColors(True)
+            self._status_msg("Page Layout view", 2000)
+
+    def _toggle_gridlines(self):
+        """Show or hide grid lines on the active sheet."""
+        show = self._gridlines_act.isChecked()
+        for s in self._workbook.all_sheets():
+            s.table.setShowGrid(show)
+
+    def _toggle_headings(self):
+        """Show or hide row/column headers on the active sheet."""
+        show = self._headings_act.isChecked()
+        for s in self._workbook.all_sheets():
+            s.table.horizontalHeader().setVisible(show)
+            s.table.verticalHeader().setVisible(show)
+
+    # ── Page Layout operations ───────────────────────────────────────
+    def _page_margins(self):
+        """Open a dialog to set page margins for printing."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Page Margins")
+        from PyQt5.QtWidgets import (QFormLayout, QDoubleSpinBox,
+                                     QDialogButtonBox)
+        layout = QFormLayout(dlg)
+        margins = getattr(self, '_page_margins_mm',
+                          {"top": 25.4, "bottom": 25.4,
+                           "left": 19.05, "right": 19.05})
+        spins = {}
+        for side in ("top", "bottom", "left", "right"):
+            sp = QDoubleSpinBox()
+            sp.setRange(0, 100)
+            sp.setDecimals(1)
+            sp.setSuffix(" mm")
+            sp.setValue(margins[side])
+            layout.addRow(side.capitalize() + ":", sp)
+            spins[side] = sp
+        bbox = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bbox.accepted.connect(dlg.accept)
+        bbox.rejected.connect(dlg.reject)
+        layout.addRow(bbox)
+        if dlg.exec_() == QDialog.Accepted:
+            self._page_margins_mm = {
+                s: spins[s].value() for s in spins}
+            self._status_msg("Margins updated", 2000)
+
+    def _set_orientation(self, orient: str):
+        """Set page orientation for printing."""
+        is_portrait = orient == "portrait"
+        self._orient_portrait.setChecked(is_portrait)
+        self._orient_landscape.setChecked(not is_portrait)
+        self._page_orientation = orient
+        self._status_msg(
+            f"Orientation: {orient.capitalize()}", 2000)
+
+    def _set_page_size(self, name: str, w: float, h: float):
+        """Set page size for printing."""
+        self._page_size = (name, w, h)
+        self._status_msg(f"Page size: {name} ({w:.0f} × {h:.0f} mm)",
+                         2000)
+
+    def _print_sheet(self):
+        """Print the active sheet via QPrintPreviewDialog."""
+        s = self._active_sheet()
+        if not s:
+            return
+        try:
+            from PyQt5.QtPrintSupport import (QPrinter,
+                                              QPrintPreviewDialog)
+        except ImportError:
+            QMessageBox.warning(
+                self, "Print",
+                "Printing requires PyQt5 print support module.")
+            return
+        printer = QPrinter(QPrinter.HighResolution)
+        # Apply stored orientation.
+        orient = getattr(self, '_page_orientation', 'portrait')
+        if orient == 'landscape':
+            printer.setOrientation(QPrinter.Landscape)
+        else:
+            printer.setOrientation(QPrinter.Portrait)
+        preview = QPrintPreviewDialog(printer, self)
+        preview.paintRequested.connect(
+            lambda p: self._render_sheet_to_printer(p, s))
+        preview.exec_()
+
+    def _render_sheet_to_printer(self, printer, sheet):
+        """Render sheet grid to the given QPrinter."""
+        from PyQt5.QtGui import QPainter as _P
+        painter = _P(printer)
+        table = sheet.table
+        # Render visible cells onto the printer page.
+        total_w = sum(table.columnWidth(c)
+                      for c in range(table.columnCount()))
+        total_h = sum(table.rowHeight(r)
+                      for r in range(table.rowCount())
+                      if table.item(r, 0) is not None or r < 50)
+        page = printer.pageRect()
+        sx = page.width() / max(total_w, 1)
+        sy = page.height() / max(total_h, 1)
+        scale = min(sx, sy, 1.0)
+        painter.scale(scale, scale)
+        table.render(painter)
+        painter.end()
 
     # ── Data operations ──────────────────────────────────────────────
     def _set_designation(self, desig: str):
