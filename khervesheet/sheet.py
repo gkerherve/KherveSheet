@@ -1900,15 +1900,21 @@ class SheetWidget(QWidget):
         self._march_offset = (self._march_offset + 1) % 8
         self.table.viewport().update()
 
+    def _draw_marching_ants_overlay(self):
+        """Draw marching ants on the viewport (called after Qt paint)."""
+        if self._marching_range is None:
+            return
+        painter = QPainter(self.table.viewport())
+        if not painter.isActive():
+            return
+        self._paint_marching_ants(painter)
+        painter.end()
+
     def _paint_marching_ants(self, painter):
         """Draw the animated dashed border on the viewport."""
         rng = self._marching_range
         if rng is None:
             return
-        # Compute pixel rect from cell geometry.
-        top_left = self.table.visualItemRect(
-            self.table.item(rng.topRow(), rng.leftColumn())
-            or self.table.invisibleRootItem())
         # Use columnViewportPosition / rowViewportPosition for accuracy.
         x1 = self.table.columnViewportPosition(rng.leftColumn())
         y1 = self.table.rowViewportPosition(rng.topRow())
@@ -2431,13 +2437,13 @@ class SheetWidget(QWidget):
         # Paint marching ants overlay after the viewport paints normally.
         if (etype == QEvent.Paint and self._marching_range is not None
                 and not self._painting_ants):
+            # Let Qt paint the cells first, then overlay marching ants.
             self._painting_ants = True
-            obj.event(event)  # let the viewport paint itself
-            painter = QPainter(self.table.viewport())
-            self._paint_marching_ants(painter)
-            painter.end()
+            result = super().eventFilter(obj, event)  # noqa: F841
+            # Schedule ants drawing for after Qt finishes painting.
+            QTimer.singleShot(0, self._draw_marching_ants_overlay)
             self._painting_ants = False
-            return True
+            return False  # let Qt do its normal painting
 
         if etype == QEvent.MouseMove and not self._fill_dragging:
             hr = self._fill_handle_rect()
