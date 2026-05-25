@@ -21,7 +21,7 @@ from PyQt5.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
     QMenu, QInputDialog, QLineEdit, QLabel, QAbstractItemView,
     QHeaderView, QStyledItemDelegate, QApplication,
-    QTableWidgetSelectionRange,
+    QTableWidgetSelectionRange, QAbstractItemDelegate,
 )
 
 
@@ -2345,6 +2345,19 @@ class SheetWidget(QWidget):
                 if self._formula_entry_cell is not None:
                     self._exit_formula_mode()
                     return True
+            elif key in (Qt.Key_Return, Qt.Key_Enter):
+                # Commit inline edit and move to next row (Excel behavior).
+                r = self.table.currentRow()
+                c = self.table.currentColumn()
+                editor = self._find_inline_editor()
+                if editor:
+                    self.table.commitData(editor)
+                    self.table.closeEditor(
+                        editor, QAbstractItemDelegate.NoHint)
+                next_row = r + 1
+                if next_row < self.row_count():
+                    self.table.setCurrentCell(next_row, c)
+                return True
             elif key in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right):
                 # Find active inline editor.
                 editor = self._find_inline_editor()
