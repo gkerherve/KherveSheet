@@ -2071,6 +2071,9 @@ class MainWindow(QMainWindow):
     def _apply_theme(self, name):
         from .app import apply_theme
         apply_theme(QApplication.instance(), name)
+        # Persist the choice so it's restored on next launch.
+        from PyQt5.QtCore import QSettings
+        QSettings("KherveSheet", "KherveSheet").setValue("theme", name)
         self._refresh_toolbar_icons()
 
     def _refresh_toolbar_icons(self):

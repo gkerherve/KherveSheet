@@ -491,7 +491,12 @@ def main():
         QApplication.setStyle(QStyleFactory.create("Fusion"))
     except Exception:
         pass
-    apply_theme(app, "Light")
+    from PyQt5.QtCore import QSettings
+    settings = QSettings("KherveSheet", "KherveSheet")
+    saved_theme = settings.value("theme", "Light")
+    if saved_theme not in THEMES:
+        saved_theme = "Light"
+    apply_theme(app, saved_theme)
 
     icon = _make_app_icon()
     app.setWindowIcon(icon)
