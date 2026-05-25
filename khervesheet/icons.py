@@ -14,8 +14,8 @@ the Free Software Foundation, either version 3 of the License, or
 from typing import Optional
 
 from PyQt5.QtCore import QPointF, QRectF, Qt
-from PyQt5.QtGui import (QColor, QFont, QIcon, QPainter, QPen, QPixmap,
-                         QPolygonF)
+from PyQt5.QtGui import (QBrush, QColor, QFont, QIcon, QPainter, QPen,
+                         QPixmap, QPolygonF)
 from PyQt5.QtWidgets import QApplication, QStyle
 
 
