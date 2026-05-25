@@ -768,27 +768,29 @@ class SheetWidget(QWidget):
 
     def set_designation(self, col: int, desig: str):
         old_desig = self._col_designations.get(col)
-        self._col_designations[col] = desig
+        if desig.upper() == "NONE":
+            self._col_designations.pop(col, None)
+        else:
+            self._col_designations[col] = desig
         self._refresh_headers()
         if self._undo_stack:
             self._undo_stack.push(
                 SetDesignationCmd(self, col, old_desig, desig))
 
     def get_designation(self, col: int) -> str:
-        return self._col_designations.get(col, "Y" if col > 0 else "X")
+        return self._col_designations.get(col, "None")
 
     def column_display_name(self, col: int) -> str:
         letter = col_index_to_letter(col)
-        # Compute group number by counting X columns up to this one.
+        desig = self._col_designations.get(col, "None").upper()
+        if desig == "NONE":
+            return letter
         x_num = 0
         for i in range(col + 1):
-            d = self._col_designations.get(
-                i, "X" if i == 0 else "Y").upper()
+            d = self._col_designations.get(i, "None").upper()
             if d == "X":
                 x_num += 1
-        desig = self._col_designations.get(
-            col, "X" if col == 0 else "Y").lower()
-        return f"{letter}({desig}{x_num})"
+        return f"{letter}({desig.lower()}{x_num})"
 
     # ── Merge cells ─────────────────────────────────────────────────
     def merge_selection(self):
@@ -902,23 +904,24 @@ class SheetWidget(QWidget):
 
     # ── Headers ──────────────────────────────────────────────────────
     def _refresh_headers(self):
-        # Column headers: A(x1), B(y1), C(y1), D(x2), E(y2), ...
-        # Each X column gets a sequential number; Y columns inherit the
-        # number of the nearest X column to their left.
+        # Column headers: plain "A" for undesignated columns,
+        # "B(x1)", "C(y1)", "D(y1)", "E(x2)", "F(y2)", ... for designated.
         n = self.table.columnCount()
         x_num = 0       # current X group number
-        col_labels = []  # (desig_letter, group_number) per column
+        col_labels = []  # (desig_upper, group_number) per column
         for i in range(n):
-            desig = self._col_designations.get(
-                i, "X" if i == 0 else "Y").upper()
+            desig = self._col_designations.get(i, "None").upper()
             if desig == "X":
                 x_num += 1
-            col_labels.append((desig.lower(), x_num))
+            col_labels.append((desig, x_num))
         labels = []
         for i in range(n):
             letter = col_index_to_letter(i)
             d, num = col_labels[i]
-            labels.append(f"{letter}({d}{num})")
+            if d == "NONE":
+                labels.append(letter)
+            else:
+                labels.append(f"{letter}({d.lower()}{num})")
         self.table.setHorizontalHeaderLabels(labels)
         # Row headers: 1, 2, 3...
         row_labels = [str(i + 1) for i in range(self.table.rowCount())]
@@ -1765,7 +1768,7 @@ class SheetWidget(QWidget):
 
         # Designation
         desig_menu = menu.addMenu("Set As")
-        for d in ("X", "Y"):
+        for d in ("X", "Y", "None"):
             desig_menu.addAction(
                 d, lambda _=False, dd=d, cc=col:
                 self.set_designation(cc, dd))

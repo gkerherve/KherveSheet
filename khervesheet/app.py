@@ -57,6 +57,23 @@ QSpinBox::up-button, QDoubleSpinBox::up-button,
 QSpinBox::down-button, QDoubleSpinBox::down-button {
     min-width: 18px; min-height: 10px;
 }
+QToolBar QComboBox, QToolBar QFontComboBox {
+    border: 1px solid palette(mid);
+    border-radius: 4px;
+    padding: 3px 6px;
+    min-height: 20px;
+}
+QToolBar QComboBox:hover, QToolBar QFontComboBox:hover {
+    border-color: palette(highlight);
+}
+QToolBar QComboBox::drop-down, QToolBar QFontComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
+    width: 18px;
+    border-left: 1px solid palette(mid);
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+}
 """
 
 # ── Light theme ──────────────────────────────────────────────────
