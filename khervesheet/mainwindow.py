@@ -322,8 +322,7 @@ class MainWindow(QMainWindow):
         format_menu.addSeparator()
         fc_act = format_menu.addAction(
             "Format Cells\u2026\tCtrl+1", self._open_format_cells_dialog)
-        # QShortcut already imported at module level
-        from PyQt5.QtGui import QKeySequence
+        # QShortcut, QKeySequence already imported at module level
         QShortcut(QKeySequence("Ctrl+1"), self,
                   self._open_format_cells_dialog)
 
