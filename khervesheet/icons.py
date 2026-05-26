@@ -141,7 +141,7 @@ def make_app_icon() -> QIcon:
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing, True)
-    p.setBrush(QColor(60, 90, 160))
+    p.setBrush(QColor(34, 139, 34))
     p.setPen(Qt.NoPen)
     p.drawRoundedRect(0, 0, 32, 32, 6, 6)
     p.setPen(Qt.white)
