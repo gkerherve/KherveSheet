@@ -68,6 +68,7 @@ class EmbeddedChart(QWidget):
         self._legend_dragging = False
         self._keep_ratio = False      # fixed aspect-ratio resize
         self._aspect_ratio = 480 / 320  # w/h ratio at creation
+        self._tight_layout = True       # tight layout enabled by default
 
         self.setMinimumSize(240, 180)
         self.resize(480, 320)
@@ -308,6 +309,11 @@ class EmbeddedChart(QWidget):
             d["axis_props"] = self._axis_props
         if self._keep_ratio:
             d["keep_ratio"] = True
+        if not self._tight_layout:
+            d["tight_layout"] = False
+        if hasattr(self, '_legend_font'):
+            d["legend_font"] = self._legend_font
+            d["legend_size"] = self._legend_size
         if self._x_col is not None:
             d["x_col"] = self._x_col
         if self._y_cols:
@@ -333,6 +339,12 @@ class EmbeddedChart(QWidget):
         if d.get("keep_ratio"):
             chart._keep_ratio = True
             chart._aspect_ratio = w / max(h, 1)
+        if d.get("tight_layout") is False:
+            chart._tight_layout = False
+            try:
+                chart._figure.set_layout_engine("none")
+            except Exception:
+                pass
         ax = chart._ax
         ax.set_title(d.get("title", ""))
         ax.set_xlabel(d.get("xlabel", "X"))
@@ -409,6 +421,18 @@ class EmbeddedChart(QWidget):
                     i, fm, sd.get("fill_target", 0),
                     sd.get("fill_color", "#1f77b4"),
                     sd.get("fill_alpha", 0.3))
+        # Restore legend font if saved.
+        leg_font = d.get("legend_font")
+        leg_size = d.get("legend_size")
+        if leg_font:
+            chart._legend_font = leg_font
+            chart._legend_size = leg_size or 8
+            leg = ax.get_legend()
+            if leg:
+                prop = {"family": leg_font, "size": chart._legend_size}
+                leg = ax.legend(loc="best", framealpha=0.8, prop=prop)
+                if leg:
+                    leg.set_draggable(True)
         chart._canvas.draw_idle()
         return chart
 
@@ -744,6 +768,12 @@ class EmbeddedChart(QWidget):
         ratio_act.setChecked(self._keep_ratio)
         ratio_act.triggered.connect(self._toggle_keep_ratio)
 
+        # Tight layout toggle
+        tight_act = menu.addAction("Tight Layout")
+        tight_act.setCheckable(True)
+        tight_act.setChecked(self._tight_layout)
+        tight_act.triggered.connect(self._toggle_tight_layout)
+
         # Resize presets — dimensions at 100 dpi (pixels = inches × 100)
         size_menu = menu.addMenu("Resize")
         # Journal publication sizes
@@ -800,6 +830,23 @@ class EmbeddedChart(QWidget):
         self._keep_ratio = checked
         if checked:
             self._aspect_ratio = self.width() / max(self.height(), 1)
+
+    def _toggle_tight_layout(self, checked):
+        self._tight_layout = checked
+        if checked:
+            try:
+                self._figure.set_layout_engine("tight")
+            except Exception:
+                try:
+                    self._figure.tight_layout()
+                except Exception:
+                    pass
+        else:
+            try:
+                self._figure.set_layout_engine("none")
+            except Exception:
+                pass
+        self._canvas.draw_idle()
 
     def _resize_to(self, w, h):
         self.resize(w, h)
@@ -1822,13 +1869,13 @@ class PlotDetailsDialog(QDialog):
 # ── Legend Editor Dialog ──────────────────────────────────────────
 
 class LegendEditorDialog(QDialog):
-    """Dialog to edit legend entry names."""
+    """Dialog to edit legend entry names, font, and size."""
 
     def __init__(self, chart, parent=None):
         super().__init__(parent or chart)
         self.setWindowTitle("Edit Legend")
         self._chart = chart
-        self.resize(320, 200)
+        self.resize(380, 280)
 
         layout = QVBoxLayout(self)
 
@@ -1847,6 +1894,34 @@ class LegendEditorDialog(QDialog):
         self._show_legend.setChecked(leg is not None and leg.get_visible())
         layout.addWidget(self._show_legend)
 
+        # ── Font controls ──────────────────────────────────────────
+        from PyQt5.QtWidgets import QFontComboBox, QGroupBox, QSpinBox
+        font_group = QGroupBox("Legend Font")
+        font_lay = QHBoxLayout(font_group)
+
+        self._font_combo = QFontComboBox()
+        # Read current legend font if available.
+        cur_family = "sans-serif"
+        cur_size = 8
+        if leg and leg.get_visible():
+            try:
+                texts = leg.get_texts()
+                if texts:
+                    cur_family = texts[0].get_fontfamily()[0]
+                    cur_size = int(texts[0].get_fontsize())
+            except Exception:
+                pass
+        self._font_combo.setCurrentFont(QFont(cur_family))
+        font_lay.addWidget(self._font_combo, stretch=1)
+
+        self._size_spin = QSpinBox()
+        self._size_spin.setRange(4, 36)
+        self._size_spin.setValue(cur_size)
+        self._size_spin.setSuffix(" pt")
+        font_lay.addWidget(self._size_spin)
+
+        layout.addWidget(font_group)
+
         # OK / Cancel.
         buttons = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -1855,7 +1930,7 @@ class LegendEditorDialog(QDialog):
         layout.addWidget(buttons)
 
     def apply_to_chart(self, chart):
-        """Apply edited labels to chart series and refresh legend."""
+        """Apply edited labels, font, and size to chart legend."""
         ax = chart._ax
         for i, edit in enumerate(self._edits):
             if i >= len(chart._series):
@@ -1866,10 +1941,17 @@ class LegendEditorDialog(QDialog):
             if artist is not None and hasattr(artist, 'set_label'):
                 artist.set_label(new_label)
 
+        font_family = self._font_combo.currentFont().family()
+        font_size = self._size_spin.value()
+
         if self._show_legend.isChecked():
-            leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
+            prop = {"family": font_family, "size": font_size}
+            leg = ax.legend(loc="best", framealpha=0.8, prop=prop)
             if leg:
                 leg.set_draggable(True)
+            # Store for persistence.
+            chart._legend_font = font_family
+            chart._legend_size = font_size
         else:
             leg = ax.get_legend()
             if leg:
