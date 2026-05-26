@@ -311,6 +311,11 @@ class EmbeddedChart(QWidget):
             d["keep_ratio"] = True
         if not self._tight_layout:
             d["tight_layout"] = False
+            sp = self._figure.subplotpars
+            d["subplot_margins"] = {
+                "left": sp.left, "right": sp.right,
+                "top": sp.top, "bottom": sp.bottom,
+            }
         if hasattr(self, '_legend_font'):
             d["legend_font"] = self._legend_font
             d["legend_size"] = self._legend_size
@@ -345,6 +350,9 @@ class EmbeddedChart(QWidget):
                 chart._figure.set_layout_engine("none")
             except Exception:
                 pass
+            margins = d.get("subplot_margins")
+            if margins:
+                chart._figure.subplots_adjust(**margins)
         ax = chart._ax
         ax.set_title(d.get("title", ""))
         ax.set_xlabel(d.get("xlabel", "X"))
@@ -773,6 +781,7 @@ class EmbeddedChart(QWidget):
         tight_act.setCheckable(True)
         tight_act.setChecked(self._tight_layout)
         tight_act.triggered.connect(self._toggle_tight_layout)
+        menu.addAction("Subplot Margins\u2026", self._open_margins_dialog)
 
         # Resize presets — dimensions at 100 dpi (pixels = inches × 100)
         size_menu = menu.addMenu("Resize")
@@ -842,11 +851,31 @@ class EmbeddedChart(QWidget):
                 except Exception:
                     pass
         else:
+            # Disable auto-layout and reset to matplotlib defaults.
             try:
                 self._figure.set_layout_engine("none")
             except Exception:
                 pass
+            self._figure.subplots_adjust(
+                left=0.125, right=0.9, top=0.88, bottom=0.11,
+                wspace=0.2, hspace=0.2)
         self._canvas.draw_idle()
+
+    def _open_margins_dialog(self):
+        """Open a dialog to manually adjust subplot margins."""
+        sp = self._figure.subplotpars
+        dlg = _SubplotMarginsDialog(
+            sp.left, sp.right, sp.top, sp.bottom, self)
+        if dlg.exec_() == QDialog.Accepted:
+            vals = dlg.get_values()
+            # Turn off tight layout so manual margins stick.
+            self._tight_layout = False
+            try:
+                self._figure.set_layout_engine("none")
+            except Exception:
+                pass
+            self._figure.subplots_adjust(**vals)
+            self._canvas.draw_idle()
 
     def _resize_to(self, w, h):
         self.resize(w, h)
@@ -1958,3 +1987,36 @@ class LegendEditorDialog(QDialog):
                 leg.remove()
 
         chart._canvas.draw_idle()
+
+
+class _SubplotMarginsDialog(QDialog):
+    """Adjust subplot margins (left, right, top, bottom) with sliders."""
+
+    def __init__(self, left, right, top, bottom, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Subplot Margins")
+        self.resize(340, 200)
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        self._spins = {}
+        for name, val in (("left", left), ("right", right),
+                          ("top", top), ("bottom", bottom)):
+            spin = QDoubleSpinBox()
+            spin.setRange(0.0, 1.0)
+            spin.setSingleStep(0.01)
+            spin.setDecimals(3)
+            spin.setValue(val)
+            form.addRow(name.capitalize() + ":", spin)
+            self._spins[name] = spin
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def get_values(self):
+        return {k: s.value() for k, s in self._spins.items()}
