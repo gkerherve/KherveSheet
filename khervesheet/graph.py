@@ -75,7 +75,7 @@ class EmbeddedChart(QWidget):
 
         # ── Layout ──────────────────────────────────────────────────
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(0)
 
         # Matplotlib figure — no title bar, just the plot.
