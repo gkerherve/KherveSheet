@@ -240,36 +240,58 @@ class EmbeddedChart(QWidget):
             # Line / marker visual properties.
             artist = s.get("artist")
             if artist is not None:
-                if hasattr(artist, 'get_linestyle'):
-                    sd["linestyle"] = artist.get_linestyle()
-                if hasattr(artist, 'get_linewidth'):
-                    sd["linewidth"] = artist.get_linewidth()
-                if hasattr(artist, 'get_color'):
-                    c = artist.get_color()
-                    if isinstance(c, str):
-                        sd["color"] = c
-                    elif hasattr(c, '__len__') and len(c) >= 3:
-                        from matplotlib.colors import to_hex
-                        sd["color"] = to_hex(c)
-                if hasattr(artist, 'get_marker'):
-                    sd["marker"] = str(artist.get_marker())
-                if hasattr(artist, 'get_markersize'):
-                    sd["markersize"] = artist.get_markersize()
-                if hasattr(artist, 'get_markerfacecolor'):
-                    c = artist.get_markerfacecolor()
-                    if isinstance(c, str):
-                        sd["markerfacecolor"] = c
-                    elif hasattr(c, '__len__') and len(c) >= 3:
-                        from matplotlib.colors import to_hex
-                        sd["markerfacecolor"] = to_hex(c)
-                if hasattr(artist, 'get_markeredgecolor'):
-                    c = artist.get_markeredgecolor()
-                    if isinstance(c, str):
-                        sd["markeredgecolor"] = c
-                    elif hasattr(c, '__len__') and len(c) >= 3:
-                        from matplotlib.colors import to_hex
-                        sd["markeredgecolor"] = to_hex(c)
-                # Visibility.
+                from matplotlib.colors import to_hex
+                from matplotlib.collections import PathCollection
+                if isinstance(artist, PathCollection):
+                    # Scatter — save face/edge colors and sizes.
+                    try:
+                        fc = artist.get_facecolors()
+                        if len(fc) > 0:
+                            sd["color"] = to_hex(fc[0])
+                            sd["markerfacecolor"] = to_hex(fc[0])
+                    except Exception:
+                        pass
+                    try:
+                        ec = artist.get_edgecolors()
+                        if len(ec) > 0:
+                            sd["markeredgecolor"] = to_hex(ec[0])
+                    except Exception:
+                        pass
+                    try:
+                        sizes = artist.get_sizes()
+                        if len(sizes) > 0:
+                            sd["markersize"] = float(sizes[0] ** 0.5)
+                    except Exception:
+                        pass
+                else:
+                    # Line2D artist.
+                    if hasattr(artist, 'get_linestyle'):
+                        sd["linestyle"] = artist.get_linestyle()
+                    if hasattr(artist, 'get_linewidth'):
+                        sd["linewidth"] = artist.get_linewidth()
+                    if hasattr(artist, 'get_color'):
+                        c = artist.get_color()
+                        if isinstance(c, str):
+                            sd["color"] = c
+                        elif hasattr(c, '__len__') and len(c) >= 3:
+                            sd["color"] = to_hex(c)
+                    if hasattr(artist, 'get_marker'):
+                        sd["marker"] = str(artist.get_marker())
+                    if hasattr(artist, 'get_markersize'):
+                        sd["markersize"] = artist.get_markersize()
+                    if hasattr(artist, 'get_markerfacecolor'):
+                        c = artist.get_markerfacecolor()
+                        if isinstance(c, str):
+                            sd["markerfacecolor"] = c
+                        elif hasattr(c, '__len__') and len(c) >= 3:
+                            sd["markerfacecolor"] = to_hex(c)
+                    if hasattr(artist, 'get_markeredgecolor'):
+                        c = artist.get_markeredgecolor()
+                        if isinstance(c, str):
+                            sd["markeredgecolor"] = c
+                        elif hasattr(c, '__len__') and len(c) >= 3:
+                            sd["markeredgecolor"] = to_hex(c)
+                # Visibility (works for both types).
                 if hasattr(artist, 'get_visible'):
                     if not artist.get_visible():
                         sd["visible"] = False
@@ -401,28 +423,51 @@ class EmbeddedChart(QWidget):
             chart._source_sheet.data_changed.connect(
                 chart._on_data_changed)
         # Restore visual properties, fill, and visibility per series.
+        from matplotlib.collections import PathCollection
         for i, sd in enumerate(series):
             if i >= len(chart._series):
                 break
             artist = chart._series[i].get("artist")
             if artist is not None:
-                if "linestyle" in sd and hasattr(artist, 'set_linestyle'):
-                    artist.set_linestyle(sd["linestyle"])
-                if "linewidth" in sd and hasattr(artist, 'set_linewidth'):
-                    artist.set_linewidth(sd["linewidth"])
-                if "color" in sd and hasattr(artist, 'set_color'):
-                    artist.set_color(sd["color"])
-                if "marker" in sd and hasattr(artist, 'set_marker'):
-                    mk = sd["marker"]
-                    artist.set_marker(mk if mk != "None" else "")
-                if "markersize" in sd and hasattr(artist, 'set_markersize'):
-                    artist.set_markersize(sd["markersize"])
-                if "markerfacecolor" in sd and hasattr(
-                        artist, 'set_markerfacecolor'):
-                    artist.set_markerfacecolor(sd["markerfacecolor"])
-                if "markeredgecolor" in sd and hasattr(
-                        artist, 'set_markeredgecolor'):
-                    artist.set_markeredgecolor(sd["markeredgecolor"])
+                is_scatter = isinstance(artist, PathCollection)
+                if is_scatter:
+                    # Scatter: restore face/edge colors and sizes.
+                    if "color" in sd or "markerfacecolor" in sd:
+                        c = sd.get("markerfacecolor", sd.get("color"))
+                        try:
+                            artist.set_facecolors(c)
+                        except Exception:
+                            pass
+                    if "markeredgecolor" in sd:
+                        try:
+                            artist.set_edgecolors(sd["markeredgecolor"])
+                        except Exception:
+                            pass
+                    if "markersize" in sd:
+                        try:
+                            artist.set_sizes([sd["markersize"] ** 2])
+                        except Exception:
+                            pass
+                else:
+                    # Line2D.
+                    if "linestyle" in sd and hasattr(artist, 'set_linestyle'):
+                        artist.set_linestyle(sd["linestyle"])
+                    if "linewidth" in sd and hasattr(artist, 'set_linewidth'):
+                        artist.set_linewidth(sd["linewidth"])
+                    if "color" in sd and hasattr(artist, 'set_color'):
+                        artist.set_color(sd["color"])
+                    if "marker" in sd and hasattr(artist, 'set_marker'):
+                        mk = sd["marker"]
+                        artist.set_marker(mk if mk != "None" else "")
+                    if "markersize" in sd and hasattr(
+                            artist, 'set_markersize'):
+                        artist.set_markersize(sd["markersize"])
+                    if "markerfacecolor" in sd and hasattr(
+                            artist, 'set_markerfacecolor'):
+                        artist.set_markerfacecolor(sd["markerfacecolor"])
+                    if "markeredgecolor" in sd and hasattr(
+                            artist, 'set_markeredgecolor'):
+                        artist.set_markeredgecolor(sd["markeredgecolor"])
                 if sd.get("visible") is False:
                     if hasattr(artist, 'set_visible'):
                         artist.set_visible(False)
@@ -1702,39 +1747,63 @@ class PlotDetailsDialog(QDialog):
         n_pts = len(s.get("x", []))
         self.data_info.setText(str(n_pts))
 
-        # Try to read line properties from the artist.
-        if hasattr(artist, 'get_linestyle'):
-            ls = artist.get_linestyle()
-            for i, (_, code) in enumerate(_LINE_STYLES):
-                if code == ls:
-                    self.line_style.setCurrentIndex(i)
-                    break
-        if hasattr(artist, 'get_linewidth'):
-            self.line_width.setValue(artist.get_linewidth())
-        if hasattr(artist, 'get_color'):
-            c = artist.get_color()
-            if isinstance(c, str):
-                self.line_color.set_color(c)
-            elif hasattr(c, '__len__') and len(c) >= 3:
-                from matplotlib.colors import to_hex
-                self.line_color.set_color(to_hex(c))
+        # Try to read line/scatter properties from the artist.
+        from matplotlib.colors import to_hex
+        from matplotlib.collections import PathCollection
+        is_scatter = isinstance(artist, PathCollection)
 
-        # Marker
-        if hasattr(artist, 'get_marker'):
-            mk = artist.get_marker()
-            for i, (_, code) in enumerate(_MARKERS):
-                if code == str(mk):
-                    self.marker_combo.setCurrentIndex(i)
-                    break
-        if hasattr(artist, 'get_markersize'):
-            self.marker_size.setValue(artist.get_markersize())
-        if hasattr(artist, 'get_markerfacecolor'):
-            c = artist.get_markerfacecolor()
-            if isinstance(c, str) and c != 'none':
-                self.marker_fill.set_color(c)
-            elif hasattr(c, '__len__') and len(c) >= 3:
-                from matplotlib.colors import to_hex
-                self.marker_fill.set_color(to_hex(c))
+        if is_scatter:
+            # Scatter: PathCollection has different APIs.
+            try:
+                fc = artist.get_facecolors()
+                if len(fc) > 0:
+                    self.line_color.set_color(to_hex(fc[0]))
+                    self.marker_fill.set_color(to_hex(fc[0]))
+            except Exception:
+                pass
+            try:
+                ec = artist.get_edgecolors()
+                if len(ec) > 0:
+                    self.marker_edge.set_color(to_hex(ec[0]))
+            except Exception:
+                pass
+            try:
+                sizes = artist.get_sizes()
+                if len(sizes) > 0:
+                    self.marker_size.setValue(sizes[0] ** 0.5)
+            except Exception:
+                pass
+        elif artist is not None:
+            # Line2D artist.
+            if hasattr(artist, 'get_linestyle'):
+                ls = artist.get_linestyle()
+                for i, (_, code) in enumerate(_LINE_STYLES):
+                    if code == ls:
+                        self.line_style.setCurrentIndex(i)
+                        break
+            if hasattr(artist, 'get_linewidth'):
+                self.line_width.setValue(artist.get_linewidth())
+            if hasattr(artist, 'get_color'):
+                c = artist.get_color()
+                if isinstance(c, str):
+                    self.line_color.set_color(c)
+                elif hasattr(c, '__len__') and len(c) >= 3:
+                    self.line_color.set_color(to_hex(c))
+            # Marker
+            if hasattr(artist, 'get_marker'):
+                mk = artist.get_marker()
+                for i, (_, code) in enumerate(_MARKERS):
+                    if code == str(mk):
+                        self.marker_combo.setCurrentIndex(i)
+                        break
+            if hasattr(artist, 'get_markersize'):
+                self.marker_size.setValue(artist.get_markersize())
+            if hasattr(artist, 'get_markerfacecolor'):
+                c = artist.get_markerfacecolor()
+                if isinstance(c, str) and c != 'none':
+                    self.marker_fill.set_color(c)
+                elif hasattr(c, '__len__') and len(c) >= 3:
+                    self.marker_fill.set_color(to_hex(c))
 
         # Fill — restore from series dict.
         fm = s.get("fill_mode", "none")
@@ -1747,7 +1816,14 @@ class PlotDetailsDialog(QDialog):
         fc = s.get("fill_color")
         if fc:
             self.fill_color.set_color(fc)
-        elif hasattr(artist, 'get_color'):
+        elif is_scatter:
+            try:
+                fcs = artist.get_facecolors()
+                if len(fcs) > 0:
+                    self.fill_color.set_color(to_hex(fcs[0]))
+            except Exception:
+                pass
+        elif artist is not None and hasattr(artist, 'get_color'):
             c = artist.get_color()
             if isinstance(c, str):
                 self.fill_color.set_color(c)
@@ -1813,26 +1889,47 @@ class PlotDetailsDialog(QDialog):
             artist = s.get("artist")
             s["label"] = self.label_edit.text()
 
-            if hasattr(artist, 'set_linestyle'):
-                idx = self.line_style.currentIndex()
-                artist.set_linestyle(_LINE_STYLES[idx][1])
-            if hasattr(artist, 'set_linewidth'):
-                artist.set_linewidth(self.line_width.value())
-            if hasattr(artist, 'set_color'):
-                artist.set_color(self.line_color.color())
-            if hasattr(artist, 'set_label'):
-                artist.set_label(self.label_edit.text())
+            from matplotlib.collections import PathCollection
+            is_scatter = isinstance(artist, PathCollection)
 
-            if hasattr(artist, 'set_marker'):
-                idx = self.marker_combo.currentIndex()
-                mk = _MARKERS[idx][1]
-                artist.set_marker(mk if mk != "None" else "")
-            if hasattr(artist, 'set_markersize'):
-                artist.set_markersize(self.marker_size.value())
-            if hasattr(artist, 'set_markerfacecolor'):
-                artist.set_markerfacecolor(self.marker_fill.color())
-            if hasattr(artist, 'set_markeredgecolor'):
-                artist.set_markeredgecolor(self.marker_edge.color())
+            if is_scatter:
+                # PathCollection (scatter) — use collection APIs.
+                try:
+                    artist.set_facecolors(self.marker_fill.color())
+                except Exception:
+                    pass
+                try:
+                    artist.set_edgecolors(self.marker_edge.color())
+                except Exception:
+                    pass
+                try:
+                    sz = self.marker_size.value()
+                    artist.set_sizes([sz ** 2])
+                except Exception:
+                    pass
+                if hasattr(artist, 'set_label'):
+                    artist.set_label(self.label_edit.text())
+            elif artist is not None:
+                # Line2D artist.
+                if hasattr(artist, 'set_linestyle'):
+                    idx = self.line_style.currentIndex()
+                    artist.set_linestyle(_LINE_STYLES[idx][1])
+                if hasattr(artist, 'set_linewidth'):
+                    artist.set_linewidth(self.line_width.value())
+                if hasattr(artist, 'set_color'):
+                    artist.set_color(self.line_color.color())
+                if hasattr(artist, 'set_label'):
+                    artist.set_label(self.label_edit.text())
+                if hasattr(artist, 'set_marker'):
+                    idx = self.marker_combo.currentIndex()
+                    mk = _MARKERS[idx][1]
+                    artist.set_marker(mk if mk != "None" else "")
+                if hasattr(artist, 'set_markersize'):
+                    artist.set_markersize(self.marker_size.value())
+                if hasattr(artist, 'set_markerfacecolor'):
+                    artist.set_markerfacecolor(self.marker_fill.color())
+                if hasattr(artist, 'set_markeredgecolor'):
+                    artist.set_markeredgecolor(self.marker_edge.color())
 
             # Fill
             fm = self.fill_mode.currentIndex()
