@@ -66,6 +66,8 @@ class EmbeddedChart(QWidget):
         self._resizing = False
         self._resize_edge = None      # which edges: combination of t/b/l/r
         self._legend_dragging = False
+        self._keep_ratio = False      # fixed aspect-ratio resize
+        self._aspect_ratio = 480 / 320  # w/h ratio at creation
 
         self.setMinimumSize(240, 180)
         self.resize(480, 320)
@@ -304,6 +306,8 @@ class EmbeddedChart(QWidget):
         }
         if self._axis_props:
             d["axis_props"] = self._axis_props
+        if self._keep_ratio:
+            d["keep_ratio"] = True
         if self._x_col is not None:
             d["x_col"] = self._x_col
         if self._y_cols:
@@ -324,7 +328,11 @@ class EmbeddedChart(QWidget):
                 np.array(s["x"]), np.array(s["y"]),
                 s["label"], s["plot_type"])
         chart.move(d.get("pos_x", 40), d.get("pos_y", 40))
-        chart.resize(d.get("width", 480), d.get("height", 320))
+        w, h = d.get("width", 480), d.get("height", 320)
+        chart.resize(w, h)
+        if d.get("keep_ratio"):
+            chart._keep_ratio = True
+            chart._aspect_ratio = w / max(h, 1)
         ax = chart._ax
         ax.set_title(d.get("title", ""))
         ax.set_xlabel(d.get("xlabel", "X"))
@@ -729,12 +737,75 @@ class EmbeddedChart(QWidget):
                       lambda: self._open_axis_dialog("Left"))
 
         menu.addSeparator()
+
+        # Keep proportions toggle
+        ratio_act = menu.addAction("Keep Proportions")
+        ratio_act.setCheckable(True)
+        ratio_act.setChecked(self._keep_ratio)
+        ratio_act.triggered.connect(self._toggle_keep_ratio)
+
+        # Resize presets
+        size_menu = menu.addMenu("Resize")
+        for label, w, h in (
+            ("Small (320\u00d7240)", 320, 240),
+            ("Medium (480\u00d7320)", 480, 320),
+            ("Large (640\u00d7480)", 640, 480),
+            ("Wide (800\u00d7450)", 800, 450),
+            ("HD (960\u00d7540)", 960, 540),
+            ("Full HD (1280\u00d7720)", 1280, 720),
+            ("Square (480\u00d7480)", 480, 480),
+            ("Square (640\u00d7640)", 640, 640),
+        ):
+            size_menu.addAction(
+                label, lambda _=False, ww=w, hh=h: self._resize_to(ww, hh))
+
+        # Export image
+        export_menu = menu.addMenu("Export Image")
+        export_menu.addAction("Save as PNG\u2026",
+                              lambda: self._export_image("png"))
+        export_menu.addAction("Save as PDF\u2026",
+                              lambda: self._export_image("pdf"))
+
+        menu.addSeparator()
         menu.addAction("Update Plot", self._refresh_data)
         menu.addSeparator()
         menu.addAction("Pop Out to Window", self._pop_out)
         menu.addSeparator()
         menu.addAction("Close Chart", self._close_chart)
         menu.exec_(event.globalPos())
+
+    def _toggle_keep_ratio(self, checked):
+        self._keep_ratio = checked
+        if checked:
+            self._aspect_ratio = self.width() / max(self.height(), 1)
+
+    def _resize_to(self, w, h):
+        self.resize(w, h)
+        self._aspect_ratio = w / max(h, 1)
+
+    def _constrain_ratio(self, geo, edge):
+        """Enforce fixed aspect ratio on *geo* QRect during resize."""
+        if not self._keep_ratio:
+            return geo
+        r = self._aspect_ratio
+        # Determine dominant axis from drag edge.
+        if 'r' in edge or 'l' in edge:
+            new_h = max(int(geo.width() / r), self.minimumHeight())
+            geo.setHeight(new_h)
+        else:
+            new_w = max(int(geo.height() * r), self.minimumWidth())
+            geo.setWidth(new_w)
+        return geo
+
+    def _export_image(self, fmt):
+        from PyQt5.QtWidgets import QFileDialog
+        ext = fmt.upper()
+        path, _ = QFileDialog.getSaveFileName(
+            self, f"Export Chart as {ext}", "",
+            f"{ext} files (*.{fmt})")
+        if path:
+            self._figure.savefig(path, format=fmt, dpi=150,
+                                 bbox_inches='tight')
 
     def _pop_out(self):
         """Detach from grid and show as an independent window."""
@@ -895,6 +966,7 @@ class EmbeddedChart(QWidget):
                     geo.setLeft(geo.left() + delta.x())
                 if 't' in edge:
                     geo.setTop(geo.top() + delta.y())
+                geo = self._constrain_ratio(geo, edge)
                 if (geo.width() >= self.minimumWidth() and
                         geo.height() >= self.minimumHeight()):
                     self.setGeometry(geo)
@@ -985,6 +1057,7 @@ class EmbeddedChart(QWidget):
                 geo.setLeft(geo.left() + delta.x())
             if 't' in edge:
                 geo.setTop(geo.top() + delta.y())
+            geo = self._constrain_ratio(geo, edge)
             if geo.width() >= self.minimumWidth() and \
                geo.height() >= self.minimumHeight():
                 self.setGeometry(geo)
