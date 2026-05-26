@@ -744,17 +744,39 @@ class EmbeddedChart(QWidget):
         ratio_act.setChecked(self._keep_ratio)
         ratio_act.triggered.connect(self._toggle_keep_ratio)
 
-        # Resize presets
+        # Resize presets — dimensions at 100 dpi (pixels = inches × 100)
         size_menu = menu.addMenu("Resize")
+        # Journal publication sizes
+        pub_menu = size_menu.addMenu("Publication")
+        for label, w, h in (
+            ('Single column  (3.3\u2033\u00d72.5\u2033 / 84\u00d763 mm)',
+             330, 250),
+            ('1.5 column  (5.0\u2033\u00d73.75\u2033 / 127\u00d795 mm)',
+             500, 375),
+            ('Full width  (7.0\u2033\u00d75.25\u2033 / 178\u00d7133 mm)',
+             700, 525),
+            ('Full width short  (7.0\u2033\u00d74.0\u2033 / 178\u00d7102 mm)',
+             700, 400),
+            ('Nature single  (3.5\u2033\u00d72.6\u2033 / 89\u00d766 mm)',
+             350, 260),
+            ('Nature double  (7.2\u2033\u00d75.4\u2033 / 183\u00d7137 mm)',
+             720, 540),
+            ('ACS single  (3.25\u2033\u00d72.5\u2033 / 83\u00d763 mm)',
+             325, 250),
+            ('ACS double  (7.0\u2033\u00d74.0\u2033 / 178\u00d7102 mm)',
+             700, 400),
+            ('Square  (4.0\u2033\u00d74.0\u2033 / 102\u00d7102 mm)',
+             400, 400),
+        ):
+            pub_menu.addAction(
+                label, lambda _=False, ww=w, hh=h: self._resize_to(ww, hh))
+        size_menu.addSeparator()
+        # General screen sizes
         for label, w, h in (
             ("Small (320\u00d7240)", 320, 240),
             ("Medium (480\u00d7320)", 480, 320),
             ("Large (640\u00d7480)", 640, 480),
-            ("Wide (800\u00d7450)", 800, 450),
             ("HD (960\u00d7540)", 960, 540),
-            ("Full HD (1280\u00d7720)", 1280, 720),
-            ("Square (480\u00d7480)", 480, 480),
-            ("Square (640\u00d7640)", 640, 640),
         ):
             size_menu.addAction(
                 label, lambda _=False, ww=w, hh=h: self._resize_to(ww, hh))
@@ -804,7 +826,7 @@ class EmbeddedChart(QWidget):
             self, f"Export Chart as {ext}", "",
             f"{ext} files (*.{fmt})")
         if path:
-            self._figure.savefig(path, format=fmt, dpi=150,
+            self._figure.savefig(path, format=fmt, dpi=300,
                                  bbox_inches='tight')
 
     def _pop_out(self):
