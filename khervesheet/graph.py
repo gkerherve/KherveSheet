@@ -857,7 +857,7 @@ class EmbeddedChart(QWidget):
             except Exception:
                 pass
             self._figure.subplots_adjust(
-                left=0.125, right=0.9, top=0.88, bottom=0.11,
+                left=0.15, right=0.95, top=0.92, bottom=0.15,
                 wspace=0.2, hspace=0.2)
         self._canvas.draw_idle()
 
