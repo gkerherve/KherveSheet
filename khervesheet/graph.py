@@ -316,9 +316,19 @@ class EmbeddedChart(QWidget):
                 "left": sp.left, "right": sp.right,
                 "top": sp.top, "bottom": sp.bottom,
             }
-        if hasattr(self, '_legend_font'):
-            d["legend_font"] = self._legend_font
-            d["legend_size"] = self._legend_size
+        # Always read legend font from the actual matplotlib legend.
+        leg = self._ax.get_legend()
+        if leg and leg.get_visible():
+            d["legend_visible"] = True
+            try:
+                texts = leg.get_texts()
+                if texts:
+                    d["legend_font"] = texts[0].get_fontfamily()[0]
+                    d["legend_size"] = int(texts[0].get_fontsize())
+            except Exception:
+                pass
+        else:
+            d["legend_visible"] = False
         if self._x_col is not None:
             d["x_col"] = self._x_col
         if self._y_cols:
@@ -429,18 +439,22 @@ class EmbeddedChart(QWidget):
                     i, fm, sd.get("fill_target", 0),
                     sd.get("fill_color", "#1f77b4"),
                     sd.get("fill_alpha", 0.3))
-        # Restore legend font if saved.
+        # Restore legend visibility and font.
         leg_font = d.get("legend_font")
-        leg_size = d.get("legend_size")
-        if leg_font:
-            chart._legend_font = leg_font
-            chart._legend_size = leg_size or 8
+        leg_size = d.get("legend_size", 8)
+        leg_visible = d.get("legend_visible", True)
+        if leg_visible:
+            prop = {}
+            if leg_font:
+                prop = {"family": leg_font, "size": leg_size}
+            leg = ax.legend(loc="best", framealpha=0.8,
+                            **({"prop": prop} if prop else {"fontsize": 8}))
+            if leg:
+                leg.set_draggable(True)
+        else:
             leg = ax.get_legend()
             if leg:
-                prop = {"family": leg_font, "size": chart._legend_size}
-                leg = ax.legend(loc="best", framealpha=0.8, prop=prop)
-                if leg:
-                    leg.set_draggable(True)
+                leg.remove()
         chart._canvas.draw_idle()
         return chart
 
