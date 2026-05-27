@@ -21,22 +21,122 @@ from PyQt5.QtWidgets import (
 )
 
 
-# Common encodings users might need
+# Full encoding list matching Excel's File Origin dropdown.
+# Format: (display_label, python_codec).  Sorted alphabetically by
+# language/region, with Unicode variants at the end.
 _ENCODINGS = [
-    ("UTF-8", "utf-8"),
-    ("UTF-8 with BOM", "utf-8-sig"),
-    ("Latin-1 (ISO 8859-1)", "latin-1"),
-    ("1252: Western European (Windows)", "cp1252"),
-    ("1250: Central European (Windows)", "cp1250"),
-    ("1251: Cyrillic (Windows)", "cp1251"),
-    ("1253: Greek (Windows)", "cp1253"),
-    ("1254: Turkish (Windows)", "cp1254"),
+    ("--None--", None),
+    # ── Arabic ──────────────────────────────────────────────────────
+    ("864: Arabic (864)", "cp864"),
+    ("708: Arabic (ASMO 708)", "iso8859_6"),
+    ("720: Arabic (DOS)", "cp720"),
+    ("28596: Arabic (ISO)", "iso8859_6"),
+    ("10004: Arabic (Mac)", "mac_arabic"),
     ("1256: Arabic (Windows)", "cp1256"),
-    ("Shift-JIS (Japanese)", "shift_jis"),
-    ("GB2312 (Chinese Simplified)", "gb2312"),
-    ("EUC-KR (Korean)", "euc_kr"),
-    ("ASCII", "ascii"),
+    # ── Baltic ──────────────────────────────────────────────────────
+    ("775: Baltic (DOS)", "cp775"),
+    ("28594: Baltic (ISO)", "iso8859_4"),
+    ("1257: Baltic (Windows)", "cp1257"),
+    # ── Central European ────────────────────────────────────────────
+    ("852: Central European (DOS)", "cp852"),
+    ("28592: Central European (ISO)", "iso8859_2"),
+    ("10029: Central European (Mac)", "mac_latin2"),
+    ("1250: Central European (Windows)", "cp1250"),
+    # ── Chinese Simplified ──────────────────────────────────────────
+    ("51936: Chinese Simplified (EUC)", "euc_jp"),      # placeholder
+    ("54936: Chinese Simplified (GB18030)", "gb18030"),
+    ("936: Chinese Simplified (GB2312)", "gb2312"),
+    ("20936: Chinese Simplified (GB2312-80)", "gb2312"),
+    ("52936: Chinese Simplified (HZ)", "hz"),
+    ("50227: Chinese Simplified (ISO-2022)", "iso2022_jp"),
+    # ── Chinese Traditional ─────────────────────────────────────────
+    ("950: Chinese Traditional (Big5)", "big5"),
+    ("51950: Chinese Traditional (EUC)", "euc_jp"),     # placeholder
+    # ── Cyrillic ────────────────────────────────────────────────────
+    ("855: OEM Cyrillic", "cp855"),
+    ("866: Cyrillic (DOS)", "cp866"),
+    ("28595: Cyrillic (ISO)", "iso8859_5"),
+    ("20866: Cyrillic (KOI8-R)", "koi8_r"),
+    ("21866: Cyrillic (KOI8-U)", "koi8_u"),
+    ("10007: Cyrillic (Mac)", "mac_cyrillic"),
+    ("1251: Cyrillic (Windows)", "cp1251"),
+    # ── Greek ───────────────────────────────────────────────────────
+    ("737: Greek (DOS)", "cp737"),
+    ("28597: Greek (ISO)", "iso8859_7"),
+    ("10006: Greek (Mac)", "mac_greek"),
+    ("1253: Greek (Windows)", "cp1253"),
+    # ── Hebrew ──────────────────────────────────────────────────────
+    ("862: Hebrew (DOS)", "cp862"),
+    ("28598: Hebrew (ISO-Logical)", "iso8859_8"),
+    ("38598: Hebrew (ISO-Visual)", "iso8859_8"),
+    ("10005: Hebrew (Mac)", "mac_arabic"),              # closest
+    ("1255: Hebrew (Windows)", "cp1255"),
+    # ── Japanese ────────────────────────────────────────────────────
+    ("51932: Japanese (EUC)", "euc_jp"),
+    ("20932: Japanese (JIS 0208-1990 and 0212-1990)", "euc_jp"),
+    ("50220: Japanese (JIS)", "iso2022_jp"),
+    ("50222: Japanese (JIS-Allow 1 byte Kana - SO/SI)", "iso2022_jp"),
+    ("50221: Japanese (JIS-Allow 1 byte Kana)", "iso2022_jp"),
+    ("10001: Japanese (Mac)", "shift_jis"),
+    ("932: Japanese (Shift-JIS)", "shift_jis"),
+    # ── Korean ──────────────────────────────────────────────────────
+    ("949: Korean", "euc_kr"),
+    ("51949: Korean (EUC)", "euc_kr"),
+    ("50225: Korean (ISO)", "iso2022_kr"),
+    ("1361: Korean (Johab)", "johab"),
+    ("10003: Korean (Mac)", "euc_kr"),
+    ("20949: Korean Wansung", "euc_kr"),
+    # ── Latin ───────────────────────────────────────────────────────
+    ("28593: Latin 3 (ISO)", "iso8859_3"),
+    ("28605: Latin 9 (ISO)", "iso8859_15"),
+    # ── Nordic / Icelandic ──────────────────────────────────────────
+    ("865: Nordic (DOS)", "cp865"),
+    ("861: Icelandic (DOS)", "cp861"),
+    ("10079: Icelandic (Mac)", "mac_iceland"),
+    # ── Norwegian ───────────────────────────────────────────────────
+    ("20108: Norwegian (IA5)", "ascii"),
+    # ── ISO / Misc ──────────────────────────────────────────────────
+    ("20269: ISO-6937", "ascii"),                       # no direct codec
+    # ── ISCII (India) ───────────────────────────────────────────────
+    ("57002: ISCII Devanagari", "utf-8"),               # fallback
+    ("57003: ISCII Bengali", "utf-8"),
+    ("57004: ISCII Tamil", "utf-8"),
+    ("57005: ISCII Telugu", "utf-8"),
+    ("57010: ISCII Punjabi", "utf-8"),
+    # ── Thai ────────────────────────────────────────────────────────
+    ("874: Thai (Windows)", "cp874"),
+    # ── Turkish ─────────────────────────────────────────────────────
+    ("857: Turkish (DOS)", "cp857"),
+    ("28599: Turkish (ISO)", "iso8859_9"),
+    ("10081: Turkish (Mac)", "mac_turkish"),
+    ("1254: Turkish (Windows)", "cp1254"),
+    # ── Ukrainian ───────────────────────────────────────────────────
+    ("10017: Ukrainian (Mac)", "mac_cyrillic"),
+    # ── Vietnamese ──────────────────────────────────────────────────
+    ("1258: Vietnamese (Windows)", "cp1258"),
+    # ── Western European ────────────────────────────────────────────
+    ("850: Western European (DOS)", "cp850"),
+    ("20105: Western European (IA5)", "ascii"),
+    ("28591: Western European (ISO)", "iso8859_1"),
+    ("10000: Western European (Mac)", "mac_roman"),
+    ("1252: Western European (Windows)", "cp1252"),
+    # ── Unicode ─────────────────────────────────────────────────────
+    ("1200: Unicode", "utf-16-le"),
+    ("1201: Unicode (Big-Endian)", "utf-16-be"),
+    ("12001: Unicode (UTF-32 Big-Endian)", "utf-32-be"),
+    ("12000: Unicode (UTF-32)", "utf-32-le"),
+    ("65000: Unicode (UTF-7)", "utf-7"),
+    ("65001: Unicode (UTF-8)", "utf-8"),
+    # ── US-ASCII ────────────────────────────────────────────────────
+    ("20127: US-ASCII", "ascii"),
+    # ── Wang Taiwan ─────────────────────────────────────────────────
+    ("20005: Wang Taiwan", "big5"),                     # closest
 ]
+
+# Index of the default encoding (UTF-8) in the list above
+_DEFAULT_ENC_IDX = next(
+    i for i, (lbl, _) in enumerate(_ENCODINGS) if lbl == "65001: Unicode (UTF-8)"
+)
 
 # Delimiter presets
 _DELIMITERS = [
@@ -49,8 +149,9 @@ _DELIMITERS = [
 ]
 
 _DATA_TYPE_OPTIONS = [
-    "Automatic",
-    "All as text",
+    "Based on first 200 rows",
+    "Based on entire dataset",
+    "Do not detect data types",
 ]
 
 # Max rows shown in preview
@@ -83,7 +184,7 @@ class TextImportDialog(QDialog):
         return self._start_spin.value()
 
     def treat_as_text(self) -> bool:
-        return self._dtype_combo.currentText() == "All as text"
+        return self._dtype_combo.currentText() == "Do not detect data types"
 
     def first_row_header(self) -> bool:
         return self._header_chk.isChecked()
@@ -109,7 +210,7 @@ class TextImportDialog(QDialog):
         self._enc_combo = QComboBox()
         for label, _ in _ENCODINGS:
             self._enc_combo.addItem(label)
-        self._enc_combo.setCurrentIndex(0)
+        self._enc_combo.setCurrentIndex(_DEFAULT_ENC_IDX)
         self._enc_combo.currentIndexChanged.connect(self._on_settings_changed)
         opts.addWidget(self._enc_combo, 1, 0)
 
@@ -195,6 +296,18 @@ class TextImportDialog(QDialog):
     def _read_raw(self):
         """Read the file with the selected encoding."""
         enc = _ENCODINGS[self._enc_combo.currentIndex()][1]
+        if enc is None:
+            # "--None--" means try utf-8-sig first, fall back to latin-1
+            for try_enc in ("utf-8-sig", "latin-1"):
+                try:
+                    with open(self._path, newline='',
+                              encoding=try_enc) as f:
+                        self._raw_lines = f.readlines()
+                    return
+                except (UnicodeDecodeError, Exception):
+                    continue
+            self._raw_lines = []
+            return
         try:
             with open(self._path, newline='', encoding=enc,
                       errors='replace') as f:
