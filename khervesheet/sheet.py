@@ -745,6 +745,17 @@ class SheetWidget(QWidget):
         for (r, c, rs, cs) in list(self._merged_ranges):
             self.table.setSpan(r, c, 1, 1)
         self._merged_ranges.clear()
+        # Remove embedded charts and images.
+        for chart in getattr(self, '_charts', []):
+            chart.setParent(None)
+            chart.deleteLater()
+        if hasattr(self, '_charts'):
+            self._charts.clear()
+        for img in getattr(self, '_images', []):
+            img.setParent(None)
+            img.deleteLater()
+        if hasattr(self, '_images'):
+            self._images.clear()
         # Reset column widths to default.
         for c in range(self.table.columnCount()):
             self.table.setColumnWidth(c, 80)
