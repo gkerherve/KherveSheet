@@ -820,7 +820,7 @@ class MainWindow(QMainWindow):
         data = rows[data_start:]
         if not data and not has_header:
             return
-        n_cols = max(len(r) for r in rows)
+        n_cols = max(26, max(len(r) for r in rows))
         n_rows = len(data)
 
         sheet.table.blockSignals(True)
