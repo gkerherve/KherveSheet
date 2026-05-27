@@ -730,6 +730,26 @@ class SheetWidget(QWidget):
         self._formula_bar.installEventFilter(self)
 
     # ── Public API ───────────────────────────────────────────────────
+    def clear_all_data(self):
+        """Reset every cell, format, formula, and overlay to a blank state."""
+        self.table.blockSignals(True)
+        self.table.clearContents()
+        self.table.blockSignals(False)
+        self._shadow.clear()
+        self._cell_formulas.clear()
+        self._dependents.clear()
+        self._cell_formats.clear()
+        self._col_formats.clear()
+        self._col_designations.clear()
+        # Unmerge all spans.
+        for (r, c, rs, cs) in list(self._merged_ranges):
+            self.table.setSpan(r, c, 1, 1)
+        self._merged_ranges.clear()
+        # Reset column widths to default.
+        for c in range(self.table.columnCount()):
+            self.table.setColumnWidth(c, 80)
+        self._refresh_headers()
+
     def column_count(self) -> int:
         return self.table.columnCount()
 

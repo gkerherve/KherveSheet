@@ -814,6 +814,7 @@ class MainWindow(QMainWindow):
         sheet = self._active_sheet()
         if not sheet:
             return
+        sheet.clear_all_data()
         from PyQt5.QtWidgets import QTableWidgetItem
 
         data_start = 1 if has_header else 0
@@ -868,6 +869,7 @@ class MainWindow(QMainWindow):
         sheet = self._active_sheet()
         if not sheet:
             return
+        sheet.clear_all_data()
         self._show_progress(True)
         try:
             with open(path, newline='', encoding='utf-8-sig') as f:
@@ -936,6 +938,7 @@ class MainWindow(QMainWindow):
         sheet = self._active_sheet()
         if not sheet:
             return
+        sheet.clear_all_data()
         self._show_progress(True)
         try:
             wb = openpyxl.load_workbook(path, data_only=True)
