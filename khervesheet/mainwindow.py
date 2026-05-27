@@ -2546,14 +2546,16 @@ class MainWindow(QMainWindow):
 
         # Build one chart with all Y columns as series
         first_chart = None
+        row_start = s.topRow()
+        row_end = s.bottomRow()
         for yc in y_cols:
             x_col = _find_x_for(yc)
             if x_col is not None:
-                x_data = sheet.numeric_column(x_col)
+                x_data = sheet.numeric_column(x_col)[row_start:row_end + 1]
             else:
-                x_data = np.arange(sheet.row_count(), dtype=float)
+                x_data = np.arange(row_end - row_start + 1, dtype=float)
 
-            y_data = sheet.numeric_column(yc)
+            y_data = sheet.numeric_column(yc)[row_start:row_end + 1]
             label = col_index_to_letter(yc)
 
             mask = ~(np.isnan(x_data) | np.isnan(y_data))
@@ -2568,7 +2570,8 @@ class MainWindow(QMainWindow):
                 viewport = sheet.table.viewport()
                 chart = EmbeddedChart(
                     x, y, label, plot_type, sheet, viewport,
-                    x_col=x_col, y_col=yc)
+                    x_col=x_col, y_col=yc,
+                    row_start=s.topRow(), row_end=s.bottomRow())
                 # Position at a visible spot, offset by existing charts.
                 offset = len(sheet._charts) * 30
                 chart.move(40 + offset, 40 + offset)
@@ -2578,7 +2581,9 @@ class MainWindow(QMainWindow):
                 first_chart = chart
             else:
                 first_chart.add_series(x, y, label, plot_type,
-                                       x_col=x_col, y_col=yc)
+                                       x_col=x_col, y_col=yc,
+                                       row_start=s.topRow(),
+                                       row_end=s.bottomRow())
 
         self._status_msg(
             f"Created {plot_type} chart", 3000)

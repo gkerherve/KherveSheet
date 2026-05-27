@@ -48,7 +48,8 @@ class EmbeddedChart(QWidget):
     """A matplotlib chart that lives as a child of the grid viewport."""
 
     def __init__(self, x, y, label, plot_type, source_sheet=None,
-                 parent=None, x_col=None, y_col=None):
+                 parent=None, x_col=None, y_col=None,
+                 row_start=None, row_end=None):
         # Parent must be the table viewport so we paint over the grid.
         super().__init__(parent)
         self.setMouseTracking(True)
@@ -99,7 +100,8 @@ class EmbeddedChart(QWidget):
         self._canvas.mpl_connect("button_press_event", self._on_canvas_click)
 
         # Add the initial series.
-        self.add_series(x, y, label, plot_type, x_col=x_col, y_col=y_col)
+        self.add_series(x, y, label, plot_type, x_col=x_col, y_col=y_col,
+                        row_start=row_start, row_end=row_end)
 
         if self._tight_layout:
             try:
@@ -121,15 +123,23 @@ class EmbeddedChart(QWidget):
 
     # ── Series management ───────────────────────────────────────────
     def add_series(self, x, y, label, plot_type="Line",
-                   x_col=None, y_col=None):
+                   x_col=None, y_col=None,
+                   row_start=None, row_end=None):
         ax = self._ax
         artist = self._plot_one(ax, x, y, label, plot_type)
 
-        self._series.append({
+        s = {
             "x": x, "y": y, "label": label,
             "plot_type": plot_type, "artist": artist,
             "x_col": x_col,
-        })
+        }
+        if row_start is not None:
+            s["x_row_start"] = row_start
+            s["y_row_start"] = row_start
+        if row_end is not None:
+            s["x_row_end"] = row_end
+            s["y_row_end"] = row_end
+        self._series.append(s)
         if y_col is not None:
             self._y_cols.append(y_col)
 
@@ -1538,7 +1548,8 @@ class PlotDetailsDialog(QDialog):
         x, y = x_slice[mask], y_slice[mask]
         if len(x) == 0:
             return
-        chart.add_series(x, y, label, "Line", y_col=col)
+        chart.add_series(x, y, label, "Line", y_col=col,
+                         row_start=r1, row_end=r2)
         # Update the series list in the dialog.
         from PyQt5.QtWidgets import QListWidgetItem
         item = QListWidgetItem(label)
