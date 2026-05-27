@@ -68,7 +68,7 @@ class EmbeddedChart(QWidget):
         self._legend_dragging = False
         self._keep_ratio = False      # fixed aspect-ratio resize
         self._aspect_ratio = 480 / 320  # w/h ratio at creation
-        self._tight_layout = True       # tight layout enabled by default
+        self._tight_layout = False      # tight layout off by default
 
         self.setMinimumSize(240, 180)
         self.resize(480, 320)
@@ -101,13 +101,14 @@ class EmbeddedChart(QWidget):
         # Add the initial series.
         self.add_series(x, y, label, plot_type, x_col=x_col, y_col=y_col)
 
-        try:
-            self._figure.set_layout_engine("tight")
-        except Exception:
+        if self._tight_layout:
             try:
-                self._figure.tight_layout()
+                self._figure.set_layout_engine("tight")
             except Exception:
-                pass
+                try:
+                    self._figure.tight_layout()
+                except Exception:
+                    pass
 
         # Style the frame — no border by default; paintEvent draws
         # selection border only when chart is selected.
@@ -331,8 +332,9 @@ class EmbeddedChart(QWidget):
             d["axis_props"] = self._axis_props
         if self._keep_ratio:
             d["keep_ratio"] = True
-        if not self._tight_layout:
-            d["tight_layout"] = False
+        if self._tight_layout:
+            d["tight_layout"] = True
+        else:
             sp = self._figure.subplotpars
             d["subplot_margins"] = {
                 "left": sp.left, "right": sp.right,
@@ -376,7 +378,10 @@ class EmbeddedChart(QWidget):
         if d.get("keep_ratio"):
             chart._keep_ratio = True
             chart._aspect_ratio = w / max(h, 1)
-        if d.get("tight_layout") is False:
+        if d.get("tight_layout") is True:
+            chart._tight_layout = True
+        elif d.get("tight_layout") is False:
+            # Legacy files stored tight_layout=False explicitly
             chart._tight_layout = False
             try:
                 chart._figure.set_layout_engine("none")
