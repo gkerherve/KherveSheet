@@ -102,7 +102,7 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
 
         imp = file_menu.addMenu("Import")
-        imp.addAction("CSV…", self._import_csv)
+        imp.addAction("Text/CSV…", self._import_text)
         imp.addAction("Excel…", self._import_excel)
 
         file_menu.addSeparator()
@@ -792,12 +792,57 @@ class MainWindow(QMainWindow):
         self._add_recent(path)
         self._update_title()
 
-    def _import_csv(self):
+    def _import_text(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Import CSV", "", "CSV Files (*.csv *.tsv *.txt)")
-        if path:
-            self._load_csv(path)
-            self._add_recent(path)
+            self, "Import Text / CSV", "",
+            "Text Files (*.csv *.tsv *.txt *.dat *.ascii *.asc);;"
+            "All Files (*)")
+        if not path:
+            return
+        from .text_import_dialog import TextImportDialog
+        rows, has_header, as_text, ok = TextImportDialog.get_import_data(
+            path, self)
+        if not ok or not rows:
+            return
+        self._load_parsed_rows(rows, has_header, as_text)
+        self._add_recent(path)
+        self._status_msg(
+            f"Imported {len(rows)} rows from {os.path.basename(path)}", 5000)
+
+    def _load_parsed_rows(self, rows, has_header, as_text):
+        """Load pre-parsed rows into the active sheet."""
+        sheet = self._active_sheet()
+        if not sheet:
+            return
+        from PyQt5.QtWidgets import QTableWidgetItem
+
+        data_start = 1 if has_header else 0
+        data = rows[data_start:]
+        if not data and not has_header:
+            return
+        n_cols = max(len(r) for r in rows)
+        n_rows = len(data)
+
+        sheet.table.blockSignals(True)
+        sheet.table.setColumnCount(n_cols)
+        sheet.table.setRowCount(n_rows)
+        sheet._refresh_headers()
+
+        self._show_progress(True)
+        for i, row in enumerate(data):
+            self._progress.setValue(int(100 * i / max(1, n_rows)))
+            QApplication.processEvents()
+            for j, val in enumerate(row):
+                if not as_text:
+                    # Try to preserve numeric types for the cell
+                    try:
+                        float(val)
+                    except (ValueError, TypeError):
+                        pass
+                sheet.table.setItem(i, j, QTableWidgetItem(val))
+                sheet._shadow[(i, j)] = val
+        sheet.table.blockSignals(False)
+        self._show_progress(False)
 
     def _import_excel(self):
         path, _ = QFileDialog.getOpenFileName(
