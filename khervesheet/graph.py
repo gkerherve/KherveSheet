@@ -111,6 +111,9 @@ class EmbeddedChart(QWidget):
                     self._figure.tight_layout()
                 except Exception:
                     pass
+        else:
+            self._figure.subplots_adjust(
+                left=0.15, right=0.95, top=0.92, bottom=0.15)
 
         # Style the frame — no border by default; paintEvent draws
         # selection border only when chart is selected.
