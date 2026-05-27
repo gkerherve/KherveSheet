@@ -67,6 +67,7 @@ class EmbeddedChart(QWidget):
         self._resizing = False
         self._resize_edge = None      # which edges: combination of t/b/l/r
         self._legend_dragging = False
+        self._panning = False         # axes pan mode (inside plot area)
         self._keep_ratio = False      # fixed aspect-ratio resize
         self._aspect_ratio = 480 / 320  # w/h ratio at creation
         self._tight_layout = False      # tight layout off by default
@@ -523,6 +524,7 @@ class EmbeddedChart(QWidget):
 
     # ── Close ───────────────────────────────────────────────────────
     def _close_chart(self):
+        self._clear_show_data()
         if self._source_sheet:
             try:
                 self._source_sheet.data_changed.disconnect(
@@ -649,6 +651,91 @@ class EmbeddedChart(QWidget):
         self._ax.set_ylim(ylim)
         self._ax.grid(grid_on)
         self._canvas.draw_idle()
+
+    # ── Show Data highlight ────────────────────────────────────────────
+
+    def _toggle_show_data(self, checked):
+        """Toggle highlighting source cells on the sheet."""
+        if checked:
+            self._apply_show_data()
+        else:
+            self._clear_show_data()
+
+    def _apply_show_data(self):
+        """Highlight source data cells with series colours."""
+        self._clear_show_data()
+        sheet = self._source_sheet
+        if not sheet:
+            return
+        from matplotlib.colors import to_hex
+        from matplotlib.collections import PathCollection
+        from PyQt5.QtGui import QColor, QBrush
+        from PyQt5.QtWidgets import QTableWidgetItem
+
+        saved = []  # list of (row, col, original_brush)
+        grey = QColor(200, 200, 200)
+
+        for i, (s, yc) in enumerate(
+                zip(self._series, self._y_cols)):
+            # Determine series colour.
+            artist = s.get("artist")
+            try:
+                if isinstance(artist, PathCollection):
+                    fc = artist.get_facecolors()
+                    color = QColor(to_hex(fc[0])) if len(fc) else grey
+                elif hasattr(artist, 'get_color'):
+                    color = QColor(to_hex(artist.get_color()))
+                else:
+                    color = grey
+            except Exception:
+                color = grey
+            # Make the highlight semi-transparent.
+            color.setAlpha(80)
+            y_brush = QBrush(color)
+            grey_brush = QBrush(QColor(200, 200, 200, 80))
+
+            r0 = s.get("y_row_start", 0)
+            r1 = s.get("y_row_end", len(s.get("y", [])) - 1)
+
+            # Highlight Y cells.
+            for r in range(r0, r1 + 1):
+                it = sheet.table.item(r, yc)
+                if it is None:
+                    it = QTableWidgetItem("")
+                    sheet.table.setItem(r, yc, it)
+                saved.append((r, yc, QBrush(it.background())))
+                it.setBackground(y_brush)
+
+            # Highlight X cells (grey).
+            xc = s.get("x_col", self._x_col)
+            if xc is not None:
+                xr0 = s.get("x_row_start", 0)
+                xr1 = s.get("x_row_end", r1)
+                for r in range(xr0, xr1 + 1):
+                    it = sheet.table.item(r, xc)
+                    if it is None:
+                        it = QTableWidgetItem("")
+                        sheet.table.setItem(r, xc, it)
+                    saved.append((r, xc, QBrush(it.background())))
+                    it.setBackground(grey_brush)
+
+        self._show_data_active = True
+        self._show_data_saved = saved
+
+    def _clear_show_data(self):
+        """Remove source data highlighting."""
+        saved = getattr(self, '_show_data_saved', None)
+        if not saved:
+            self._show_data_active = False
+            return
+        sheet = self._source_sheet
+        if sheet:
+            for r, c, brush in saved:
+                it = sheet.table.item(r, c)
+                if it:
+                    it.setBackground(brush)
+        self._show_data_saved = None
+        self._show_data_active = False
 
     # ── Legend hit testing ─────────────────────────────────────────────
     def _hit_legend(self, event_pos):
@@ -906,6 +993,10 @@ class EmbeddedChart(QWidget):
 
         menu.addSeparator()
         menu.addAction("Update Plot", self._refresh_data)
+        show_data_act = menu.addAction("Show Data")
+        show_data_act.setCheckable(True)
+        show_data_act.setChecked(getattr(self, '_show_data_active', False))
+        show_data_act.triggered.connect(self._toggle_show_data)
         menu.addSeparator()
         menu.addAction("Pop Out to Window", self._pop_out)
         menu.addSeparator()
@@ -1114,12 +1205,20 @@ class EmbeddedChart(QWidget):
                     self._drag_origin = event.globalPos()
                     self._drag_widget_pos = self.geometry()
                     return True   # consumed — resize only
-                # Inside axes area → let matplotlib handle it
-                # (legend drag, zoom, pan, data interaction).
+                # Inside axes area: legend drag or axes pan.
                 if self._in_axes_area(canvas_pos):
                     if self._hit_legend(canvas_pos):
                         self._legend_dragging = True
-                    return False
+                        return False  # let mpl handle legend drag
+                    # Start axes pan (store initial limits + pos).
+                    self._panning = True
+                    self._pan_origin = canvas_pos
+                    try:
+                        self._pan_xlim = self._ax.get_xlim()
+                        self._pan_ylim = self._ax.get_ylim()
+                    except Exception:
+                        self._panning = False
+                    return True
                 # Outside axes (margins) → start chart drag.
                 self._drag_origin = event.globalPos()
                 self._drag_widget_pos = self.pos()
@@ -1129,6 +1228,28 @@ class EmbeddedChart(QWidget):
             # While legend is being dragged, let matplotlib handle.
             if self._legend_dragging:
                 return False
+            # Axes pan: translate axis limits based on mouse delta.
+            if self._panning:
+                try:
+                    dpr = self._canvas.devicePixelRatio()
+                    renderer = self._canvas.get_renderer()
+                    bbox = self._ax.get_window_extent(renderer)
+                    dx_px = (canvas_pos.x() - self._pan_origin.x()) * dpr
+                    dy_px = (canvas_pos.y() - self._pan_origin.y()) * dpr
+                    xlim = self._pan_xlim
+                    ylim = self._pan_ylim
+                    x_range = xlim[1] - xlim[0]
+                    y_range = ylim[1] - ylim[0]
+                    dx_data = -dx_px * x_range / bbox.width
+                    dy_data = dy_px * y_range / bbox.height
+                    self._ax.set_xlim(xlim[0] + dx_data,
+                                      xlim[1] + dx_data)
+                    self._ax.set_ylim(ylim[0] + dy_data,
+                                      ylim[1] + dy_data)
+                    self._canvas.draw_idle()
+                except Exception:
+                    pass
+                return True
             if self._resizing and self._drag_origin is not None:
                 delta = event.globalPos() - self._drag_origin
                 geo = QRect(self._drag_widget_pos)
@@ -1165,8 +1286,8 @@ class EmbeddedChart(QWidget):
                 self.setCursor(cursors.get(edge, Qt.ArrowCursor))
                 return True
             if self._in_axes_area(canvas_pos):
-                self.unsetCursor()
-                return False  # let matplotlib handle hover
+                self.setCursor(Qt.OpenHandCursor)
+                return True
             self.setCursor(Qt.SizeAllCursor)
             return False
 
@@ -1174,6 +1295,9 @@ class EmbeddedChart(QWidget):
             if self._legend_dragging:
                 self._legend_dragging = False
                 return False  # let mpl finalize
+            if self._panning:
+                self._panning = False
+                return True
             if self._drag_origin is not None or self._resizing:
                 self._drag_origin = None
                 self._drag_widget_pos = None
@@ -1973,8 +2097,8 @@ class PlotDetailsDialog(QDialog):
 
         if x_parsed is not None:
             x_col, xr1, xr2 = x_parsed
-            chart._x_col = x_col
             # Store per-series x_col so refresh/update uses it.
+            # Don't set chart._x_col — each series owns its own X.
             chart._series[row]["x_col"] = x_col
         else:
             x_col = chart._series[row].get("x_col", chart._x_col)
