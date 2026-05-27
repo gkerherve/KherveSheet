@@ -2644,6 +2644,9 @@ class SheetWidget(QWidget):
         if changes and self._undo_stack:
             self._undo_stack.push(
                 BulkCellEditCmd(self, changes, "Drag fill"))
+        # Recalculate cells that depend on any changed cell.
+        for r, c, _old, _new in changes:
+            self._recalc_dependents(r, c)
         self._fill_anchor_range = None
 
     def _detect_pattern(self, vals):
