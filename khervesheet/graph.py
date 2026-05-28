@@ -2230,7 +2230,7 @@ class LegendEditorDialog(QDialog):
         root.addWidget(self._show_chk)
 
         # ── Legend title ───────────────────────────────────────────
-        from PyQt5.QtWidgets import (QFontComboBox, QGroupBox, QSpinBox,
+        from PyQt5.QtWidgets import (QGroupBox, QSpinBox,
                                      QDoubleSpinBox)
         title_lay = QHBoxLayout()
         title_lay.addWidget(QLabel("Title:"))
@@ -2283,8 +2283,20 @@ class LegendEditorDialog(QDialog):
         font_group = QGroupBox("Font")
         font_grid = QGridLayout(font_group)
 
-        self._font_combo = QFontComboBox()
-        self._font_combo.setCurrentFont(QFont(cur_family))
+        # Use a plain QComboBox instead of QFontComboBox — the latter
+        # crashes (0xC0000409) during font enumeration on some Windows
+        # systems with certain font configurations.
+        from PyQt5.QtGui import QFontDatabase
+        self._font_combo = QComboBox()
+        self._font_combo.setEditable(True)
+        families = QFontDatabase().families()
+        self._font_combo.addItems(families)
+        # Select the current family.
+        idx = self._font_combo.findText(cur_family, Qt.MatchFixedString)
+        if idx >= 0:
+            self._font_combo.setCurrentIndex(idx)
+        else:
+            self._font_combo.setCurrentText(cur_family)
         font_grid.addWidget(QLabel("Family:"), 0, 0)
         font_grid.addWidget(self._font_combo, 0, 1, 1, 3)
 
@@ -2487,7 +2499,7 @@ class LegendEditorDialog(QDialog):
             chart._canvas.draw_idle()
             return
 
-        font_family = self._font_combo.currentFont().family()
+        font_family = self._font_combo.currentText()
         font_size = self._size_spin.value()
         font_weight = "bold" if self._bold_chk.isChecked() else "normal"
         font_style = "italic" if self._italic_chk.isChecked() else "normal"
