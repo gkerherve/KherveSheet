@@ -1124,6 +1124,22 @@ class SheetWidget(QWidget):
 
         # Detect formula
         dec = self._cell_decimals(row, col)
+        if new_text == "=":
+            # Bare "=" committed (user typed = then clicked away).
+            # Enter formula mode so the next click inserts a cell ref.
+            self._formula_entry_cell = (row, col)
+            self._formula_bar.blockSignals(True)
+            self._formula_bar.setText("=")
+            self._formula_bar.blockSignals(False)
+            self._formula_bar.setFocus()
+            self._formula_bar.setCursorPosition(1)
+            # Restore cell to empty (don't evaluate bare =).
+            self.table.blockSignals(True)
+            if it:
+                it.setText("")
+            self.table.blockSignals(False)
+            self._shadow[(row, col)] = ""
+            return
         if new_text.startswith("="):
             self._cell_formulas[(row, col)] = new_text
             self._register_deps(row, col, new_text)
