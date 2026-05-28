@@ -578,6 +578,40 @@ class SetNumberFormatCmd(QUndoCommand):
             self.sheet._col_formats[col] = new_fmt
 
 
+class ResizeSectionsCmd(QUndoCommand):
+    """Undo/redo for column-width or row-height changes."""
+
+    def __init__(self, sheet, old_sizes, new_sizes, axis, label):
+        """
+        *old_sizes* / *new_sizes*: dict mapping index → pixel size.
+        *axis*: 'col' or 'row'.
+        """
+        super().__init__(label)
+        self.sheet = sheet
+        self.old_sizes = old_sizes
+        self.new_sizes = new_sizes
+        self.axis = axis
+
+    def _apply(self, sizes):
+        self.sheet._resizing_sections = True
+        if self.axis == 'col':
+            for idx, sz in sizes.items():
+                self.sheet.table.setColumnWidth(idx, sz)
+        else:
+            for idx, sz in sizes.items():
+                self.sheet.table.setRowHeight(idx, sz)
+        self.sheet._resizing_sections = False
+
+    def undo(self):
+        self._apply(self.old_sizes)
+
+    def redo(self):
+        if not getattr(self, "_first_redo_done", False):
+            self._first_redo_done = True
+            return
+        self._apply(self.new_sizes)
+
+
 def _format_number(value, decimals=3):
     """Format a numeric result for cell display.
 
@@ -714,10 +748,14 @@ class SheetWidget(QWidget):
 
         # Sync resize across selected columns / rows.
         self._resizing_sections = False  # recursion guard
+        self._col_resize_snap: dict | None = None  # {col: old_width}
+        self._row_resize_snap: dict | None = None  # {row: old_height}
         self.table.horizontalHeader().sectionResized.connect(
             self._on_column_resized)
         self.table.verticalHeader().sectionResized.connect(
             self._on_row_resized)
+        self.table.horizontalHeader().installEventFilter(self)
+        self.table.verticalHeader().installEventFilter(self)
 
         # ── Drag-fill state ──────────────────────────────────────────
         self._fill_dragging = False
@@ -1024,29 +1062,60 @@ class SheetWidget(QWidget):
                 rows.add(r)
         return rows
 
-    def _on_column_resized(self, col, _old_size, new_size):
+    def _on_column_resized(self, col, old_size, new_size):
         if self._resizing_sections:
             return
+        # Snapshot the dragged column if we don't have one yet.
+        if self._col_resize_snap is None:
+            self._col_resize_snap = {col: old_size}
+        elif col not in self._col_resize_snap:
+            self._col_resize_snap[col] = old_size
+        # Sync to other selected columns.
         sel_cols = self._selected_columns()
-        if col not in sel_cols or len(sel_cols) < 2:
-            return
-        self._resizing_sections = True
-        for c in sel_cols:
-            if c != col:
-                self.table.setColumnWidth(c, new_size)
-        self._resizing_sections = False
+        if col in sel_cols and len(sel_cols) >= 2:
+            self._resizing_sections = True
+            for c in sel_cols:
+                if c != col:
+                    if c not in self._col_resize_snap:
+                        self._col_resize_snap[c] = self.table.columnWidth(c)
+                    self.table.setColumnWidth(c, new_size)
+            self._resizing_sections = False
 
-    def _on_row_resized(self, row, _old_size, new_size):
+    def _on_row_resized(self, row, old_size, new_size):
         if self._resizing_sections:
             return
+        if self._row_resize_snap is None:
+            self._row_resize_snap = {row: old_size}
+        elif row not in self._row_resize_snap:
+            self._row_resize_snap[row] = old_size
         sel_rows = self._selected_rows()
-        if row not in sel_rows or len(sel_rows) < 2:
-            return
-        self._resizing_sections = True
-        for r in sel_rows:
-            if r != row:
-                self.table.setRowHeight(r, new_size)
-        self._resizing_sections = False
+        if row in sel_rows and len(sel_rows) >= 2:
+            self._resizing_sections = True
+            for r in sel_rows:
+                if r != row:
+                    if r not in self._row_resize_snap:
+                        self._row_resize_snap[r] = self.table.rowHeight(r)
+                    self.table.setRowHeight(r, new_size)
+            self._resizing_sections = False
+
+    def _finish_section_resize(self):
+        """Push undo command for completed column/row resize."""
+        if self._col_resize_snap is not None:
+            old = self._col_resize_snap
+            new = {c: self.table.columnWidth(c) for c in old}
+            if old != new and self._undo_stack:
+                self._undo_stack.push(
+                    ResizeSectionsCmd(self, old, new, 'col',
+                                     "Resize columns"))
+            self._col_resize_snap = None
+        if self._row_resize_snap is not None:
+            old = self._row_resize_snap
+            new = {r: self.table.rowHeight(r) for r in old}
+            if old != new and self._undo_stack:
+                self._undo_stack.push(
+                    ResizeSectionsCmd(self, old, new, 'row',
+                                     "Resize rows"))
+            self._row_resize_snap = None
 
     def _on_cell_changed(self, row, col):
         it = self.table.item(row, col)
@@ -2508,6 +2577,25 @@ class SheetWidget(QWidget):
                     self._inline_formula_cell = (r, c)
                     self._inline_formula_text = editor.text()
                     self._inline_formula_pos = editor.cursorPosition()
+
+        # ── Header resize: snapshot on press, push undo on release ──
+        h_header = self.table.horizontalHeader()
+        v_header = self.table.verticalHeader()
+        if obj in (h_header, v_header):
+            if event.type() == QEvent.MouseButtonPress:
+                if obj is h_header:
+                    sel = self._selected_columns()
+                    self._col_resize_snap = {
+                        c: self.table.columnWidth(c) for c in sel
+                    } if sel else None
+                else:
+                    sel = self._selected_rows()
+                    self._row_resize_snap = {
+                        r: self.table.rowHeight(r) for r in sel
+                    } if sel else None
+            elif event.type() == QEvent.MouseButtonRelease:
+                self._finish_section_resize()
+            return super().eventFilter(obj, event)
 
         if obj is not self.table.viewport():
             return super().eventFilter(obj, event)
