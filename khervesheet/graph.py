@@ -2304,16 +2304,26 @@ class LegendEditorDialog(QDialog):
         cur_edge_color = "#cccccc"
         cur_face_color = "#ffffff"
         if leg:
-            fp = leg.get_frame()
-            if fp:
-                cur_frame_on = leg.get_frame_on()
-                cur_frame_alpha = fp.get_alpha() or 0.8
-                cur_edge_color = _mpl_color_to_hex(fp.get_edgecolor())
-                cur_face_color = _mpl_color_to_hex(fp.get_facecolor())
-            cur_shadow = leg.shadow
             try:
-                cur_fancybox = (fp.get_boxstyle().pad > 0
-                                if fp else True)
+                fp = leg.get_frame()
+                if fp:
+                    cur_frame_on = bool(leg.get_frame_on())
+                    alpha = fp.get_alpha()
+                    if alpha is not None:
+                        cur_frame_alpha = float(alpha)
+                    cur_edge_color = _mpl_color_to_hex(
+                        fp.get_edgecolor())
+                    cur_face_color = _mpl_color_to_hex(
+                        fp.get_facecolor())
+                shadow = getattr(leg, 'shadow', False)
+                # In newer matplotlib, shadow can be a dict.
+                cur_shadow = bool(shadow) if not isinstance(
+                    shadow, dict) else True
+                try:
+                    cur_fancybox = bool(
+                        fp.get_boxstyle().pad > 0) if fp else True
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -2369,13 +2379,17 @@ class LegendEditorDialog(QDialog):
         cur_handlepadding = 0.8
         cur_borderpad = 0.4
         if leg:
-            cur_ncol = leg._ncols if hasattr(leg, '_ncols') else 1
-            cur_markerscale = leg.markerscale
-            cur_labelspacing = leg.labelspacing
-            cur_columnspacing = leg.columnspacing
-            cur_handlelength = leg.handlelength
-            cur_handlepadding = leg.handletextpad
-            cur_borderpad = leg.borderpad
+            try:
+                cur_ncol = getattr(leg, '_ncols',
+                                   getattr(leg, '_ncol', 1)) or 1
+                cur_markerscale = float(leg.markerscale)
+                cur_labelspacing = float(leg.labelspacing)
+                cur_columnspacing = float(leg.columnspacing)
+                cur_handlelength = float(leg.handlelength)
+                cur_handlepadding = float(leg.handletextpad)
+                cur_borderpad = float(leg.borderpad)
+            except Exception:
+                pass
 
         sp_grid.addWidget(QLabel("Columns:"), 0, 0)
         self._ncol_spin = QSpinBox()
