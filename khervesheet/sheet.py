@@ -2767,6 +2767,13 @@ class SheetWidget(QWidget):
                     self._fill_end_row = sel[0].bottomRow()
                     return True
 
+        elif (etype == QEvent.MouseButtonDblClick
+              and event.button() == Qt.LeftButton):
+            hr = self._fill_handle_rect()
+            if hr and hr.contains(event.pos()):
+                self._auto_fill_down()
+                return True
+
         elif etype == QEvent.MouseMove and self._fill_dragging:
             row = self.table.rowAt(event.pos().y())
             if row >= 0:
@@ -2872,6 +2879,48 @@ class SheetWidget(QWidget):
         for r, c, _old, _new in changes:
             self._recalc_dependents(r, c)
         self._fill_anchor_range = None
+
+    def _auto_fill_down(self):
+        """Double-click fill handle: auto-fill down to match the extent
+        of the adjacent column's data (Excel behaviour)."""
+        sel = self.table.selectedRanges()
+        if not sel:
+            r = self.table.currentRow()
+            c = self.table.currentColumn()
+            if r < 0 or c < 0:
+                return
+            sel = [QTableWidgetSelectionRange(r, c, r, c)]
+        s = sel[0]
+        src_bot = s.bottomRow()
+        left_col = s.leftColumn()
+        right_col = s.rightColumn()
+
+        # Find the data extent by scanning adjacent columns (left first,
+        # then right) for the last non-empty row starting from src_bot.
+        last_data_row = src_bot
+        for adj_col in (left_col - 1, right_col + 1):
+            if adj_col < 0 or adj_col >= self.col_count():
+                continue
+            for r in range(src_bot + 1, self.row_count()):
+                it = self.table.item(r, adj_col)
+                if it and it.text().strip():
+                    last_data_row = r
+                else:
+                    break
+            if last_data_row > src_bot:
+                break
+
+        if last_data_row <= src_bot:
+            return
+
+        self._fill_anchor_range = s
+        self._fill_end_row = last_data_row
+        self._apply_fill()
+        # Select the filled range.
+        self.table.setRangeSelected(
+            QTableWidgetSelectionRange(
+                s.topRow(), left_col, last_data_row, right_col),
+            True)
 
     def _detect_pattern(self, vals):
         nums = []
