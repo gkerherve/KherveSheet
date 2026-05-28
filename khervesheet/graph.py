@@ -44,6 +44,32 @@ _HANDLE = 8
 _chart_clipboard = None
 
 
+class _RangeOverlay(QWidget):
+    """Transparent overlay that draws a coloured dashed border around
+    a cell range, like Excel's data-highlight rectangles."""
+
+    def __init__(self, parent, color_hex):
+        super().__init__(parent)
+        self._color = QColor(color_hex)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, False)
+        w, h = self.width(), self.height()
+        # Semi-transparent fill
+        fill = QColor(self._color)
+        fill.setAlpha(25)
+        p.fillRect(0, 0, w, h, fill)
+        # Dashed border
+        pen = QPen(self._color, 2, Qt.DashLine)
+        p.setPen(pen)
+        p.drawRect(0, 0, w - 1, h - 1)
+        p.end()
+
+
 class EmbeddedChart(QWidget):
     """A matplotlib chart that lives as a child of the grid viewport."""
 
@@ -707,80 +733,82 @@ class EmbeddedChart(QWidget):
         else:
             self._clear_show_data()
 
+    # Colours for data range outlines (Excel uses purple for X, blue for Y).
+    _RANGE_COLORS = [
+        "#4472C4",  # blue
+        "#7030A0",  # purple
+        "#70AD47",  # green
+        "#FFC000",  # amber
+        "#ED7D31",  # orange
+        "#FF0000",  # red
+    ]
+
     def _apply_show_data(self):
-        """Highlight source data cells with series colours."""
+        """Highlight source data ranges with coloured border overlays."""
         self._clear_show_data()
         sheet = self._source_sheet
         if not sheet:
             return
-        from matplotlib.colors import to_hex
-        from matplotlib.collections import PathCollection
-        from PyQt5.QtGui import QColor, QBrush
-        from PyQt5.QtWidgets import QTableWidgetItem
+        table = sheet.table
+        overlays = []
 
-        saved = []  # list of (row, col, original_brush)
-        grey = QColor(200, 200, 200)
-
+        color_idx = 0
         for i, (s, yc) in enumerate(
                 zip(self._series, self._y_cols)):
-            # Determine series colour.
-            artist = s.get("artist")
-            try:
-                if isinstance(artist, PathCollection):
-                    fc = artist.get_facecolors()
-                    color = QColor(to_hex(fc[0])) if len(fc) else grey
-                elif hasattr(artist, 'get_color'):
-                    color = QColor(to_hex(artist.get_color()))
-                else:
-                    color = grey
-            except Exception:
-                color = grey
-            # Make the highlight semi-transparent.
-            color.setAlpha(80)
-            y_brush = QBrush(color)
-            grey_brush = QBrush(QColor(200, 200, 200, 80))
-
             r0 = s.get("y_row_start", 0)
             r1 = s.get("y_row_end", len(s.get("y", [])) - 1)
 
-            # Highlight Y cells.
-            for r in range(r0, r1 + 1):
-                it = sheet.table.item(r, yc)
-                if it is None:
-                    it = QTableWidgetItem("")
-                    sheet.table.setItem(r, yc, it)
-                saved.append((r, yc, QBrush(it.background())))
-                it.setBackground(y_brush)
-
-            # Highlight X cells (grey).
+            # X column overlay
             xc = s.get("x_col", self._x_col)
             if xc is not None:
                 xr0 = s.get("x_row_start", 0)
                 xr1 = s.get("x_row_end", r1)
-                for r in range(xr0, xr1 + 1):
-                    it = sheet.table.item(r, xc)
-                    if it is None:
-                        it = QTableWidgetItem("")
-                        sheet.table.setItem(r, xc, it)
-                    saved.append((r, xc, QBrush(it.background())))
-                    it.setBackground(grey_brush)
+                c = self._RANGE_COLORS[color_idx % len(self._RANGE_COLORS)]
+                color_idx += 1
+                ov = self._create_range_overlay(
+                    table, xr0, xc, xr1, xc, c)
+                if ov:
+                    overlays.append(ov)
+
+            # Y column overlay
+            c = self._RANGE_COLORS[color_idx % len(self._RANGE_COLORS)]
+            color_idx += 1
+            ov = self._create_range_overlay(
+                table, r0, yc, r1, yc, c)
+            if ov:
+                overlays.append(ov)
 
         self._show_data_active = True
-        self._show_data_saved = saved
+        self._show_data_overlays = overlays
+
+    @staticmethod
+    def _create_range_overlay(table, r0, c0, r1, c1, color_hex):
+        """Create a transparent QWidget overlay with a coloured dashed
+        border around the cell range (r0,c0)–(r1,c1)."""
+        # Compute pixel rectangle from cell geometry.
+        top_rect = table.visualRect(table.model().index(r0, c0))
+        bot_rect = table.visualRect(table.model().index(r1, c1))
+        if top_rect.isNull() or bot_rect.isNull():
+            return None
+        x = top_rect.left() - 1
+        y = top_rect.top() - 1
+        w = bot_rect.right() - x + 2
+        h = bot_rect.bottom() - y + 2
+
+        overlay = _RangeOverlay(table.viewport(), color_hex)
+        overlay.setGeometry(x, y, w, h)
+        overlay.show()
+        overlay.raise_()
+        return overlay
 
     def _clear_show_data(self):
-        """Remove source data highlighting."""
-        saved = getattr(self, '_show_data_saved', None)
-        if not saved:
-            self._show_data_active = False
-            return
-        sheet = self._source_sheet
-        if sheet:
-            for r, c, brush in saved:
-                it = sheet.table.item(r, c)
-                if it:
-                    it.setBackground(brush)
-        self._show_data_saved = None
+        """Remove source data overlay widgets."""
+        overlays = getattr(self, '_show_data_overlays', None)
+        if overlays:
+            for ov in overlays:
+                ov.setParent(None)
+                ov.deleteLater()
+        self._show_data_overlays = None
         self._show_data_active = False
 
     # ── Legend hit testing ─────────────────────────────────────────────
@@ -839,9 +867,21 @@ class EmbeddedChart(QWidget):
 
     def _open_legend_editor(self):
         """Open the legend editor dialog."""
-        dlg = LegendEditorDialog(self)
-        if dlg.exec_() == QDialog.Accepted:
-            dlg.apply_to_chart(self)
+        import tempfile, os
+        _dbg = os.path.join(tempfile.gettempdir(), "legend_debug.log")
+        with open(_dbg, 'w') as f:
+            f.write("step: _open_legend_editor called\n")
+        try:
+            with open(_dbg, 'a') as f:
+                f.write("step: creating LegendEditorDialog\n")
+            dlg = LegendEditorDialog(self)
+            with open(_dbg, 'a') as f:
+                f.write("step: dialog created, calling exec_()\n")
+            if dlg.exec_() == QDialog.Accepted:
+                dlg.apply_to_chart(self)
+        except Exception as e:
+            with open(_dbg, 'a') as f:
+                f.write(f"EXCEPTION: {e}\n")
 
     def _open_trendline_dialog(self):
         """Open the trendline / curve fitting dialog."""
@@ -1519,19 +1559,25 @@ class EmbeddedChart(QWidget):
             p = QPainter(self)
             p.setRenderHint(QPainter.Antialiasing, True)
             w, h = self.width(), self.height()
-            # Dashed border
-            pen = QPen(QColor("#888888"), 1, Qt.DashLine)
-            p.setPen(pen)
+            hr = 5  # handle visual radius
+            inset = hr  # border inset so handles sit on the line
+            # Solid dark border, inset so handles are fully visible
+            p.setPen(QPen(QColor("#555555"), 1.5))
             p.setBrush(Qt.NoBrush)
-            p.drawRect(1, 1, w - 3, h - 3)
-            # 8 resize handles: corners + midpoints
-            hr = 4  # handle radius
+            p.drawRect(inset, inset,
+                       w - inset * 2 - 1, h - inset * 2 - 1)
+            # 8 handles: corners + edge midpoints on the border
             handle_pts = [
-                (0, 0), (w // 2, 0), (w - 1, 0),           # top
-                (0, h // 2), (w - 1, h // 2),               # middle
-                (0, h - 1), (w // 2, h - 1), (w - 1, h - 1) # bottom
+                (inset, inset),
+                (w // 2, inset),
+                (w - inset - 1, inset),
+                (inset, h // 2),
+                (w - inset - 1, h // 2),
+                (inset, h - inset - 1),
+                (w // 2, h - inset - 1),
+                (w - inset - 1, h - inset - 1),
             ]
-            p.setPen(QPen(QColor("#666666"), 1))
+            p.setPen(QPen(QColor("#555555"), 1.2))
             p.setBrush(QBrush(QColor("#ffffff")))
             for hx, hy in handle_pts:
                 p.drawEllipse(hx - hr, hy - hr, hr * 2, hr * 2)
@@ -2255,26 +2301,39 @@ class LegendEditorDialog(QDialog):
     """Dialog to edit legend entry names and all visual properties."""
 
     def __init__(self, chart, parent=None):
+        import tempfile, os
+        _dbg = os.path.join(tempfile.gettempdir(), "legend_debug.log")
+        def _log(msg):
+            with open(_dbg, 'a') as f:
+                f.write(msg + "\n")
+                f.flush()
+        _log("INIT: start")
         # Parent to the top-level window to avoid Qt crash when
         # parenting a dialog to a viewport-child widget on Windows.
         win = chart.window() if chart else None
+        _log("INIT: calling super().__init__")
         super().__init__(parent or win)
+        _log("INIT: super done")
         self.setWindowTitle("Edit Legend")
         self._chart = chart
         self.resize(440, 560)
 
         root = QVBoxLayout(self)
+        _log("INIT: layout created")
 
         # Read all current values from the stored props dict first
         # (safe Python dict), only probe matplotlib as a fallback.
         lp = getattr(chart, '_legend_props', {}) or {}
+        _log(f"INIT: lp keys={list(lp.keys())}")
         leg = chart._ax.get_legend()
+        _log(f"INIT: leg={leg is not None}")
         leg_visible = False
         if leg is not None:
             try:
                 leg_visible = bool(leg.get_visible())
             except Exception:
                 pass
+        _log(f"INIT: leg_visible={leg_visible}")
 
         # ── Series labels ──────────────────────────────────────────
         self._edits = []
@@ -2284,6 +2343,7 @@ class LegendEditorDialog(QDialog):
             self._edits.append(edit)
             form.addRow(f"Series {i + 1}:", edit)
         root.addLayout(form)
+        _log("INIT: series labels done")
 
         # ── Show / hide ────────────────────────────────────────────
         self._show_chk = QCheckBox("Show Legend")
@@ -2307,6 +2367,7 @@ class LegendEditorDialog(QDialog):
         self._title_edit.setText(cur_title)
         title_lay.addWidget(self._title_edit, stretch=1)
         root.addLayout(title_lay)
+        _log("INIT: title done")
 
         # ── Read font from props or live legend ────────────────────
         cur_family = lp.get("font_family",
@@ -2339,6 +2400,7 @@ class LegendEditorDialog(QDialog):
             "DejaVu Sans": "Segoe UI",
         }
         cur_family = _font_map.get(cur_family, cur_family)
+        _log(f"INIT: font family='{cur_family}' size={cur_size}")
 
         # ── Font controls ──────────────────────────────────────────
         font_group = QGroupBox("Font")
@@ -2347,13 +2409,15 @@ class LegendEditorDialog(QDialog):
         # Use a plain QComboBox instead of QFontComboBox — the latter
         # crashes (0xC0000409) during font enumeration on some Windows
         # systems with certain font configurations.
-        print("[DBG] before QFontDatabase", flush=True)
+        _log("INIT: before QFontDatabase")
         from PyQt5.QtGui import QFontDatabase
         self._font_combo = QComboBox()
         self._font_combo.setEditable(True)
+        _log("INIT: calling QFontDatabase().families()")
         families = QFontDatabase().families()
-        print(f"[DBG] got {len(families)} fonts", flush=True)
+        _log(f"INIT: got {len(families)} fonts")
         self._font_combo.addItems(families)
+        _log("INIT: addItems done")
         # Select the current family.
         idx = self._font_combo.findText(cur_family, Qt.MatchFixedString)
         if idx >= 0:
@@ -2389,6 +2453,7 @@ class LegendEditorDialog(QDialog):
         font_grid.addWidget(self._color_btn, 2, 1)
 
         root.addWidget(font_group)
+        _log("INIT: font group added")
 
         # ── Frame / box (read from props, not live legend) ─────────
         frame_group = QGroupBox("Frame")
@@ -2440,6 +2505,7 @@ class LegendEditorDialog(QDialog):
         frame_grid.addWidget(self._face_btn, 2, 1)
 
         root.addWidget(frame_group)
+        _log("INIT: frame group added")
 
         # ── Layout / spacing (from props dict) ─────────────────────
         spacing_group = QGroupBox("Layout")
@@ -2508,6 +2574,7 @@ class LegendEditorDialog(QDialog):
         sp_grid.addWidget(self._borderpad_spin, 3, 1)
 
         root.addWidget(spacing_group)
+        _log("INIT: spacing group added")
 
         # ── OK / Cancel ────────────────────────────────────────────
         buttons = QDialogButtonBox(
@@ -2515,6 +2582,7 @@ class LegendEditorDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
+        _log("INIT: __init__ COMPLETE")
 
     # ── Color pickers ──────────────────────────────────────────────
     def _pick_label_color(self):
