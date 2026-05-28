@@ -870,21 +870,9 @@ class EmbeddedChart(QWidget):
 
     def _open_legend_editor(self):
         """Open the legend editor dialog."""
-        import tempfile, os
-        _dbg = os.path.join(tempfile.gettempdir(), "legend_debug.log")
-        with open(_dbg, 'w') as f:
-            f.write("step: _open_legend_editor called\n")
-        try:
-            with open(_dbg, 'a') as f:
-                f.write("step: creating LegendEditorDialog\n")
-            dlg = LegendEditorDialog(self)
-            with open(_dbg, 'a') as f:
-                f.write("step: dialog created, calling exec_()\n")
-            if dlg.exec_() == QDialog.Accepted:
-                dlg.apply_to_chart(self)
-        except Exception as e:
-            with open(_dbg, 'a') as f:
-                f.write(f"EXCEPTION: {e}\n")
+        dlg = LegendEditorDialog(self)
+        if dlg.exec_() == QDialog.Accepted:
+            dlg.apply_to_chart(self)
 
     def _open_trendline_dialog(self):
         """Open the trendline / curve fitting dialog."""
@@ -2304,39 +2292,26 @@ class LegendEditorDialog(QDialog):
     """Dialog to edit legend entry names and all visual properties."""
 
     def __init__(self, chart, parent=None):
-        import tempfile, os
-        _dbg = os.path.join(tempfile.gettempdir(), "legend_debug.log")
-        def _log(msg):
-            with open(_dbg, 'a') as f:
-                f.write(msg + "\n")
-                f.flush()
-        _log("INIT: start")
         # Parent to the top-level window to avoid Qt crash when
         # parenting a dialog to a viewport-child widget on Windows.
         win = chart.window() if chart else None
-        _log("INIT: calling super().__init__")
         super().__init__(parent or win)
-        _log("INIT: super done")
         self.setWindowTitle("Edit Legend")
         self._chart = chart
         self.resize(440, 560)
 
         root = QVBoxLayout(self)
-        _log("INIT: layout created")
 
         # Read all current values from the stored props dict first
         # (safe Python dict), only probe matplotlib as a fallback.
         lp = getattr(chart, '_legend_props', {}) or {}
-        _log(f"INIT: lp keys={list(lp.keys())}")
         leg = chart._ax.get_legend()
-        _log(f"INIT: leg={leg is not None}")
         leg_visible = False
         if leg is not None:
             try:
                 leg_visible = bool(leg.get_visible())
             except Exception:
                 pass
-        _log(f"INIT: leg_visible={leg_visible}")
 
         # ── Series labels ──────────────────────────────────────────
         self._edits = []
@@ -2346,7 +2321,6 @@ class LegendEditorDialog(QDialog):
             self._edits.append(edit)
             form.addRow(f"Series {i + 1}:", edit)
         root.addLayout(form)
-        _log("INIT: series labels done")
 
         # ── Show / hide ────────────────────────────────────────────
         self._show_chk = QCheckBox("Show Legend")
@@ -2368,7 +2342,6 @@ class LegendEditorDialog(QDialog):
         self._title_edit.setText(cur_title)
         title_lay.addWidget(self._title_edit, stretch=1)
         root.addLayout(title_lay)
-        _log("INIT: title done")
 
         # ── Read font from props or live legend ────────────────────
         cur_family = lp.get("font_family",
@@ -2401,7 +2374,6 @@ class LegendEditorDialog(QDialog):
             "DejaVu Sans": "Segoe UI",
         }
         cur_family = _font_map.get(cur_family, cur_family)
-        _log(f"INIT: font family='{cur_family}' size={cur_size}")
 
         # ── Font controls ──────────────────────────────────────────
         font_group = QGroupBox("Font")
@@ -2410,15 +2382,11 @@ class LegendEditorDialog(QDialog):
         # Use a plain QComboBox instead of QFontComboBox — the latter
         # crashes (0xC0000409) during font enumeration on some Windows
         # systems with certain font configurations.
-        _log("INIT: before QFontDatabase")
         from PyQt5.QtGui import QFontDatabase
         self._font_combo = QComboBox()
         self._font_combo.setEditable(True)
-        _log("INIT: calling QFontDatabase().families()")
         families = QFontDatabase().families()
-        _log(f"INIT: got {len(families)} fonts")
         self._font_combo.addItems(families)
-        _log("INIT: addItems done")
         # Select the current family.
         idx = self._font_combo.findText(cur_family, Qt.MatchFixedString)
         if idx >= 0:
@@ -2454,7 +2422,6 @@ class LegendEditorDialog(QDialog):
         font_grid.addWidget(self._color_btn, 2, 1)
 
         root.addWidget(font_group)
-        _log("INIT: font group added")
 
         # ── Frame / box (read from props, not live legend) ─────────
         frame_group = QGroupBox("Frame")
@@ -2506,7 +2473,6 @@ class LegendEditorDialog(QDialog):
         frame_grid.addWidget(self._face_btn, 2, 1)
 
         root.addWidget(frame_group)
-        _log("INIT: frame group added")
 
         # ── Layout / spacing (from props dict) ─────────────────────
         spacing_group = QGroupBox("Layout")
@@ -2575,7 +2541,6 @@ class LegendEditorDialog(QDialog):
         sp_grid.addWidget(self._borderpad_spin, 3, 1)
 
         root.addWidget(spacing_group)
-        _log("INIT: spacing group added")
 
         # ── OK / Cancel ────────────────────────────────────────────
         buttons = QDialogButtonBox(
@@ -2583,7 +2548,6 @@ class LegendEditorDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
-        _log("INIT: __init__ COMPLETE")
 
     # ── Color pickers ──────────────────────────────────────────────
     def _pick_label_color(self):
