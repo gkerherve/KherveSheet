@@ -41,6 +41,7 @@ into a new module and import.
   - `undo_commands.py` — QUndoCommand classes.
   - `insert_ops.py`  — Insert menu ops: checkbox, dropdown, link, comment/note, emoji, transpose, spell-check.
   - `solver.py`     — `SolverDialog` (Excel-style optimisation: min/max/target via scipy).
+  - `trendline.py`  — `TrendlineDialog` (curve fitting: 23+ models via scipy, goodness-of-fit report).
   - `icons.py`      — qtawesome icon factory (themed MDI + custom QPainter plot glyphs).
   - `git_backend.py` — per-document Git repo: auto-commit, push, pull, history, branches (pygit2).
   - `history_dialog.py` — `HistoryDialog` commit browser with DAG graph, diff view, restore.

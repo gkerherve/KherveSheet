@@ -56,6 +56,7 @@ class EmbeddedChart(QWidget):
         self._source_sheet = source_sheet
         self._series = []
         self._fill_artists = []  # fill_between patches
+        self._trendlines = []    # TrendlineInfo objects
         self._axis_props = {}    # persisted axis dialog state
         # Source column indices for live data updates.
         self._x_col = x_col      # None means row-index X
@@ -375,6 +376,9 @@ class EmbeddedChart(QWidget):
             d["x_col"] = self._x_col
         if self._y_cols:
             d["y_cols"] = self._y_cols
+        # Trendlines
+        if self._trendlines:
+            d["trendlines"] = [t.to_dict() for t in self._trendlines]
         return d
 
     @classmethod
@@ -552,6 +556,14 @@ class EmbeddedChart(QWidget):
             leg = ax.get_legend()
             if leg:
                 leg.remove()
+        # Restore trendlines.
+        tl_list = d.get("trendlines", [])
+        if tl_list:
+            from .trendline import TrendlineInfo, restore_trendline
+            for td in tl_list:
+                info = TrendlineInfo.from_dict(td)
+                restore_trendline(chart, info)
+                chart._trendlines.append(info)
         chart._canvas.draw_idle()
         return chart
 
@@ -830,6 +842,12 @@ class EmbeddedChart(QWidget):
         if dlg.exec_() == QDialog.Accepted:
             dlg.apply_to_chart(self)
 
+    def _open_trendline_dialog(self):
+        """Open the trendline / curve fitting dialog."""
+        from .trendline import TrendlineDialog
+        dlg = TrendlineDialog(self, self)
+        dlg.exec_()
+
     def _try_edit_axis_label(self, event):
         """If *event* hit xlabel, ylabel, or title, open QInputDialog
         to edit text inline. Returns True if handled."""
@@ -921,6 +939,8 @@ class EmbeddedChart(QWidget):
         menu.addAction("Plot Details\u2026", self._open_plot_details)
         menu.addAction("Properties\u2026", self._open_properties)
         menu.addAction("Edit Legend\u2026", self._open_legend_editor)
+        menu.addSeparator()
+        menu.addAction("Add Trendline\u2026", self._open_trendline_dialog)
         menu.addSeparator()
 
         is_3d = hasattr(self._ax, 'get_zlim')
@@ -2286,10 +2306,12 @@ class LegendEditorDialog(QDialog):
         # Use a plain QComboBox instead of QFontComboBox — the latter
         # crashes (0xC0000409) during font enumeration on some Windows
         # systems with certain font configurations.
+        print("[DBG] before QFontDatabase", flush=True)
         from PyQt5.QtGui import QFontDatabase
         self._font_combo = QComboBox()
         self._font_combo.setEditable(True)
         families = QFontDatabase().families()
+        print(f"[DBG] got {len(families)} fonts", flush=True)
         self._font_combo.addItems(families)
         # Select the current family.
         idx = self._font_combo.findText(cur_family, Qt.MatchFixedString)

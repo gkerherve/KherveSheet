@@ -726,4 +726,3 @@ class SolverDialog(QDialog):
             self, "Solver",
             f"Solver found a solution.\n"
             f"Objective cell value: {obj_val}")
-        self.accept()
