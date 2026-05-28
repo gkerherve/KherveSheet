@@ -1205,17 +1205,23 @@ class EmbeddedChart(QWidget):
                     self._drag_origin = event.globalPos()
                     self._drag_widget_pos = self.geometry()
                     return True   # consumed — resize only
-                # Inside axes area: legend drag or axes pan.
+                # Inside axes area: legend drag or axes reposition.
                 if self._in_axes_area(canvas_pos):
                     if self._hit_legend(canvas_pos):
                         self._legend_dragging = True
                         return False  # let mpl handle legend drag
-                    # Start axes pan (store initial limits + pos).
+                    # Start axes reposition (move subplot within figure).
                     self._panning = True
                     self._pan_origin = canvas_pos
                     try:
-                        self._pan_xlim = self._ax.get_xlim()
-                        self._pan_ylim = self._ax.get_ylim()
+                        sp = self._figure.subplotpars
+                        self._pan_margins = {
+                            "left": sp.left, "right": sp.right,
+                            "top": sp.top, "bottom": sp.bottom,
+                        }
+                        if self._tight_layout:
+                            self._figure.set_layout_engine("none")
+                            self._tight_layout = False
                     except Exception:
                         self._panning = False
                     return True
@@ -1228,25 +1234,25 @@ class EmbeddedChart(QWidget):
             # While legend is being dragged, let matplotlib handle.
             if self._legend_dragging:
                 return False
-            # Axes pan: translate axis limits based on mouse delta.
+            # Axes reposition: shift subplot margins.
             if self._panning:
                 try:
-                    dpr = self._canvas.devicePixelRatio()
-                    renderer = self._canvas.get_renderer()
-                    bbox = self._ax.get_window_extent(renderer)
-                    dx_px = (canvas_pos.x() - self._pan_origin.x()) * dpr
-                    dy_px = (canvas_pos.y() - self._pan_origin.y()) * dpr
-                    xlim = self._pan_xlim
-                    ylim = self._pan_ylim
-                    x_range = xlim[1] - xlim[0]
-                    y_range = ylim[1] - ylim[0]
-                    dx_data = -dx_px * x_range / bbox.width
-                    dy_data = dy_px * y_range / bbox.height
-                    self._ax.set_xlim(xlim[0] + dx_data,
-                                      xlim[1] + dx_data)
-                    self._ax.set_ylim(ylim[0] + dy_data,
-                                      ylim[1] + dy_data)
-                    self._canvas.draw_idle()
+                    fw = self._canvas.width()
+                    fh = self._canvas.height()
+                    dx = (canvas_pos.x() - self._pan_origin.x()) / fw
+                    dy = (canvas_pos.y() - self._pan_origin.y()) / fh
+                    m = self._pan_margins
+                    new_left = m["left"] + dx
+                    new_right = m["right"] + dx
+                    new_top = m["top"] - dy
+                    new_bottom = m["bottom"] - dy
+                    # Clamp so axes stay within figure.
+                    if (0.02 <= new_left and new_right <= 0.99 and
+                            0.02 <= new_bottom and new_top <= 0.99):
+                        self._figure.subplots_adjust(
+                            left=new_left, right=new_right,
+                            top=new_top, bottom=new_bottom)
+                        self._canvas.draw_idle()
                 except Exception:
                     pass
                 return True
