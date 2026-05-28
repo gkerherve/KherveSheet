@@ -17,9 +17,9 @@ import numpy as np
 from PyQt5.QtCore import Qt, QSize, QPoint, QRect, QEvent
 from PyQt5.QtGui import QBrush, QFont, QCursor, QPainter, QPen, QColor
 from PyQt5.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
     QComboBox, QLineEdit, QFormLayout, QDialogButtonBox,
-    QWidget, QCheckBox, QMenu, QInputDialog,
+    QWidget, QCheckBox, QMenu, QInputDialog, QGroupBox, QSpinBox,
     QSplitter, QTabWidget, QListWidget, QDoubleSpinBox,
     QColorDialog,
 )
@@ -274,6 +274,9 @@ class EmbeddedChart(QWidget):
         ax = self._ax
         series = []
         for s in self._series:
+            # Trendline series are saved via the trendlines list
+            if s.get("is_trendline"):
+                continue
             sd = {
                 "x": list(s["x"]),
                 "y": list(s["y"]),
@@ -1557,30 +1560,30 @@ class EmbeddedChart(QWidget):
                             None) is self)
         if selected:
             p = QPainter(self)
-            p.setRenderHint(QPainter.Antialiasing, True)
+            p.setRenderHint(QPainter.Antialiasing, False)
             w, h = self.width(), self.height()
-            hr = 5  # handle visual radius
-            inset = hr  # border inset so handles sit on the line
-            # Solid dark border, inset so handles are fully visible
-            p.setPen(QPen(QColor("#555555"), 1.5))
+            hs = 7  # handle square half-size
+            margin = hs + 1  # inset so handles are fully inside
+            # Solid border
+            p.setPen(QPen(QColor("#444444"), 1))
             p.setBrush(Qt.NoBrush)
-            p.drawRect(inset, inset,
-                       w - inset * 2 - 1, h - inset * 2 - 1)
-            # 8 handles: corners + edge midpoints on the border
+            p.drawRect(margin, margin,
+                       w - margin * 2 - 1, h - margin * 2 - 1)
+            # 8 square handles on the border
             handle_pts = [
-                (inset, inset),
-                (w // 2, inset),
-                (w - inset - 1, inset),
-                (inset, h // 2),
-                (w - inset - 1, h // 2),
-                (inset, h - inset - 1),
-                (w // 2, h - inset - 1),
-                (w - inset - 1, h - inset - 1),
+                (margin, margin),
+                (w // 2, margin),
+                (w - margin - 1, margin),
+                (margin, h // 2),
+                (w - margin - 1, h // 2),
+                (margin, h - margin - 1),
+                (w // 2, h - margin - 1),
+                (w - margin - 1, h - margin - 1),
             ]
-            p.setPen(QPen(QColor("#555555"), 1.2))
+            p.setPen(QPen(QColor("#444444"), 1))
             p.setBrush(QBrush(QColor("#ffffff")))
             for hx, hy in handle_pts:
-                p.drawEllipse(hx - hr, hy - hr, hr * 2, hr * 2)
+                p.drawRect(hx - hs, hy - hs, hs * 2, hs * 2)
             p.end()
 
 
@@ -2351,8 +2354,6 @@ class LegendEditorDialog(QDialog):
         root.addWidget(self._show_chk)
 
         # ── Legend title ───────────────────────────────────────────
-        from PyQt5.QtWidgets import (QGroupBox, QSpinBox,
-                                     QDoubleSpinBox)
         title_lay = QHBoxLayout()
         title_lay.addWidget(QLabel("Title:"))
         self._title_edit = QLineEdit()

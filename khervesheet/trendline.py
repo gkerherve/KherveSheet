@@ -325,24 +325,29 @@ def _smart_p0(model_name, x, y):
 # ── Trendline data class ────────────────────────────────────────────
 
 class TrendlineInfo:
-    """Stores everything needed to recreate a trendline."""
+    """Stores everything needed to recreate a trendline.
+
+    Trendlines are added as regular chart series (flagged with
+    ``is_trendline=True``) so they appear in Plot Details and can
+    be removed from there.
+    """
 
     def __init__(self):
-        self.series_idx: int = 0
+        self.series_idx: int = 0       # source series being fitted
         self.model_name: str = "Linear"
         self.poly_order: int = 4
         self.ma_period: int = 2
-        self.params: dict = {}       # fitted parameter values
+        self.params: dict = {}         # fitted parameter values
         self.equation: str = ""
         self.gof: dict = {}
-        self.artist = None           # matplotlib Line2D on chart
-        self.eq_artist = None        # text annotation on chart
-        self.r2_artist = None        # text annotation on chart
+        self.eq_artist = None          # text annotation on chart
+        self.r2_artist = None          # text annotation on chart
         self.show_equation: bool = False
         self.show_r_squared: bool = False
         self.color: str = "#ff0000"
         self.linestyle: str = "--"
         self.linewidth: float = 1.5
+        self.fit_series_idx: int = -1  # index in chart._series
 
     def to_dict(self):
         d = {
@@ -403,11 +408,13 @@ class TrendlineDialog(QDialog):
         # ── Left panel: options ─────────────────────────────────────
         left = QVBoxLayout()
 
-        # Series picker
+        # Series picker (exclude trendline series)
         grp_series = QGroupBox("Data Series")
         sl = QVBoxLayout(grp_series)
         self._series_combo = QComboBox()
         for i, s in enumerate(self._chart._series):
+            if s.get("is_trendline"):
+                continue
             self._series_combo.addItem(
                 s.get("label", f"Series {i + 1}"), i)
         sl.addWidget(self._series_combo)
@@ -535,8 +542,8 @@ class TrendlineDialog(QDialog):
 
         model_name = self._model_combo.currentText()
 
-        # Remove previous trendline for this series
-        self._remove_trendline_artist()
+        # Remove previous trendline for the current source series
+        self._remove_current_trendline()
 
         info = TrendlineInfo()
         info.series_idx = idx
@@ -578,15 +585,22 @@ class TrendlineDialog(QDialog):
             info.equation = model["eq"].format(**params)
             info.gof = gof
 
-            self._draw_fit_line(x, func, popt, info)
-            self._show_report(model_name, params, errors, gof, info.equation)
+            x_smooth = np.linspace(np.nanmin(x), np.nanmax(x), 300)
+            try:
+                y_smooth = func(x_smooth, *popt)
+            except Exception:
+                y_smooth = np.full_like(x_smooth, np.nan)
+            label = f"{info.model_name} fit"
+            self._add_fit_series(x_smooth, y_smooth, label, info)
+            self._show_report(model_name, params, errors, gof,
+                              info.equation)
 
         self._current_trendline = info
 
         # Store on chart for serialisation
         if not hasattr(self._chart, '_trendlines'):
             self._chart._trendlines = []
-        # Replace existing trendline for same series, or add new
+        # Replace existing trendline for same source series, or add new
         replaced = False
         for i, t in enumerate(self._chart._trendlines):
             if t.series_idx == idx:
@@ -613,16 +627,10 @@ class TrendlineDialog(QDialog):
         info.equation = eq_template.format(**params)
         info.gof = gof
 
-        # Draw
         x_smooth = np.linspace(np.nanmin(x), np.nanmax(x), 300)
         y_smooth = np.polyval(coeffs, x_smooth)
-        line, = self._chart._ax.plot(
-            x_smooth, y_smooth, color=info.color,
-            linestyle=info.linestyle, linewidth=info.linewidth,
-            label=f"Poly({order}) fit")
-        info.artist = line
-        self._add_annotations(info)
-        self._chart._canvas.draw_idle()
+        label = f"Poly({order}) fit"
+        self._add_fit_series(x_smooth, y_smooth, label, info)
 
         # Report
         lines = [f"Polynomial Fit (order {order})",
@@ -643,7 +651,7 @@ class TrendlineDialog(QDialog):
             return
         kernel = np.ones(period) / period
         y_ma = np.convolve(y, kernel, mode='valid')
-        x_ma = x[period - 1:]  # align x to convolution output
+        x_ma = x[period - 1:]
 
         y_interp = np.interp(x, x_ma, y_ma)
         gof = _compute_gof(y, y_interp, period)
@@ -651,13 +659,8 @@ class TrendlineDialog(QDialog):
         info.gof = gof
         info.params = {"period": period}
 
-        line, = self._chart._ax.plot(
-            x_ma, y_ma, color=info.color,
-            linestyle=info.linestyle, linewidth=info.linewidth,
-            label=f"MA({period})")
-        info.artist = line
-        self._add_annotations(info)
-        self._chart._canvas.draw_idle()
+        label = f"MA({period})"
+        self._add_fit_series(x_ma, y_ma, label, info)
 
         lines = [f"Moving Average (period={period})",
                  "=" * 40, ""]
@@ -666,19 +669,25 @@ class TrendlineDialog(QDialog):
             lines.append(f"  {k:<16s} = {v: .8g}")
         self._report.setPlainText("\n".join(lines))
 
-    def _draw_fit_line(self, x, func, popt, info: TrendlineInfo):
-        x_smooth = np.linspace(np.nanmin(x), np.nanmax(x), 300)
-        try:
-            y_smooth = func(x_smooth, *popt)
-        except Exception:
-            y_smooth = np.full_like(x_smooth, np.nan)
-        line, = self._chart._ax.plot(
-            x_smooth, y_smooth, color=info.color,
-            linestyle=info.linestyle, linewidth=info.linewidth,
-            label=f"{info.model_name} fit")
-        info.artist = line
+    def _add_fit_series(self, x, y, label, info: TrendlineInfo):
+        """Add the trendline as a real chart series."""
+        chart = self._chart
+        chart.add_series(np.asarray(x), np.asarray(y), label, "Line")
+        fit_idx = len(chart._series) - 1
+        info.fit_series_idx = fit_idx
+        # Mark series as a trendline
+        chart._series[fit_idx]["is_trendline"] = True
+        # Style the artist: dashed, red, thin
+        artist = chart._series[fit_idx].get("artist")
+        if artist is not None and hasattr(artist, 'set_linestyle'):
+            artist.set_linestyle(info.linestyle)
+            artist.set_color(info.color)
+            artist.set_linewidth(info.linewidth)
+            # Remove marker if any
+            if hasattr(artist, 'set_marker'):
+                artist.set_marker('')
         self._add_annotations(info)
-        self._chart._canvas.draw_idle()
+        chart._canvas.draw_idle()
 
     def _show_report(self, model_name, params, errors, gof, equation):
         lines = [f"{model_name} Fit",
@@ -741,41 +750,104 @@ class TrendlineDialog(QDialog):
 
     # ── Remove trendline ────────────────────────────────────────────
 
-    def _remove_trendline_artist(self):
-        """Remove the current trendline's artist from the chart."""
+    def _remove_current_trendline(self):
+        """Remove the current fit's series from the chart."""
         if self._current_trendline:
-            self._remove_info_artists(self._current_trendline)
-            # Also remove from chart's list
+            _remove_trendline_series(
+                self._chart, self._current_trendline)
+            # Remove from chart's trendline list
             if hasattr(self._chart, '_trendlines'):
                 try:
-                    self._chart._trendlines.remove(self._current_trendline)
+                    self._chart._trendlines.remove(
+                        self._current_trendline)
                 except ValueError:
                     pass
             self._current_trendline = None
 
-    @staticmethod
-    def _remove_info_artists(info: TrendlineInfo):
-        for attr in ('artist', 'eq_artist', 'r2_artist'):
+    def _remove_trendline(self):
+        """Remove ALL trendlines from the chart."""
+        _remove_all_trendlines(self._chart)
+        self._current_trendline = None
+        self._report.clear()
+        self._chart._canvas.draw_idle()
+
+
+# ── Helper functions for trendline management ───────────────────────
+
+def _remove_trendline_series(chart, info: TrendlineInfo):
+    """Remove the fit series and annotations for one trendline."""
+    # Remove annotations
+    for attr in ('eq_artist', 'r2_artist'):
+        obj = getattr(info, attr, None)
+        if obj is not None:
+            try:
+                obj.remove()
+            except Exception:
+                pass
+            setattr(info, attr, None)
+    # Remove the series from the chart
+    fit_idx = info.fit_series_idx
+    if fit_idx < 0 or fit_idx >= len(chart._series):
+        return
+    s = chart._series[fit_idx]
+    artist = s.get("artist")
+    if artist is not None:
+        try:
+            artist.remove()
+        except Exception:
+            pass
+    chart._series.pop(fit_idx)
+    if fit_idx < len(chart._y_cols):
+        chart._y_cols.pop(fit_idx)
+    # Refresh legend
+    leg = chart._ax.legend(loc="best", framealpha=0.8, fontsize=8)
+    if leg:
+        leg.set_draggable(True)
+    # Adjust fit_series_idx on remaining trendlines
+    for t in getattr(chart, '_trendlines', []):
+        if t is not info and t.fit_series_idx > fit_idx:
+            t.fit_series_idx -= 1
+    info.fit_series_idx = -1
+
+
+def _remove_all_trendlines(chart):
+    """Remove ALL trendline series and annotations from *chart*."""
+    trendlines = getattr(chart, '_trendlines', [])
+    # Remove annotations first
+    for info in trendlines:
+        for attr in ('eq_artist', 'r2_artist'):
             obj = getattr(info, attr, None)
             if obj is not None:
                 try:
                     obj.remove()
                 except Exception:
                     pass
-                setattr(info, attr, None)
+    # Remove series marked as trendlines (iterate in reverse to keep indices valid)
+    to_remove = []
+    for i, s in enumerate(chart._series):
+        if s.get("is_trendline"):
+            to_remove.append(i)
+    for i in reversed(to_remove):
+        artist = chart._series[i].get("artist")
+        if artist is not None:
+            try:
+                artist.remove()
+            except Exception:
+                pass
+        chart._series.pop(i)
+        if i < len(chart._y_cols):
+            chart._y_cols.pop(i)
+    chart._trendlines.clear()
+    # Refresh legend
+    if chart._series:
+        leg = chart._ax.legend(loc="best", framealpha=0.8, fontsize=8)
+        if leg:
+            leg.set_draggable(True)
+    chart._canvas.draw_idle()
 
-    def _remove_trendline(self):
-        self._remove_trendline_artist()
-        self._report.clear()
-        self._chart._canvas.draw_idle()
-
-
-# ── Helper to redraw a saved trendline on a chart ───────────────────
 
 def restore_trendline(chart, info: TrendlineInfo):
     """Redraw a trendline from saved TrendlineInfo onto *chart*."""
-    from scipy.optimize import curve_fit
-
     if info.series_idx >= len(chart._series):
         return
     s = chart._series[info.series_idx]
@@ -793,37 +865,39 @@ def restore_trendline(chart, info: TrendlineInfo):
         kernel = np.ones(period) / period
         y_ma = np.convolve(y_raw[mask], kernel, mode='valid')
         x_ma = x[period - 1:]
-        line, = chart._ax.plot(
-            x_ma, y_ma, color=info.color,
-            linestyle=info.linestyle, linewidth=info.linewidth,
-            label=f"MA({period})")
-        info.artist = line
+        x_fit, y_fit = x_ma, y_ma
+        label = f"MA({period})"
     elif model_name == "Polynomial":
         order = info.poly_order
         coeffs = [info.params.get(f"a{i}", 0) for i in range(order + 1)]
-        x_smooth = np.linspace(np.nanmin(x), np.nanmax(x), 300)
-        y_smooth = np.polyval(coeffs, x_smooth)
-        line, = chart._ax.plot(
-            x_smooth, y_smooth, color=info.color,
-            linestyle=info.linestyle, linewidth=info.linewidth,
-            label=f"Poly({order}) fit")
-        info.artist = line
+        x_fit = np.linspace(np.nanmin(x), np.nanmax(x), 300)
+        y_fit = np.polyval(coeffs, x_fit)
+        label = f"Poly({order}) fit"
     else:
         model = MODELS.get(model_name)
         if model is None or model["func"] is None:
             return
         func = model["func"]
         popt = [info.params.get(p, 0) for p in model["params"]]
-        x_smooth = np.linspace(np.nanmin(x), np.nanmax(x), 300)
+        x_fit = np.linspace(np.nanmin(x), np.nanmax(x), 300)
         try:
-            y_smooth = func(x_smooth, *popt)
+            y_fit = func(x_fit, *popt)
         except Exception:
             return
-        line, = chart._ax.plot(
-            x_smooth, y_smooth, color=info.color,
-            linestyle=info.linestyle, linewidth=info.linewidth,
-            label=f"{model_name} fit")
-        info.artist = line
+        label = f"{model_name} fit"
+
+    # Add as a real series
+    chart.add_series(np.asarray(x_fit), np.asarray(y_fit), label, "Line")
+    fit_idx = len(chart._series) - 1
+    info.fit_series_idx = fit_idx
+    chart._series[fit_idx]["is_trendline"] = True
+    artist = chart._series[fit_idx].get("artist")
+    if artist is not None and hasattr(artist, 'set_linestyle'):
+        artist.set_linestyle(info.linestyle)
+        artist.set_color(info.color)
+        artist.set_linewidth(info.linewidth)
+        if hasattr(artist, 'set_marker'):
+            artist.set_marker('')
 
     # Annotations
     ax = chart._ax
