@@ -2500,7 +2500,36 @@ class SheetWidget(QWidget):
                 editor.blockSignals(False)
                 break
 
+    def _on_inline_editor_text(self, text):
+        """Track inline editor text for click-to-insert-ref."""
+        r = self.table.currentRow()
+        c = self.table.currentColumn()
+        if r >= 0 and c >= 0 and text.startswith("="):
+            self._inline_formula_cell = (r, c)
+            self._inline_formula_text = text
+            editor = self._find_inline_editor()
+            self._inline_formula_pos = (
+                editor.cursorPosition() if editor else len(text))
+            self._update_ref_highlights(text)
+        else:
+            self._inline_formula_cell = None
+            self._inline_formula_text = None
+            self._inline_formula_pos = None
+            self._clear_ref_highlights()
+
     def eventFilter(self, obj, event):
+        # ── Detect inline editor creation on viewport ────────────
+        if (obj is self.table.viewport()
+                and event.type() == QEvent.ChildAdded):
+            try:
+                child = event.child()
+                if (isinstance(child, QLineEdit)
+                        and child is not self._formula_bar):
+                    child.textChanged.connect(
+                        self._on_inline_editor_text)
+            except Exception:
+                pass
+
         # ── Formula bar focus-in: show highlights for existing formula ──
         if obj is self._formula_bar and event.type() == QEvent.FocusIn:
             text = self._formula_bar.text()
