@@ -1121,6 +1121,16 @@ class MainWindow(QMainWindow):
                         if d.get('y_cols'):
                             cg.attrs['y_cols'] = json.dumps(
                                 d['y_cols'])
+                        # Legend properties.
+                        cg.attrs['legend_visible'] = d.get(
+                            'legend_visible', True)
+                        if d.get('legend_font'):
+                            cg.attrs['legend_font'] = d['legend_font']
+                        cg.attrs['legend_size'] = d.get(
+                            'legend_size', 8)
+                        if d.get('legend_props'):
+                            cg.attrs['legend_props'] = json.dumps(
+                                d['legend_props'])
                         for ki, s in enumerate(d['series']):
                             srg = cg.create_group(f"series_{ki}")
                             srg.create_dataset("x", data=s['x'])
@@ -1409,6 +1419,21 @@ class MainWindow(QMainWindow):
                             "right_label": cg.attrs.get(
                                 'right_label', ''),
                         }
+                        # Legend properties.
+                        cd["legend_visible"] = bool(
+                            cg.attrs.get('legend_visible', True))
+                        lf = cg.attrs.get('legend_font', '')
+                        if lf:
+                            cd["legend_font"] = (lf.decode('utf-8')
+                                                 if isinstance(lf, bytes)
+                                                 else lf)
+                        cd["legend_size"] = int(
+                            cg.attrs.get('legend_size', 8))
+                        lp_json = cg.attrs.get('legend_props', '')
+                        if isinstance(lp_json, bytes):
+                            lp_json = lp_json.decode('utf-8')
+                        if lp_json:
+                            cd["legend_props"] = json.loads(lp_json)
                         # Axis properties (full dialog state).
                         ap_json = cg.attrs.get('axis_props', '')
                         if ap_json:

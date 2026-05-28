@@ -365,6 +365,10 @@ class EmbeddedChart(QWidget):
                     d["legend_size"] = int(texts[0].get_fontsize())
             except Exception:
                 pass
+            # Save extended legend properties if available.
+            lp = getattr(self, '_legend_props', None)
+            if lp:
+                d["legend_props"] = lp
         else:
             d["legend_visible"] = False
         if self._x_col is not None:
@@ -503,18 +507,47 @@ class EmbeddedChart(QWidget):
                     i, fm, sd.get("fill_target", 0),
                     sd.get("fill_color", "#1f77b4"),
                     sd.get("fill_alpha", 0.3))
-        # Restore legend visibility and font.
+        # Restore legend visibility, font, and extended properties.
         leg_font = d.get("legend_font")
         leg_size = d.get("legend_size", 8)
         leg_visible = d.get("legend_visible", True)
+        lp = d.get("legend_props", {})
         if leg_visible:
-            prop = {}
-            if leg_font:
-                prop = {"family": leg_font, "size": leg_size}
-            leg = ax.legend(loc="best", framealpha=0.8,
-                            **({"prop": prop} if prop else {"fontsize": 8}))
+            prop = {"family": leg_font or "sans-serif", "size": leg_size}
+            if lp.get("bold"):
+                prop["weight"] = "bold"
+            if lp.get("italic"):
+                prop["style"] = "italic"
+            kw = {
+                "loc": "best",
+                "prop": prop,
+                "frameon": lp.get("frame_on", True),
+                "framealpha": lp.get("frame_alpha", 0.8),
+                "shadow": lp.get("shadow", False),
+                "fancybox": lp.get("fancybox", True),
+                "ncol": lp.get("ncol", 1),
+                "markerscale": lp.get("markerscale", 1.0),
+                "labelspacing": lp.get("labelspacing", 0.5),
+                "columnspacing": lp.get("columnspacing", 2.0),
+                "handlelength": lp.get("handlelength", 2.0),
+                "handletextpad": lp.get("handletextpad", 0.8),
+                "borderpad": lp.get("borderpad", 0.4),
+            }
+            title = lp.get("title")
+            if title:
+                kw["title"] = title
+            leg = ax.legend(**kw)
             if leg:
                 leg.set_draggable(True)
+                lc = lp.get("label_color", "#000000")
+                for t in leg.get_texts():
+                    t.set_color(lc)
+                fp = leg.get_frame()
+                if fp:
+                    fp.set_edgecolor(lp.get("edge_color", "#cccccc"))
+                    fp.set_facecolor(lp.get("face_color", "#ffffff"))
+            if lp:
+                chart._legend_props = dict(lp)
         else:
             leg = ax.get_legend()
             if leg:
@@ -2158,69 +2191,285 @@ class PlotDetailsDialog(QDialog):
 # ── Legend Editor Dialog ──────────────────────────────────────────
 
 class LegendEditorDialog(QDialog):
-    """Dialog to edit legend entry names, font, and size."""
+    """Dialog to edit legend entry names and all visual properties."""
 
     def __init__(self, chart, parent=None):
         super().__init__(parent or chart)
         self.setWindowTitle("Edit Legend")
         self._chart = chart
-        self.resize(380, 280)
+        self.resize(440, 560)
 
-        layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
 
-        # One QLineEdit per series.
+        # ── Series labels ──────────────────────────────────────────
         self._edits = []
         form = QFormLayout()
         for i, s in enumerate(chart._series):
             edit = QLineEdit(s.get("label", ""))
             self._edits.append(edit)
             form.addRow(f"Series {i + 1}:", edit)
-        layout.addLayout(form)
+        root.addLayout(form)
 
-        # Show/hide legend checkbox.
+        # ── Show / hide ────────────────────────────────────────────
         leg = chart._ax.get_legend()
-        self._show_legend = QCheckBox("Show Legend")
-        self._show_legend.setChecked(leg is not None and leg.get_visible())
-        layout.addWidget(self._show_legend)
+        self._show_chk = QCheckBox("Show Legend")
+        self._show_chk.setChecked(leg is not None and leg.get_visible())
+        root.addWidget(self._show_chk)
+
+        # ── Legend title ───────────────────────────────────────────
+        from PyQt5.QtWidgets import (QFontComboBox, QGroupBox, QSpinBox,
+                                     QDoubleSpinBox, QColorDialog)
+        title_lay = QHBoxLayout()
+        title_lay.addWidget(QLabel("Title:"))
+        self._title_edit = QLineEdit()
+        cur_title = ""
+        if leg:
+            t = leg.get_title()
+            if t:
+                cur_title = t.get_text() or ""
+        self._title_edit.setText(cur_title)
+        title_lay.addWidget(self._title_edit, stretch=1)
+        root.addLayout(title_lay)
 
         # ── Font controls ──────────────────────────────────────────
-        from PyQt5.QtWidgets import QFontComboBox, QGroupBox, QSpinBox
-        font_group = QGroupBox("Legend Font")
-        font_lay = QHBoxLayout(font_group)
+        font_group = QGroupBox("Font")
+        font_grid = QGridLayout(font_group)
 
-        self._font_combo = QFontComboBox()
-        # Read current legend font if available.
         cur_family = "sans-serif"
         cur_size = 8
+        cur_bold = False
+        cur_italic = False
         if leg and leg.get_visible():
             try:
                 texts = leg.get_texts()
                 if texts:
                     cur_family = texts[0].get_fontfamily()[0]
                     cur_size = int(texts[0].get_fontsize())
+                    cur_bold = texts[0].get_fontweight() in (
+                        "bold", "heavy", "extra bold",
+                        700, 800, 900)
+                    cur_italic = texts[0].get_fontstyle() in (
+                        "italic", "oblique")
             except Exception:
                 pass
-        self._font_combo.setCurrentFont(QFont(cur_family))
-        font_lay.addWidget(self._font_combo, stretch=1)
 
+        self._font_combo = QFontComboBox()
+        self._font_combo.setCurrentFont(QFont(cur_family))
+        font_grid.addWidget(QLabel("Family:"), 0, 0)
+        font_grid.addWidget(self._font_combo, 0, 1, 1, 3)
+
+        font_grid.addWidget(QLabel("Size:"), 1, 0)
         self._size_spin = QSpinBox()
-        self._size_spin.setRange(4, 36)
+        self._size_spin.setRange(4, 48)
         self._size_spin.setValue(cur_size)
         self._size_spin.setSuffix(" pt")
-        font_lay.addWidget(self._size_spin)
+        font_grid.addWidget(self._size_spin, 1, 1)
 
-        layout.addWidget(font_group)
+        self._bold_chk = QCheckBox("Bold")
+        self._bold_chk.setChecked(cur_bold)
+        font_grid.addWidget(self._bold_chk, 1, 2)
 
-        # OK / Cancel.
+        self._italic_chk = QCheckBox("Italic")
+        self._italic_chk.setChecked(cur_italic)
+        font_grid.addWidget(self._italic_chk, 1, 3)
+
+        # Label colour.
+        font_grid.addWidget(QLabel("Color:"), 2, 0)
+        self._label_color = "#000000"
+        if leg and leg.get_visible():
+            try:
+                texts = leg.get_texts()
+                if texts:
+                    from matplotlib.colors import to_hex
+                    self._label_color = to_hex(texts[0].get_color())
+            except Exception:
+                pass
+        self._color_btn = QPushButton()
+        self._color_btn.setFixedSize(60, 24)
+        self._color_btn.setStyleSheet(
+            f"background-color: {self._label_color}; border: 1px solid #888;")
+        self._color_btn.clicked.connect(self._pick_label_color)
+        font_grid.addWidget(self._color_btn, 2, 1)
+
+        root.addWidget(font_group)
+
+        # ── Frame / box ────────────────────────────────────────────
+        frame_group = QGroupBox("Frame")
+        frame_grid = QGridLayout(frame_group)
+
+        cur_frame_on = True
+        cur_frame_alpha = 0.8
+        cur_fancybox = True
+        cur_shadow = False
+        cur_edge_color = "#cccccc"
+        cur_face_color = "#ffffff"
+        if leg:
+            fp = leg.get_frame()
+            if fp:
+                cur_frame_on = leg.get_frame_on()
+                cur_frame_alpha = fp.get_alpha() or 0.8
+                cur_edge_color = _mpl_color_to_hex(fp.get_edgecolor())
+                cur_face_color = _mpl_color_to_hex(fp.get_facecolor())
+            cur_shadow = leg.shadow
+            try:
+                cur_fancybox = (fp.get_boxstyle().pad > 0
+                                if fp else True)
+            except Exception:
+                pass
+
+        self._frame_chk = QCheckBox("Show frame")
+        self._frame_chk.setChecked(cur_frame_on)
+        frame_grid.addWidget(self._frame_chk, 0, 0, 1, 2)
+
+        self._shadow_chk = QCheckBox("Shadow")
+        self._shadow_chk.setChecked(cur_shadow)
+        frame_grid.addWidget(self._shadow_chk, 0, 2)
+
+        self._fancybox_chk = QCheckBox("Rounded corners")
+        self._fancybox_chk.setChecked(cur_fancybox)
+        frame_grid.addWidget(self._fancybox_chk, 0, 3)
+
+        frame_grid.addWidget(QLabel("Opacity:"), 1, 0)
+        self._alpha_spin = QDoubleSpinBox()
+        self._alpha_spin.setRange(0.0, 1.0)
+        self._alpha_spin.setSingleStep(0.05)
+        self._alpha_spin.setDecimals(2)
+        self._alpha_spin.setValue(cur_frame_alpha)
+        frame_grid.addWidget(self._alpha_spin, 1, 1)
+
+        frame_grid.addWidget(QLabel("Edge:"), 1, 2)
+        self._edge_color = cur_edge_color
+        self._edge_btn = QPushButton()
+        self._edge_btn.setFixedSize(60, 24)
+        self._edge_btn.setStyleSheet(
+            f"background-color: {self._edge_color}; border: 1px solid #888;")
+        self._edge_btn.clicked.connect(self._pick_edge_color)
+        frame_grid.addWidget(self._edge_btn, 1, 3)
+
+        frame_grid.addWidget(QLabel("Fill:"), 2, 0)
+        self._face_color = cur_face_color
+        self._face_btn = QPushButton()
+        self._face_btn.setFixedSize(60, 24)
+        self._face_btn.setStyleSheet(
+            f"background-color: {self._face_color}; border: 1px solid #888;")
+        self._face_btn.clicked.connect(self._pick_face_color)
+        frame_grid.addWidget(self._face_btn, 2, 1)
+
+        root.addWidget(frame_group)
+
+        # ── Layout / spacing ───────────────────────────────────────
+        spacing_group = QGroupBox("Layout")
+        sp_grid = QGridLayout(spacing_group)
+
+        cur_ncol = 1
+        cur_markerscale = 1.0
+        cur_labelspacing = 0.5
+        cur_columnspacing = 2.0
+        cur_handlelength = 2.0
+        cur_handlepadding = 0.8
+        cur_borderpad = 0.4
+        if leg:
+            cur_ncol = leg._ncols if hasattr(leg, '_ncols') else 1
+            cur_markerscale = leg.markerscale
+            cur_labelspacing = leg.labelspacing
+            cur_columnspacing = leg.columnspacing
+            cur_handlelength = leg.handlelength
+            cur_handlepadding = leg.handletextpad
+            cur_borderpad = leg.borderpad
+
+        sp_grid.addWidget(QLabel("Columns:"), 0, 0)
+        self._ncol_spin = QSpinBox()
+        self._ncol_spin.setRange(1, 10)
+        self._ncol_spin.setValue(cur_ncol)
+        sp_grid.addWidget(self._ncol_spin, 0, 1)
+
+        sp_grid.addWidget(QLabel("Marker scale:"), 0, 2)
+        self._markerscale_spin = QDoubleSpinBox()
+        self._markerscale_spin.setRange(0.1, 5.0)
+        self._markerscale_spin.setSingleStep(0.1)
+        self._markerscale_spin.setDecimals(1)
+        self._markerscale_spin.setValue(cur_markerscale)
+        sp_grid.addWidget(self._markerscale_spin, 0, 3)
+
+        sp_grid.addWidget(QLabel("Label spacing:"), 1, 0)
+        self._labelsp_spin = QDoubleSpinBox()
+        self._labelsp_spin.setRange(0.0, 5.0)
+        self._labelsp_spin.setSingleStep(0.1)
+        self._labelsp_spin.setDecimals(1)
+        self._labelsp_spin.setValue(cur_labelspacing)
+        sp_grid.addWidget(self._labelsp_spin, 1, 1)
+
+        sp_grid.addWidget(QLabel("Column spacing:"), 1, 2)
+        self._colsp_spin = QDoubleSpinBox()
+        self._colsp_spin.setRange(0.0, 5.0)
+        self._colsp_spin.setSingleStep(0.1)
+        self._colsp_spin.setDecimals(1)
+        self._colsp_spin.setValue(cur_columnspacing)
+        sp_grid.addWidget(self._colsp_spin, 1, 3)
+
+        sp_grid.addWidget(QLabel("Handle length:"), 2, 0)
+        self._handlelen_spin = QDoubleSpinBox()
+        self._handlelen_spin.setRange(0.0, 10.0)
+        self._handlelen_spin.setSingleStep(0.1)
+        self._handlelen_spin.setDecimals(1)
+        self._handlelen_spin.setValue(cur_handlelength)
+        sp_grid.addWidget(self._handlelen_spin, 2, 1)
+
+        sp_grid.addWidget(QLabel("Handle padding:"), 2, 2)
+        self._handlepad_spin = QDoubleSpinBox()
+        self._handlepad_spin.setRange(0.0, 5.0)
+        self._handlepad_spin.setSingleStep(0.1)
+        self._handlepad_spin.setDecimals(1)
+        self._handlepad_spin.setValue(cur_handlepadding)
+        sp_grid.addWidget(self._handlepad_spin, 2, 3)
+
+        sp_grid.addWidget(QLabel("Border padding:"), 3, 0)
+        self._borderpad_spin = QDoubleSpinBox()
+        self._borderpad_spin.setRange(0.0, 5.0)
+        self._borderpad_spin.setSingleStep(0.1)
+        self._borderpad_spin.setDecimals(1)
+        self._borderpad_spin.setValue(cur_borderpad)
+        sp_grid.addWidget(self._borderpad_spin, 3, 1)
+
+        root.addWidget(spacing_group)
+
+        # ── OK / Cancel ────────────────────────────────────────────
         buttons = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        root.addWidget(buttons)
 
+    # ── Color pickers ──────────────────────────────────────────────
+    def _pick_label_color(self):
+        from PyQt5.QtWidgets import QColorDialog
+        c = QColorDialog.getColor(QColor(self._label_color), self)
+        if c.isValid():
+            self._label_color = c.name()
+            self._color_btn.setStyleSheet(
+                f"background-color: {c.name()}; border: 1px solid #888;")
+
+    def _pick_edge_color(self):
+        from PyQt5.QtWidgets import QColorDialog
+        c = QColorDialog.getColor(QColor(self._edge_color), self)
+        if c.isValid():
+            self._edge_color = c.name()
+            self._edge_btn.setStyleSheet(
+                f"background-color: {c.name()}; border: 1px solid #888;")
+
+    def _pick_face_color(self):
+        from PyQt5.QtWidgets import QColorDialog
+        c = QColorDialog.getColor(QColor(self._face_color), self)
+        if c.isValid():
+            self._face_color = c.name()
+            self._face_btn.setStyleSheet(
+                f"background-color: {c.name()}; border: 1px solid #888;")
+
+    # ── Apply ──────────────────────────────────────────────────────
     def apply_to_chart(self, chart):
-        """Apply edited labels, font, and size to chart legend."""
+        """Apply all legend properties to the chart."""
         ax = chart._ax
+        # Update series labels.
         for i, edit in enumerate(self._edits):
             if i >= len(chart._series):
                 break
@@ -2230,23 +2479,80 @@ class LegendEditorDialog(QDialog):
             if artist is not None and hasattr(artist, 'set_label'):
                 artist.set_label(new_label)
 
-        font_family = self._font_combo.currentFont().family()
-        font_size = self._size_spin.value()
-
-        if self._show_legend.isChecked():
-            prop = {"family": font_family, "size": font_size}
-            leg = ax.legend(loc="best", framealpha=0.8, prop=prop)
-            if leg:
-                leg.set_draggable(True)
-            # Store for persistence.
-            chart._legend_font = font_family
-            chart._legend_size = font_size
-        else:
+        if not self._show_chk.isChecked():
             leg = ax.get_legend()
             if leg:
                 leg.remove()
+            chart._canvas.draw_idle()
+            return
 
+        font_family = self._font_combo.currentFont().family()
+        font_size = self._size_spin.value()
+        font_weight = "bold" if self._bold_chk.isChecked() else "normal"
+        font_style = "italic" if self._italic_chk.isChecked() else "normal"
+
+        prop = {"family": font_family, "size": font_size,
+                "weight": font_weight, "style": font_style}
+
+        leg = ax.legend(
+            loc="best",
+            prop=prop,
+            frameon=self._frame_chk.isChecked(),
+            framealpha=self._alpha_spin.value(),
+            shadow=self._shadow_chk.isChecked(),
+            fancybox=self._fancybox_chk.isChecked(),
+            ncol=self._ncol_spin.value(),
+            markerscale=self._markerscale_spin.value(),
+            labelspacing=self._labelsp_spin.value(),
+            columnspacing=self._colsp_spin.value(),
+            handlelength=self._handlelen_spin.value(),
+            handletextpad=self._handlepad_spin.value(),
+            borderpad=self._borderpad_spin.value(),
+            title=self._title_edit.text() or None,
+        )
+        if leg:
+            leg.set_draggable(True)
+            # Apply label colour.
+            for t in leg.get_texts():
+                t.set_color(self._label_color)
+            # Apply frame colours.
+            fp = leg.get_frame()
+            if fp:
+                fp.set_edgecolor(self._edge_color)
+                fp.set_facecolor(self._face_color)
+
+        # Store everything for persistence.
+        chart._legend_font = font_family
+        chart._legend_size = font_size
+        chart._legend_props = {
+            "bold": self._bold_chk.isChecked(),
+            "italic": self._italic_chk.isChecked(),
+            "label_color": self._label_color,
+            "frame_on": self._frame_chk.isChecked(),
+            "frame_alpha": self._alpha_spin.value(),
+            "shadow": self._shadow_chk.isChecked(),
+            "fancybox": self._fancybox_chk.isChecked(),
+            "edge_color": self._edge_color,
+            "face_color": self._face_color,
+            "ncol": self._ncol_spin.value(),
+            "markerscale": self._markerscale_spin.value(),
+            "labelspacing": self._labelsp_spin.value(),
+            "columnspacing": self._colsp_spin.value(),
+            "handlelength": self._handlelen_spin.value(),
+            "handletextpad": self._handlepad_spin.value(),
+            "borderpad": self._borderpad_spin.value(),
+            "title": self._title_edit.text(),
+        }
         chart._canvas.draw_idle()
+
+
+def _mpl_color_to_hex(c):
+    """Convert a matplotlib colour (RGBA tuple or string) to #rrggbb."""
+    try:
+        from matplotlib.colors import to_hex
+        return to_hex(c, keep_alpha=False)
+    except Exception:
+        return "#000000"
 
 
 class _SubplotMarginsDialog(QDialog):
