@@ -658,7 +658,7 @@ class SheetWidget(QWidget):
         self.table.setFont(QFont("Segoe UI", 9))
         self.table.verticalHeader().setDefaultSectionSize(20)
         self.table.verticalHeader().setMinimumSectionSize(16)
-        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table.horizontalHeader().setDefaultSectionSize(80)
         self.table.horizontalHeader().setMinimumSectionSize(40)
         self.table.setShowGrid(True)
@@ -711,6 +711,13 @@ class SheetWidget(QWidget):
         self.table.cellChanged.connect(self._on_cell_changed)
         self.table.currentCellChanged.connect(self._on_current_cell_changed)
         self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
+
+        # Sync resize across selected columns / rows.
+        self._resizing_sections = False  # recursion guard
+        self.table.horizontalHeader().sectionResized.connect(
+            self._on_column_resized)
+        self.table.verticalHeader().sectionResized.connect(
+            self._on_row_resized)
 
         # ── Drag-fill state ──────────────────────────────────────────
         self._fill_dragging = False
@@ -1000,6 +1007,47 @@ class SheetWidget(QWidget):
             self._formula_bar.setText(formula)
 
     # ── Cell editing ─────────────────────────────────────────────────
+    # ── Multi-select resize sync ──────────────────────────────────────
+    def _selected_columns(self) -> set:
+        """Return set of column indices that are part of the selection."""
+        cols = set()
+        for rng in self.table.selectedRanges():
+            for c in range(rng.leftColumn(), rng.rightColumn() + 1):
+                cols.add(c)
+        return cols
+
+    def _selected_rows(self) -> set:
+        """Return set of row indices that are part of the selection."""
+        rows = set()
+        for rng in self.table.selectedRanges():
+            for r in range(rng.topRow(), rng.bottomRow() + 1):
+                rows.add(r)
+        return rows
+
+    def _on_column_resized(self, col, _old_size, new_size):
+        if self._resizing_sections:
+            return
+        sel_cols = self._selected_columns()
+        if col not in sel_cols or len(sel_cols) < 2:
+            return
+        self._resizing_sections = True
+        for c in sel_cols:
+            if c != col:
+                self.table.setColumnWidth(c, new_size)
+        self._resizing_sections = False
+
+    def _on_row_resized(self, row, _old_size, new_size):
+        if self._resizing_sections:
+            return
+        sel_rows = self._selected_rows()
+        if row not in sel_rows or len(sel_rows) < 2:
+            return
+        self._resizing_sections = True
+        for r in sel_rows:
+            if r != row:
+                self.table.setRowHeight(r, new_size)
+        self._resizing_sections = False
+
     def _on_cell_changed(self, row, col):
         it = self.table.item(row, col)
         new_text = it.text() if it else ""
@@ -2490,6 +2538,18 @@ class SheetWidget(QWidget):
             if prev:
                 prev._set_selected(False)
                 self._selected_chart = None
+
+            # Capture inline editor state NOW, before Qt closes it.
+            _live_editor = self._find_inline_editor()
+            if (_live_editor and _live_editor.text().startswith("=")
+                    and self._inline_formula_cell is None):
+                r = self.table.currentRow()
+                c = self.table.currentColumn()
+                if r >= 0 and c >= 0:
+                    self._inline_formula_cell = (r, c)
+                    self._inline_formula_text = _live_editor.text()
+                    self._inline_formula_pos = (
+                        _live_editor.cursorPosition())
 
             # Formula entry mode: insert cell ref on click.
             # Check both explicit formula mode (formula bar) and
