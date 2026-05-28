@@ -4,6 +4,9 @@ Minimise / maximise / target a cell value by changing variable cells,
 subject to linear and nonlinear constraints.  Uses scipy.optimize
 under the hood.
 
+The dialog is non-modal so the user can click cells in the sheet and
+have their references inserted into the active input field.
+
 Copyright (C) 2026 Gwilherm Kerherve
 
 This program is free software: you can redistribute it and/or modify
@@ -15,12 +18,13 @@ the Free Software Foundation, either version 3 of the License, or
 import re
 from typing import List, Optional, Tuple
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QEvent
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QDialog, QDialogButtonBox, QVBoxLayout, QHBoxLayout, QFormLayout,
     QLabel, QLineEdit, QRadioButton, QCheckBox, QComboBox,
     QListWidget, QListWidgetItem, QPushButton, QGroupBox, QMessageBox,
-    QButtonGroup, QWidget, QSizePolicy,
+    QButtonGroup, QWidget, QSizePolicy, QToolButton, QApplication,
 )
 
 from .sheet import SheetWidget, col_index_to_letter, letter_to_col_index
@@ -78,6 +82,42 @@ def _ref_str(row: int, col: int) -> str:
     return f"${col_index_to_letter(col)}${row + 1}"
 
 
+def _selection_ref_str(sheet: SheetWidget) -> str:
+    """Build a ref string from the sheet's current selection."""
+    sel = sheet.table.selectedRanges()
+    if not sel:
+        r = sheet.table.currentRow()
+        c = sheet.table.currentColumn()
+        if r >= 0 and c >= 0:
+            return _ref_str(r, c)
+        return ""
+    rng = sel[0]
+    tl = _ref_str(rng.topRow(), rng.leftColumn())
+    if rng.rowCount() == 1 and rng.columnCount() == 1:
+        return tl
+    br = _ref_str(rng.bottomRow(), rng.rightColumn())
+    return f"{tl}:{br}"
+
+
+# ── Pickable line-edit (highlights when listening) ──────────────────
+
+_PICK_STYLE = "QLineEdit { border: 2px solid #3a78b4; background: #eef4fb; }"
+_NORMAL_STYLE = ""
+
+
+class _PickLineEdit(QLineEdit):
+    """QLineEdit that visually highlights when it is the active
+    cell-pick target and notifies its parent dialog."""
+
+    def __init__(self, parent_dlg, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._parent_dlg = parent_dlg
+
+    def focusInEvent(self, ev):
+        super().focusInEvent(ev)
+        self._parent_dlg._set_active_pick(self)
+
+
 # ── Constraint operators ────────────────────────────────────────────
 
 OPERATORS = ["<=", ">=", "="]
@@ -98,18 +138,27 @@ class Constraint:
 # ── Add / Change Constraint dialog ─────────────────────────────────
 
 class _ConstraintDialog(QDialog):
-    """Small dialog for adding or editing a single constraint."""
+    """Small dialog for adding or editing a single constraint.
 
-    def __init__(self, parent=None, constraint: Optional[Constraint] = None):
+    Also non-modal with cell-pick support.
+    """
+
+    def __init__(self, sheet: SheetWidget, parent=None,
+                 constraint: Optional[Constraint] = None,
+                 callback=None):
         super().__init__(parent)
         self.setWindowTitle("Add Constraint" if constraint is None
                            else "Change Constraint")
-        self.resize(400, 120)
+        self.setWindowModality(Qt.NonModal)
+        self.resize(420, 130)
+        self._sheet = sheet
+        self._active_edit: Optional[_PickLineEdit] = None
+        self._callback = callback
 
         layout = QVBoxLayout(self)
         form = QHBoxLayout()
 
-        self._ref_edit = QLineEdit()
+        self._ref_edit = _PickLineEdit(self)
         self._ref_edit.setPlaceholderText("Cell Reference (e.g. $A$1)")
         form.addWidget(self._ref_edit, 3)
 
@@ -117,23 +166,54 @@ class _ConstraintDialog(QDialog):
         self._op_combo.addItems(OPERATORS)
         form.addWidget(self._op_combo, 1)
 
-        self._rhs_edit = QLineEdit()
+        self._rhs_edit = _PickLineEdit(self)
         self._rhs_edit.setPlaceholderText("Constraint (value or cell)")
         form.addWidget(self._rhs_edit, 3)
 
         layout.addLayout(form)
 
-        btns = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        layout.addWidget(btns)
+        btn_row = QHBoxLayout()
+        self._ok_btn = QPushButton("OK")
+        self._cancel_btn = QPushButton("Cancel")
+        btn_row.addStretch()
+        btn_row.addWidget(self._ok_btn)
+        btn_row.addWidget(self._cancel_btn)
+        layout.addLayout(btn_row)
+
+        self._ok_btn.clicked.connect(self._on_ok)
+        self._cancel_btn.clicked.connect(self.reject)
 
         if constraint:
             self._ref_edit.setText(constraint.cell_ref)
-            idx = OPERATORS.index(constraint.op) if constraint.op in OPERATORS else 0
+            idx = (OPERATORS.index(constraint.op)
+                   if constraint.op in OPERATORS else 0)
             self._op_combo.setCurrentIndex(idx)
             self._rhs_edit.setText(constraint.rhs)
+
+        # Connect to sheet selection
+        self._sheet.table.itemSelectionChanged.connect(
+            self._on_sheet_selection)
+        self._set_active_pick(self._ref_edit)
+
+    def _set_active_pick(self, edit: _PickLineEdit):
+        if self._active_edit and self._active_edit is not edit:
+            self._active_edit.setStyleSheet(_NORMAL_STYLE)
+        self._active_edit = edit
+        edit.setStyleSheet(_PICK_STYLE)
+
+    def _on_sheet_selection(self):
+        if self._active_edit is None or not self.isVisible():
+            return
+        ref = _selection_ref_str(self._sheet)
+        if ref:
+            self._active_edit.setText(ref)
+            self.activateWindow()
+
+    def _on_ok(self):
+        c = self.get_constraint()
+        if c and self._callback:
+            self._callback(c)
+        self.accept()
 
     def get_constraint(self) -> Optional[Constraint]:
         ref = self._ref_edit.text().strip()
@@ -142,23 +222,68 @@ class _ConstraintDialog(QDialog):
             return None
         return Constraint(ref, self._op_combo.currentText(), rhs)
 
+    def closeEvent(self, ev):
+        try:
+            self._sheet.table.itemSelectionChanged.disconnect(
+                self._on_sheet_selection)
+        except (TypeError, RuntimeError):
+            pass
+        super().closeEvent(ev)
+
+    def reject(self):
+        try:
+            self._sheet.table.itemSelectionChanged.disconnect(
+                self._on_sheet_selection)
+        except (TypeError, RuntimeError):
+            pass
+        super().reject()
+
 
 # ── Main Solver Parameters dialog ──────────────────────────────────
 
 class SolverDialog(QDialog):
-    """Excel-style Solver Parameters dialog."""
+    """Excel-style Solver Parameters dialog (non-modal).
+
+    Click on a cell-reference input field, then click a cell or drag a
+    range in the sheet — the reference is inserted automatically.
+    """
 
     METHODS = ["GRG Nonlinear", "LP Simplex", "Evolutionary"]
 
     def __init__(self, sheet: SheetWidget, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Solver Parameters")
+        self.setWindowModality(Qt.NonModal)
         self.setMinimumWidth(560)
         self._sheet = sheet
         self._constraints: List[Constraint] = []
+        self._active_edit: Optional[_PickLineEdit] = None
 
         self._build_ui()
         self._pre_fill()
+
+        # Listen to sheet selection changes
+        self._sheet.table.itemSelectionChanged.connect(
+            self._on_sheet_selection)
+
+    # ── Cell-pick machinery ─────────────────────────────────────────
+
+    def _set_active_pick(self, edit: _PickLineEdit):
+        """Highlight *edit* as the current cell-pick target."""
+        if self._active_edit and self._active_edit is not edit:
+            self._active_edit.setStyleSheet(_NORMAL_STYLE)
+        self._active_edit = edit
+        edit.setStyleSheet(_PICK_STYLE)
+
+    def _on_sheet_selection(self):
+        """Called when the user clicks / drags in the sheet."""
+        if self._active_edit is None or not self.isVisible():
+            return
+        ref = _selection_ref_str(self._sheet)
+        if ref:
+            self._active_edit.setText(ref)
+            # Re-activate the dialog so the user can keep working
+            self.activateWindow()
 
     # ── UI construction ─────────────────────────────────────────────
 
@@ -166,11 +291,12 @@ class SolverDialog(QDialog):
         layout = QVBoxLayout(self)
 
         # --- Objective ---
-        obj_form = QFormLayout()
-        self._obj_edit = QLineEdit()
-        self._obj_edit.setPlaceholderText("e.g. $D$5")
-        obj_form.addRow("Set Objective:", self._obj_edit)
-        layout.addLayout(obj_form)
+        obj_row = QHBoxLayout()
+        obj_row.addWidget(QLabel("Set Objective:"))
+        self._obj_edit = _PickLineEdit(self)
+        self._obj_edit.setPlaceholderText("Click a cell, e.g. $D$5")
+        obj_row.addWidget(self._obj_edit, 1)
+        layout.addLayout(obj_row)
 
         # --- To: Max / Min / Value Of ---
         to_row = QHBoxLayout()
@@ -196,11 +322,13 @@ class SolverDialog(QDialog):
         self._radio_val.toggled.connect(self._target_edit.setEnabled)
 
         # --- Variable cells ---
-        var_form = QFormLayout()
-        self._var_edit = QLineEdit()
-        self._var_edit.setPlaceholderText("e.g. $A$1:$A$5")
-        var_form.addRow("By Changing Variable Cells:", self._var_edit)
-        layout.addLayout(var_form)
+        var_row = QHBoxLayout()
+        var_row.addWidget(QLabel("By Changing Variable Cells:"))
+        self._var_edit = _PickLineEdit(self)
+        self._var_edit.setPlaceholderText(
+            "Click a cell or drag a range, e.g. $A$1:$A$5")
+        var_row.addWidget(self._var_edit, 1)
+        layout.addLayout(var_row)
 
         # --- Constraints ---
         layout.addWidget(QLabel("Subject to the Constraints:"))
@@ -266,6 +394,9 @@ class SolverDialog(QDialog):
         self._solve_btn.clicked.connect(self._solve)
         self._close_btn.clicked.connect(self.reject)
 
+        # Default: objective field is active for picking
+        self._set_active_pick(self._obj_edit)
+
     # ── Pre-fill from current selection ─────────────────────────────
 
     def _pre_fill(self):
@@ -277,7 +408,8 @@ class SolverDialog(QDialog):
             if rng.rowCount() == 1 and rng.columnCount() == 1:
                 self._obj_edit.setText(top_left)
             else:
-                bottom_right = _ref_str(rng.bottomRow(), rng.rightColumn())
+                bottom_right = _ref_str(rng.bottomRow(),
+                                        rng.rightColumn())
                 self._var_edit.setText(f"{top_left}:{bottom_right}")
 
     # ── Method description ──────────────────────────────────────────
@@ -303,23 +435,28 @@ class SolverDialog(QDialog):
     # ── Constraint management ───────────────────────────────────────
 
     def _add_constraint(self):
-        dlg = _ConstraintDialog(self)
-        if dlg.exec_() == QDialog.Accepted:
-            c = dlg.get_constraint()
-            if c:
-                self._constraints.append(c)
-                self._constr_list.addItem(str(c))
+        dlg = _ConstraintDialog(self._sheet, self,
+                                callback=self._on_constraint_added)
+        dlg.show()
+
+    def _on_constraint_added(self, c: Constraint):
+        self._constraints.append(c)
+        self._constr_list.addItem(str(c))
 
     def _change_constraint(self):
         row = self._constr_list.currentRow()
         if row < 0:
             return
-        dlg = _ConstraintDialog(self, self._constraints[row])
-        if dlg.exec_() == QDialog.Accepted:
-            c = dlg.get_constraint()
-            if c:
-                self._constraints[row] = c
-                self._constr_list.item(row).setText(str(c))
+        idx = row  # capture for closure
+
+        def _on_changed(c: Constraint):
+            self._constraints[idx] = c
+            self._constr_list.item(idx).setText(str(c))
+
+        dlg = _ConstraintDialog(self._sheet, self,
+                                self._constraints[row],
+                                callback=_on_changed)
+        dlg.show()
 
     def _delete_constraint(self):
         row = self._constr_list.currentRow()
@@ -348,6 +485,23 @@ class SolverDialog(QDialog):
             return float(text)
         except (ValueError, TypeError):
             return None
+
+    # ── Cleanup ─────────────────────────────────────────────────────
+
+    def _disconnect_sheet(self):
+        try:
+            self._sheet.table.itemSelectionChanged.disconnect(
+                self._on_sheet_selection)
+        except (TypeError, RuntimeError):
+            pass
+
+    def closeEvent(self, ev):
+        self._disconnect_sheet()
+        super().closeEvent(ev)
+
+    def reject(self):
+        self._disconnect_sheet()
+        super().reject()
 
     # ── Solve ───────────────────────────────────────────────────────
 

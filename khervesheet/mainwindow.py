@@ -3021,13 +3021,14 @@ class MainWindow(QMainWindow):
             s._open_insert_function()
 
     def _open_solver(self):
-        """Open the Solver Parameters dialog."""
+        """Open the Solver Parameters dialog (non-modal)."""
         s = self._active_sheet()
         if s is None:
             return
         from .solver import SolverDialog
         dlg = SolverDialog(s, self)
-        dlg.exec_()
+        dlg.setAttribute(Qt.WA_DeleteOnClose)
+        dlg.show()
 
     # ── View modes ───────────────────────────────────────────────────
     def _set_view_mode(self, mode: str):
