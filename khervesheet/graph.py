@@ -15,7 +15,7 @@ the Free Software Foundation, either version 3 of the License, or
 import numpy as np
 
 from PyQt5.QtCore import Qt, QSize, QPoint, QRect, QEvent
-from PyQt5.QtGui import QFont, QCursor, QPainter, QPen, QColor
+from PyQt5.QtGui import QBrush, QFont, QCursor, QPainter, QPen, QColor
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QComboBox, QLineEdit, QFormLayout, QDialogButtonBox,
@@ -38,7 +38,7 @@ _DEFAULT_LINEWIDTH = 1.0
 _DEFAULT_MARKERSIZE = 3.0
 
 # Resize handle size in pixels.
-_HANDLE = 6
+_HANDLE = 8
 
 # Module-level clipboard for chart cut/copy/paste.
 _chart_clipboard = None
@@ -69,6 +69,7 @@ class EmbeddedChart(QWidget):
         self._resize_edge = None      # which edges: combination of t/b/l/r
         self._legend_dragging = False
         self._panning = False         # axes pan mode (inside plot area)
+        self._pan_enabled = False     # user must enable via right-click
         self._keep_ratio = False      # fixed aspect-ratio resize
         self._aspect_ratio = 480 / 320  # w/h ratio at creation
         self._tight_layout = False      # tight layout off by default
@@ -987,6 +988,12 @@ class EmbeddedChart(QWidget):
 
         menu.addSeparator()
 
+        # Pan axes toggle
+        pan_act = menu.addAction("Pan Axes")
+        pan_act.setCheckable(True)
+        pan_act.setChecked(self._pan_enabled)
+        pan_act.triggered.connect(self._toggle_pan_mode)
+
         # Keep proportions toggle
         ratio_act = menu.addAction("Keep Proportions")
         ratio_act.setCheckable(True)
@@ -1055,6 +1062,9 @@ class EmbeddedChart(QWidget):
         menu.addSeparator()
         menu.addAction("Close Chart", self._close_chart)
         menu.exec_(event.globalPos())
+
+    def _toggle_pan_mode(self, checked):
+        self._pan_enabled = checked
 
     def _toggle_keep_ratio(self, checked):
         self._keep_ratio = checked
@@ -1263,20 +1273,23 @@ class EmbeddedChart(QWidget):
                     if self._hit_legend(canvas_pos):
                         self._legend_dragging = True
                         return False  # let mpl handle legend drag
-                    # Start axes reposition (move subplot within figure).
-                    self._panning = True
-                    self._pan_origin = canvas_pos
-                    try:
-                        sp = self._figure.subplotpars
-                        self._pan_margins = {
-                            "left": sp.left, "right": sp.right,
-                            "top": sp.top, "bottom": sp.bottom,
-                        }
-                        if self._tight_layout:
-                            self._figure.set_layout_engine("none")
-                            self._tight_layout = False
-                    except Exception:
-                        self._panning = False
+                    if self._pan_enabled:
+                        # Start axes reposition (move subplot).
+                        self._panning = True
+                        self._pan_origin = canvas_pos
+                        try:
+                            sp = self._figure.subplotpars
+                            self._pan_margins = {
+                                "left": sp.left, "right": sp.right,
+                                "top": sp.top, "bottom": sp.bottom,
+                            }
+                            if self._tight_layout:
+                                self._figure.set_layout_engine("none")
+                                self._tight_layout = False
+                        except Exception:
+                            self._panning = False
+                        return True
+                    # Not panning — just consume the click (chart stays selected)
                     return True
                 # Outside axes (margins) → start chart drag.
                 self._drag_origin = event.globalPos()
@@ -1345,7 +1358,10 @@ class EmbeddedChart(QWidget):
                 self.setCursor(cursors.get(edge, Qt.ArrowCursor))
                 return True
             if self._in_axes_area(canvas_pos):
-                self.setCursor(Qt.OpenHandCursor)
+                if self._pan_enabled:
+                    self.setCursor(Qt.OpenHandCursor)
+                else:
+                    self.setCursor(Qt.ArrowCursor)
                 return True
             self.setCursor(Qt.SizeAllCursor)
             return False
@@ -1463,9 +1479,18 @@ class EmbeddedChart(QWidget):
                 prev._set_selected(False)
             self._source_sheet._selected_chart = self
             self._set_selected(True)
+            # Auto-highlight source data when selected
+            if not getattr(self, '_show_data_active', False):
+                self._show_data_active = True
+                self._apply_show_data()
 
     def _set_selected(self, selected):
-        """Visual feedback for selection — thicker blue border."""
+        """Visual feedback for selection — border + handles."""
+        if not selected:
+            # Clear data highlights when deselected
+            if getattr(self, '_show_data_active', False):
+                self._show_data_active = False
+                self._clear_show_data()
         self.update()  # trigger paintEvent to redraw border
 
     def _hit_edge(self, pos):
@@ -1484,7 +1509,7 @@ class EmbeddedChart(QWidget):
             edge += 't'
         return edge
 
-    # ── Paint border ────────────────────────────────────────────────
+    # ── Paint border + handles ─────────────────────────────────────
     def paintEvent(self, event):
         super().paintEvent(event)
         selected = (self._source_sheet and
@@ -1492,8 +1517,24 @@ class EmbeddedChart(QWidget):
                             None) is self)
         if selected:
             p = QPainter(self)
-            p.setPen(QPen(QColor("#3078c6"), 2))
-            p.drawRect(0, 0, self.width() - 1, self.height() - 1)
+            p.setRenderHint(QPainter.Antialiasing, True)
+            w, h = self.width(), self.height()
+            # Dashed border
+            pen = QPen(QColor("#888888"), 1, Qt.DashLine)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(1, 1, w - 3, h - 3)
+            # 8 resize handles: corners + midpoints
+            hr = 4  # handle radius
+            handle_pts = [
+                (0, 0), (w // 2, 0), (w - 1, 0),           # top
+                (0, h // 2), (w - 1, h // 2),               # middle
+                (0, h - 1), (w // 2, h - 1), (w - 1, h - 1) # bottom
+            ]
+            p.setPen(QPen(QColor("#666666"), 1))
+            p.setBrush(QBrush(QColor("#ffffff")))
+            for hx, hy in handle_pts:
+                p.drawEllipse(hx - hr, hy - hr, hr * 2, hr * 2)
             p.end()
 
 
