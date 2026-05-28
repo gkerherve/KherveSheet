@@ -2194,12 +2194,26 @@ class LegendEditorDialog(QDialog):
     """Dialog to edit legend entry names and all visual properties."""
 
     def __init__(self, chart, parent=None):
-        super().__init__(parent or chart)
+        # Parent to the top-level window to avoid Qt crash when
+        # parenting a dialog to a viewport-child widget on Windows.
+        win = chart.window() if chart else None
+        super().__init__(parent or win)
         self.setWindowTitle("Edit Legend")
         self._chart = chart
         self.resize(440, 560)
 
         root = QVBoxLayout(self)
+
+        # Read all current values from the stored props dict first
+        # (safe Python dict), only probe matplotlib as a fallback.
+        lp = getattr(chart, '_legend_props', {}) or {}
+        leg = chart._ax.get_legend()
+        leg_visible = False
+        if leg is not None:
+            try:
+                leg_visible = bool(leg.get_visible())
+            except Exception:
+                pass
 
         # ── Series labels ──────────────────────────────────────────
         self._edits = []
@@ -2211,47 +2225,63 @@ class LegendEditorDialog(QDialog):
         root.addLayout(form)
 
         # ── Show / hide ────────────────────────────────────────────
-        leg = chart._ax.get_legend()
         self._show_chk = QCheckBox("Show Legend")
-        self._show_chk.setChecked(leg is not None and leg.get_visible())
+        self._show_chk.setChecked(leg_visible)
         root.addWidget(self._show_chk)
 
         # ── Legend title ───────────────────────────────────────────
         from PyQt5.QtWidgets import (QFontComboBox, QGroupBox, QSpinBox,
-                                     QDoubleSpinBox, QColorDialog)
+                                     QDoubleSpinBox)
         title_lay = QHBoxLayout()
         title_lay.addWidget(QLabel("Title:"))
         self._title_edit = QLineEdit()
-        cur_title = ""
-        if leg:
-            t = leg.get_title()
-            if t:
-                cur_title = t.get_text() or ""
+        cur_title = lp.get("title", "")
+        if not cur_title and leg_visible:
+            try:
+                t = leg.get_title()
+                if t:
+                    cur_title = t.get_text() or ""
+            except Exception:
+                pass
         self._title_edit.setText(cur_title)
         title_lay.addWidget(self._title_edit, stretch=1)
         root.addLayout(title_lay)
 
-        # ── Font controls ──────────────────────────────────────────
-        font_group = QGroupBox("Font")
-        font_grid = QGridLayout(font_group)
+        # ── Read font from props or live legend ────────────────────
+        cur_family = lp.get("font_family",
+                            getattr(chart, '_legend_font', None))
+        cur_size = lp.get("font_size",
+                          getattr(chart, '_legend_size', 8))
+        cur_bold = lp.get("bold", False)
+        cur_italic = lp.get("italic", False)
+        cur_label_color = lp.get("label_color", "#000000")
 
-        cur_family = "sans-serif"
-        cur_size = 8
-        cur_bold = False
-        cur_italic = False
-        if leg and leg.get_visible():
+        # Fallback: read from live legend text objects.
+        if cur_family is None and leg_visible:
             try:
                 texts = leg.get_texts()
                 if texts:
                     cur_family = texts[0].get_fontfamily()[0]
                     cur_size = int(texts[0].get_fontsize())
-                    cur_bold = texts[0].get_fontweight() in (
-                        "bold", "heavy", "extra bold",
-                        700, 800, 900)
-                    cur_italic = texts[0].get_fontstyle() in (
-                        "italic", "oblique")
             except Exception:
                 pass
+        if cur_family is None:
+            cur_family = "Segoe UI"  # safe Windows default
+
+        # Map generic CSS/mpl font names to real system fonts.
+        _font_map = {
+            "sans-serif": "Segoe UI",
+            "serif": "Times New Roman",
+            "monospace": "Consolas",
+            "cursive": "Comic Sans MS",
+            "fantasy": "Impact",
+            "DejaVu Sans": "Segoe UI",
+        }
+        cur_family = _font_map.get(cur_family, cur_family)
+
+        # ── Font controls ──────────────────────────────────────────
+        font_group = QGroupBox("Font")
+        font_grid = QGridLayout(font_group)
 
         self._font_combo = QFontComboBox()
         self._font_combo.setCurrentFont(QFont(cur_family))
@@ -2261,29 +2291,21 @@ class LegendEditorDialog(QDialog):
         font_grid.addWidget(QLabel("Size:"), 1, 0)
         self._size_spin = QSpinBox()
         self._size_spin.setRange(4, 48)
-        self._size_spin.setValue(cur_size)
+        self._size_spin.setValue(int(cur_size))
         self._size_spin.setSuffix(" pt")
         font_grid.addWidget(self._size_spin, 1, 1)
 
         self._bold_chk = QCheckBox("Bold")
-        self._bold_chk.setChecked(cur_bold)
+        self._bold_chk.setChecked(bool(cur_bold))
         font_grid.addWidget(self._bold_chk, 1, 2)
 
         self._italic_chk = QCheckBox("Italic")
-        self._italic_chk.setChecked(cur_italic)
+        self._italic_chk.setChecked(bool(cur_italic))
         font_grid.addWidget(self._italic_chk, 1, 3)
 
         # Label colour.
         font_grid.addWidget(QLabel("Color:"), 2, 0)
-        self._label_color = "#000000"
-        if leg and leg.get_visible():
-            try:
-                texts = leg.get_texts()
-                if texts:
-                    from matplotlib.colors import to_hex
-                    self._label_color = to_hex(texts[0].get_color())
-            except Exception:
-                pass
+        self._label_color = str(cur_label_color)
         self._color_btn = QPushButton()
         self._color_btn.setFixedSize(60, 24)
         self._color_btn.setStyleSheet(
@@ -2293,50 +2315,27 @@ class LegendEditorDialog(QDialog):
 
         root.addWidget(font_group)
 
-        # ── Frame / box ────────────────────────────────────────────
+        # ── Frame / box (read from props, not live legend) ─────────
         frame_group = QGroupBox("Frame")
         frame_grid = QGridLayout(frame_group)
 
-        cur_frame_on = True
-        cur_frame_alpha = 0.8
-        cur_fancybox = True
-        cur_shadow = False
-        cur_edge_color = "#cccccc"
-        cur_face_color = "#ffffff"
-        if leg:
-            try:
-                fp = leg.get_frame()
-                if fp:
-                    cur_frame_on = bool(leg.get_frame_on())
-                    alpha = fp.get_alpha()
-                    if alpha is not None:
-                        cur_frame_alpha = float(alpha)
-                    cur_edge_color = _mpl_color_to_hex(
-                        fp.get_edgecolor())
-                    cur_face_color = _mpl_color_to_hex(
-                        fp.get_facecolor())
-                shadow = getattr(leg, 'shadow', False)
-                # In newer matplotlib, shadow can be a dict.
-                cur_shadow = bool(shadow) if not isinstance(
-                    shadow, dict) else True
-                try:
-                    cur_fancybox = bool(
-                        fp.get_boxstyle().pad > 0) if fp else True
-                except Exception:
-                    pass
-            except Exception:
-                pass
+        cur_frame_on = lp.get("frame_on", True)
+        cur_frame_alpha = lp.get("frame_alpha", 0.8)
+        cur_fancybox = lp.get("fancybox", True)
+        cur_shadow = lp.get("shadow", False)
+        cur_edge_color = lp.get("edge_color", "#cccccc")
+        cur_face_color = lp.get("face_color", "#ffffff")
 
         self._frame_chk = QCheckBox("Show frame")
-        self._frame_chk.setChecked(cur_frame_on)
+        self._frame_chk.setChecked(bool(cur_frame_on))
         frame_grid.addWidget(self._frame_chk, 0, 0, 1, 2)
 
         self._shadow_chk = QCheckBox("Shadow")
-        self._shadow_chk.setChecked(cur_shadow)
+        self._shadow_chk.setChecked(bool(cur_shadow))
         frame_grid.addWidget(self._shadow_chk, 0, 2)
 
         self._fancybox_chk = QCheckBox("Rounded corners")
-        self._fancybox_chk.setChecked(cur_fancybox)
+        self._fancybox_chk.setChecked(bool(cur_fancybox))
         frame_grid.addWidget(self._fancybox_chk, 0, 3)
 
         frame_grid.addWidget(QLabel("Opacity:"), 1, 0)
@@ -2344,11 +2343,11 @@ class LegendEditorDialog(QDialog):
         self._alpha_spin.setRange(0.0, 1.0)
         self._alpha_spin.setSingleStep(0.05)
         self._alpha_spin.setDecimals(2)
-        self._alpha_spin.setValue(cur_frame_alpha)
+        self._alpha_spin.setValue(float(cur_frame_alpha))
         frame_grid.addWidget(self._alpha_spin, 1, 1)
 
         frame_grid.addWidget(QLabel("Edge:"), 1, 2)
-        self._edge_color = cur_edge_color
+        self._edge_color = str(cur_edge_color)
         self._edge_btn = QPushButton()
         self._edge_btn.setFixedSize(60, 24)
         self._edge_btn.setStyleSheet(
@@ -2357,7 +2356,7 @@ class LegendEditorDialog(QDialog):
         frame_grid.addWidget(self._edge_btn, 1, 3)
 
         frame_grid.addWidget(QLabel("Fill:"), 2, 0)
-        self._face_color = cur_face_color
+        self._face_color = str(cur_face_color)
         self._face_btn = QPushButton()
         self._face_btn.setFixedSize(60, 24)
         self._face_btn.setStyleSheet(
@@ -2367,29 +2366,17 @@ class LegendEditorDialog(QDialog):
 
         root.addWidget(frame_group)
 
-        # ── Layout / spacing ───────────────────────────────────────
+        # ── Layout / spacing (from props dict) ─────────────────────
         spacing_group = QGroupBox("Layout")
         sp_grid = QGridLayout(spacing_group)
 
-        cur_ncol = 1
-        cur_markerscale = 1.0
-        cur_labelspacing = 0.5
-        cur_columnspacing = 2.0
-        cur_handlelength = 2.0
-        cur_handlepadding = 0.8
-        cur_borderpad = 0.4
-        if leg:
-            try:
-                cur_ncol = getattr(leg, '_ncols',
-                                   getattr(leg, '_ncol', 1)) or 1
-                cur_markerscale = float(leg.markerscale)
-                cur_labelspacing = float(leg.labelspacing)
-                cur_columnspacing = float(leg.columnspacing)
-                cur_handlelength = float(leg.handlelength)
-                cur_handlepadding = float(leg.handletextpad)
-                cur_borderpad = float(leg.borderpad)
-            except Exception:
-                pass
+        cur_ncol = int(lp.get("ncol", 1))
+        cur_markerscale = float(lp.get("markerscale", 1.0))
+        cur_labelspacing = float(lp.get("labelspacing", 0.5))
+        cur_columnspacing = float(lp.get("columnspacing", 2.0))
+        cur_handlelength = float(lp.get("handlelength", 2.0))
+        cur_handlepadding = float(lp.get("handletextpad", 0.8))
+        cur_borderpad = float(lp.get("borderpad", 0.4))
 
         sp_grid.addWidget(QLabel("Columns:"), 0, 0)
         self._ncol_spin = QSpinBox()
@@ -2539,6 +2526,8 @@ class LegendEditorDialog(QDialog):
         chart._legend_font = font_family
         chart._legend_size = font_size
         chart._legend_props = {
+            "font_family": font_family,
+            "font_size": font_size,
             "bold": self._bold_chk.isChecked(),
             "italic": self._italic_chk.isChecked(),
             "label_color": self._label_color,
