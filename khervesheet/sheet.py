@@ -2771,6 +2771,9 @@ class SheetWidget(QWidget):
               and event.button() == Qt.LeftButton):
             hr = self._fill_handle_rect()
             if hr and hr.contains(event.pos()):
+                # Cancel any drag state from the preceding press.
+                self._fill_dragging = False
+                self._fill_anchor_range = None
                 self._auto_fill_down()
                 return True
 
@@ -2899,7 +2902,7 @@ class SheetWidget(QWidget):
         # then right) for the last non-empty row starting from src_bot.
         last_data_row = src_bot
         for adj_col in (left_col - 1, right_col + 1):
-            if adj_col < 0 or adj_col >= self.col_count():
+            if adj_col < 0 or adj_col >= self.table.columnCount():
                 continue
             for r in range(src_bot + 1, self.row_count()):
                 it = self.table.item(r, adj_col)
