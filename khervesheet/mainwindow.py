@@ -586,6 +586,13 @@ class MainWindow(QMainWindow):
         self._fx_toolbar_btn.setMenu(fx_menu)
         plot_bar.addWidget(self._fx_toolbar_btn)
 
+        # ── Solver button ───────────────────────────────────────────
+        self._solver_btn = QToolButton()
+        self._solver_btn.setIcon(icons.solver_icon(28))
+        self._solver_btn.setToolTip("Solver")
+        self._solver_btn.clicked.connect(self._open_solver)
+        plot_bar.addWidget(self._solver_btn)
+
         # ── Merge/Unmerge button (in formatting toolbar) ─────────
         self._merge_btn = QToolButton()
         self._merge_btn.setIcon(icons.merge_cells_icon(28))
@@ -3012,6 +3019,15 @@ class MainWindow(QMainWindow):
         s = self._active_sheet()
         if s:
             s._open_insert_function()
+
+    def _open_solver(self):
+        """Open the Solver Parameters dialog."""
+        s = self._active_sheet()
+        if s is None:
+            return
+        from .solver import SolverDialog
+        dlg = SolverDialog(s, self)
+        dlg.exec_()
 
     # ── View modes ───────────────────────────────────────────────────
     def _set_view_mode(self, mode: str):

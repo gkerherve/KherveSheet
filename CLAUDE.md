@@ -40,6 +40,7 @@ into a new module and import.
   - `formula_engine.py` — cell formula parser & evaluator.
   - `undo_commands.py` — QUndoCommand classes.
   - `insert_ops.py`  — Insert menu ops: checkbox, dropdown, link, comment/note, emoji, transpose, spell-check.
+  - `solver.py`     — `SolverDialog` (Excel-style optimisation: min/max/target via scipy).
   - `icons.py`      — qtawesome icon factory (themed MDI + custom QPainter plot glyphs).
   - `git_backend.py` — per-document Git repo: auto-commit, push, pull, history, branches (pygit2).
   - `history_dialog.py` — `HistoryDialog` commit browser with DAG graph, diff view, restore.
@@ -81,6 +82,15 @@ wrap text) and every chart axis property must round-trip through the
 immediately.** No batching. No exceptions. No `Co-Authored-By:` trailer.
 
 Commit subjects under 70 chars; body explains *why*, not what.
+
+**Commit message prefix** — every subject line must start with one of:
+
+- `fix:` — bug fix
+- `feat:` — new feature or option
+- `refactor:` — code restructuring, no behavior change
+- `style:` — formatting, UI tweaks
+- `docs:` — documentation only
+- `perf:` — performance improvement
 
 ## Licensing
 

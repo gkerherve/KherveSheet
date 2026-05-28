@@ -1478,3 +1478,26 @@ def fx_icon(size: int = 28) -> QIcon:
         p.setPen(QPen(QColor("#3a78b4"), max(1.0, s / 18)))
         p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "f(x)")
     return _fmt_icon(size, _draw)
+
+
+def solver_icon(size: int = 28) -> QIcon:
+    """Target / crosshair icon for the Solver toolbar button."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        mid = s / 2
+        r = s * 0.35
+        # Outer circle
+        p.setPen(QPen(fg, max(1.2, s / 16)))
+        p.setBrush(Qt.NoBrush)
+        p.drawEllipse(QPointF(mid, mid), r, r)
+        # Inner circle
+        p.drawEllipse(QPointF(mid, mid), r * 0.5, r * 0.5)
+        # Crosshair lines
+        m = s * 0.1
+        p.drawLine(QPointF(m, mid), QPointF(s - m, mid))
+        p.drawLine(QPointF(mid, m), QPointF(mid, s - m))
+        # Centre dot
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#d04040"))
+        p.drawEllipse(QPointF(mid, mid), s * 0.05, s * 0.05)
+    return _fmt_icon(size, _draw)
