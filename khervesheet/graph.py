@@ -1747,8 +1747,10 @@ class _ColorButton(QPushButton):
             f"background: {self._color}; border: 1px solid #888;")
 
     def _pick(self):
-        c = QColorDialog.getColor(QColor(self._color), self)
-        if c.isValid():
+        dlg = QColorDialog(QColor(self._color), self)
+        dlg.setOption(QColorDialog.DontUseNativeDialog)
+        if dlg.exec_() == QDialog.Accepted:
+            c = dlg.currentColor()
             self._color = c.name()
             self._update_style()
 
@@ -2638,24 +2640,30 @@ class LegendEditorDialog(QDialog):
     # ── Color pickers ──────────────────────────────────────────────
     def _pick_label_color(self):
         from PyQt5.QtWidgets import QColorDialog
-        c = QColorDialog.getColor(QColor(self._label_color), self)
-        if c.isValid():
+        dlg = QColorDialog(QColor(self._label_color), self)
+        dlg.setOption(QColorDialog.DontUseNativeDialog)
+        if dlg.exec_() == QDialog.Accepted:
+            c = dlg.currentColor()
             self._label_color = c.name()
             self._color_btn.setStyleSheet(
                 f"background-color: {c.name()}; border: 1px solid #888;")
 
     def _pick_edge_color(self):
         from PyQt5.QtWidgets import QColorDialog
-        c = QColorDialog.getColor(QColor(self._edge_color), self)
-        if c.isValid():
+        dlg = QColorDialog(QColor(self._edge_color), self)
+        dlg.setOption(QColorDialog.DontUseNativeDialog)
+        if dlg.exec_() == QDialog.Accepted:
+            c = dlg.currentColor()
             self._edge_color = c.name()
             self._edge_btn.setStyleSheet(
                 f"background-color: {c.name()}; border: 1px solid #888;")
 
     def _pick_face_color(self):
         from PyQt5.QtWidgets import QColorDialog
-        c = QColorDialog.getColor(QColor(self._face_color), self)
-        if c.isValid():
+        dlg = QColorDialog(QColor(self._face_color), self)
+        dlg.setOption(QColorDialog.DontUseNativeDialog)
+        if dlg.exec_() == QDialog.Accepted:
+            c = dlg.currentColor()
             self._face_color = c.name()
             self._face_btn.setStyleSheet(
                 f"background-color: {c.name()}; border: 1px solid #888;")
