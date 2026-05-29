@@ -70,6 +70,47 @@ class _RangeOverlay(QWidget):
         p.end()
 
 
+class _HandleOverlay(QWidget):
+    """Transparent overlay drawn ABOVE the canvas to show selection
+    handles and border.  Lives as a sibling of the canvas inside
+    EmbeddedChart, raised above it so the circles are never clipped."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAutoFillBackground(False)
+        self.hide()
+
+    def paintEvent(self, event):
+        w, h = self.width(), self.height()
+        hr = 5   # handle circle radius
+        m = 12   # margin matching layout contents margins
+
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+
+        # Black border around the canvas area
+        p.setPen(QPen(QColor("#000000"), 2))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(m - 1, m - 1, w - m * 2 + 1, h - m * 2 + 1)
+
+        # 8 circular handles centred on the border
+        cx0, cy0 = m - 1, m - 1
+        cx1, cy1 = w - m, h - m
+        cxm, cym = w // 2, h // 2
+        handle_pts = [
+            (cx0, cy0), (cxm, cy0), (cx1, cy0),
+            (cx0, cym),              (cx1, cym),
+            (cx0, cy1), (cxm, cy1), (cx1, cy1),
+        ]
+        p.setPen(QPen(QColor("#000000"), 1.2))
+        p.setBrush(QBrush(QColor("#ffffff")))
+        for hx, hy in handle_pts:
+            p.drawEllipse(hx - hr, hy - hr, hr * 2, hr * 2)
+        p.end()
+
+
 class EmbeddedChart(QWidget):
     """A matplotlib chart that lives as a child of the grid viewport."""
 
@@ -119,6 +160,9 @@ class EmbeddedChart(QWidget):
         else:
             self._ax = self._figure.add_subplot(111)
         layout.addWidget(self._canvas, stretch=1)
+
+        # Selection-handle overlay — sits above canvas in z-order.
+        self._handle_overlay = _HandleOverlay(self)
 
         # No toolbar — right-click menu provides all actions.
 
@@ -1523,7 +1567,13 @@ class EmbeddedChart(QWidget):
             if getattr(self, '_show_data_active', False):
                 self._show_data_active = False
                 self._clear_show_data()
-        self.update()  # trigger paintEvent to redraw border
+        if selected:
+            self._handle_overlay.setGeometry(0, 0, self.width(), self.height())
+            self._handle_overlay.show()
+            self._handle_overlay.raise_()
+        else:
+            self._handle_overlay.hide()
+        self.update()
 
     def _hit_edge(self, pos):
         """Return a string like 'r', 'rb', 'l' etc. if pos is near
@@ -1541,37 +1591,11 @@ class EmbeddedChart(QWidget):
             edge += 't'
         return edge
 
-    # ── Paint border + handles ─────────────────────────────────────
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        selected = (self._source_sheet and
-                    getattr(self._source_sheet, '_selected_chart',
-                            None) is self)
-        if selected:
-            p = QPainter(self)
-            p.setRenderHint(QPainter.Antialiasing, False)
-            w, h = self.width(), self.height()
-            hr = 5   # handle circle radius
-            m = 12   # margin matching layout contents margins
-            # Black border around the canvas area
-            p.setPen(QPen(QColor("#000000"), 2))
-            p.setBrush(Qt.NoBrush)
-            p.drawRect(m - 1, m - 1,
-                       w - m * 2 + 1, h - m * 2 + 1)
-            # 8 circular handles in the margin, centred on the border
-            cx0, cy0 = m - 1, m - 1           # top-left corner
-            cx1, cy1 = w - m, h - m           # bottom-right corner
-            cxm, cym = w // 2, h // 2         # midpoints
-            handle_pts = [
-                (cx0, cy0), (cxm, cy0), (cx1, cy0),
-                (cx0, cym),              (cx1, cym),
-                (cx0, cy1), (cxm, cy1), (cx1, cy1),
-            ]
-            p.setPen(QPen(QColor("#000000"), 1.2))
-            p.setBrush(QBrush(QColor("#ffffff")))
-            for hx, hy in handle_pts:
-                p.drawEllipse(hx - hr, hy - hr, hr * 2, hr * 2)
-            p.end()
+    # ── Keep handle overlay in sync with widget size ─────────────
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._handle_overlay.isVisible():
+            self._handle_overlay.setGeometry(0, 0, self.width(), self.height())
 
 
 class _ChartWindow(QDialog):
