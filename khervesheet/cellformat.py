@@ -179,6 +179,9 @@ class CellFormatDelegate(QStyledItemDelegate):
         self._formats = formats
         # Formula reference highlights: {(row, col): color_hex}
         self._ref_highlights: Dict[Tuple[int, int], str] = {}
+        # Sparklines: {(row, col): {"col": int, "r1": int, "r2": int,
+        #              "type": "line"|"bar"|"winloss", "color": str}}
+        self._sparklines: Dict[Tuple[int, int], dict] = {}
 
     def paint(self, painter: QPainter,
               option: QStyleOptionViewItem,
@@ -219,6 +222,11 @@ class CellFormatDelegate(QStyledItemDelegate):
         if cf is not None:
             self._draw_borders(painter, option.rect, cf)
 
+        # Draw sparkline if present.
+        spark = self._sparklines.get(key)
+        if spark:
+            self._paint_sparkline(painter, option.rect, spark)
+
         # Draw formula reference border on top.
         if ref_color:
             painter.save()
@@ -226,6 +234,114 @@ class CellFormatDelegate(QStyledItemDelegate):
             painter.setPen(pen)
             painter.drawRect(option.rect.adjusted(1, 1, -1, -1))
             painter.restore()
+
+    def _paint_sparkline(self, painter: QPainter, rect, spark: dict):
+        """Render a tiny chart inside the cell rect."""
+        table = self.parent()
+        if not isinstance(table, QTableWidget):
+            return
+        col = spark.get("col")
+        r1 = spark.get("r1", 0)
+        r2 = spark.get("r2", table.rowCount() - 1)
+        if col is None:
+            return
+
+        # Collect numeric values from the source range.
+        vals = []
+        for r in range(r1, r2 + 1):
+            it = table.item(r, col)
+            if it and it.text():
+                try:
+                    vals.append(float(it.text()))
+                except (ValueError, TypeError):
+                    vals.append(0.0)
+            else:
+                vals.append(0.0)
+        if not vals:
+            return
+
+        color = QColor(spark.get("color", "#4472c4"))
+        neg_color = QColor(spark.get("neg_color", "#e74c3c"))
+        spark_type = spark.get("type", "line")
+        pad = 2
+        area = rect.adjusted(pad, pad, -pad, -pad)
+        if area.width() < 4 or area.height() < 4:
+            return
+
+        painter.save()
+        painter.setClipRect(rect)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        vmin = min(vals)
+        vmax = max(vals)
+        if vmax == vmin:
+            vmax = vmin + 1  # avoid division by zero
+
+        n = len(vals)
+        h = area.height()
+        w = area.width()
+
+        if spark_type == "bar":
+            bar_w = max(1, w / n)
+            zero_y = area.bottom() - h * (0 - vmin) / (vmax - vmin)
+            if vmin >= 0:
+                zero_y = area.bottom()
+            for i, v in enumerate(vals):
+                x = area.left() + i * bar_w
+                frac = (v - vmin) / (vmax - vmin)
+                bar_h = frac * h
+                if vmin < 0:
+                    # Bars grow from zero line.
+                    y_top = zero_y - (v / (vmax - vmin)) * h
+                    bar_h_abs = abs(v / (vmax - vmin)) * h
+                    c = neg_color if v < 0 else color
+                    painter.fillRect(
+                        int(x), int(min(y_top, zero_y)),
+                        int(bar_w - 1) or 1, int(bar_h_abs) or 1, c)
+                else:
+                    y_top = area.bottom() - bar_h
+                    painter.fillRect(
+                        int(x), int(y_top),
+                        int(bar_w - 1) or 1, int(bar_h) or 1, color)
+
+        elif spark_type == "winloss":
+            bar_w = max(1, w / n)
+            mid_y = area.top() + h / 2
+            for i, v in enumerate(vals):
+                x = area.left() + i * bar_w
+                c = color if v >= 0 else neg_color
+                if v >= 0:
+                    painter.fillRect(
+                        int(x), int(area.top()),
+                        int(bar_w - 1) or 1, int(h / 2), c)
+                else:
+                    painter.fillRect(
+                        int(x), int(mid_y),
+                        int(bar_w - 1) or 1, int(h / 2), c)
+
+        else:  # line (default)
+            pen = QPen(color, 1.5)
+            painter.setPen(pen)
+            points = []
+            for i, v in enumerate(vals):
+                x = area.left() + (i / max(n - 1, 1)) * w
+                frac = (v - vmin) / (vmax - vmin)
+                y = area.bottom() - frac * h
+                points.append((x, y))
+            for i in range(len(points) - 1):
+                x1, y1 = points[i]
+                x2, y2 = points[i + 1]
+                painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+            # Mark min/max points.
+            min_i = vals.index(min(vals))
+            max_i = vals.index(max(vals))
+            for idx, c in ((min_i, neg_color), (max_i, QColor("#70ad47"))):
+                px, py = points[idx]
+                painter.setBrush(c)
+                painter.setPen(Qt.NoPen)
+                painter.drawEllipse(int(px) - 2, int(py) - 2, 4, 4)
+
+        painter.restore()
 
     def _paint_overflow(self, painter, option, index):
         """If this cell's text is wider than the column, paint the

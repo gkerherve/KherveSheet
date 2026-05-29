@@ -1187,6 +1187,12 @@ class SheetWidget(QWidget):
 
         self.data_changed.emit(col)
 
+        # Repaint any sparklines that reference this column.
+        for (sr, sc), sp in self._fmt_delegate._sparklines.items():
+            if sp.get("col") == col:
+                idx = self.table.model().index(sr, sc)
+                self.table.update(idx)
+
         # Recalculate any cells that depend on this one.
         self._recalc_dependents(row, col)
 

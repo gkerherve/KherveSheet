@@ -551,6 +551,100 @@ class SpellCheckDialog(QDialog):
         self._next_word()
 
 
+# ── Sparklines ──────────────────────────────────────────────────────
+
+class SparklineDialog(QDialog):
+    """Dialog to configure a sparkline for the current cell."""
+
+    def __init__(self, default_range="", parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Insert Sparkline")
+        self.resize(340, 200)
+        layout = QFormLayout(self)
+
+        self.range_edit = QLineEdit(default_range)
+        self.range_edit.setPlaceholderText("e.g. B1:B20")
+        layout.addRow("Data Range:", self.range_edit)
+
+        self.type_combo = QComboBox()
+        self.type_combo.addItems(["Line", "Bar", "Win/Loss"])
+        layout.addRow("Type:", self.type_combo)
+
+        self.color_edit = QLineEdit("#4472c4")
+        layout.addRow("Color:", self.color_edit)
+
+        bb = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        layout.addRow(bb)
+
+    @property
+    def spark_type(self):
+        t = self.type_combo.currentText()
+        return {"Line": "line", "Bar": "bar",
+                "Win/Loss": "winloss"}.get(t, "line")
+
+
+def _parse_range(range_str):
+    """Parse 'A1:A20' → (col, r1, r2) or None."""
+    m = re.match(r'^([A-Za-z]+)(\d+):([A-Za-z]+)(\d+)$',
+                 range_str.strip())
+    if not m:
+        return None
+    c1 = _col_to_idx(m.group(1))
+    c2 = _col_to_idx(m.group(3))
+    if c1 != c2:
+        return None  # sparklines use a single column
+    return c1, int(m.group(2)) - 1, int(m.group(4)) - 1
+
+
+def _col_to_idx(letters):
+    """Convert column letters to 0-based index (A=0, Z=25, AA=26)."""
+    result = 0
+    for ch in letters.upper():
+        result = result * 26 + (ord(ch) - ord('A') + 1)
+    return result - 1
+
+
+def insert_sparkline(sheet):
+    """Show dialog and insert a sparkline in the current cell."""
+    row = sheet.table.currentRow()
+    col = sheet.table.currentColumn()
+    if row < 0 or col < 0:
+        return
+
+    # Default range: same column, row 1 to current row.
+    from .sheet import col_index_to_letter
+    letter = col_index_to_letter(col)
+    default = f"{letter}1:{letter}{row}" if row > 0 else ""
+
+    dlg = SparklineDialog(default, sheet)
+    if dlg.exec_() != QDialog.Accepted:
+        return
+    rng = dlg.range_edit.text().strip()
+    parsed = _parse_range(rng)
+    if parsed is None:
+        QMessageBox.warning(sheet, "Invalid Range",
+                            "Enter a single-column range like B1:B20.")
+        return
+    src_col, r1, r2 = parsed
+    spark = {
+        "col": src_col, "r1": r1, "r2": r2,
+        "type": dlg.spark_type,
+        "color": dlg.color_edit.text().strip() or "#4472c4",
+    }
+    # Store on the delegate for painting.
+    sheet._fmt_delegate._sparklines[(row, col)] = spark
+    # Also store on the sheet for persistence.
+    if not hasattr(sheet, '_cell_sparklines'):
+        sheet._cell_sparklines = {}
+    sheet._cell_sparklines[(row, col)] = spark
+    # Force repaint.
+    idx = sheet.table.model().index(row, col)
+    sheet.table.update(idx)
+
+
 # ── Persistence helpers ─────────────────────────────────────────────
 def save_insert_data(sheet):
     """Return a JSON-serialisable dict of insert-ops metadata."""
@@ -564,6 +658,9 @@ def save_insert_data(sheet):
     dd = getattr(sheet, '_cell_dropdowns', {})
     if dd:
         d['dropdowns'] = {f"{r},{c}": v for (r, c), v in dd.items()}
+    sp = getattr(sheet, '_cell_sparklines', {})
+    if sp:
+        d['sparklines'] = {f"{r},{c}": v for (r, c), v in sp.items()}
     return json.dumps(d) if d else ""
 
 
@@ -596,3 +693,9 @@ def load_insert_data(sheet, json_str):
         for k, v in d['dropdowns'].items():
             r, c = map(int, k.split(","))
             sheet._cell_dropdowns[(r, c)] = v
+    if 'sparklines' in d:
+        sheet._cell_sparklines = {}
+        for k, v in d['sparklines'].items():
+            r, c = map(int, k.split(","))
+            sheet._cell_sparklines[(r, c)] = v
+            sheet._fmt_delegate._sparklines[(r, c)] = v

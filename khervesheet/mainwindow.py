@@ -233,6 +233,9 @@ class MainWindow(QMainWindow):
 
         # Image.
         insert_menu.addAction("Image\u2026", self._insert_image)
+
+        # Sparkline.
+        insert_menu.addAction("Sparkline\u2026", self._insert_sparkline)
         insert_menu.addSeparator()
 
         # Function submenu (mirrors Formulas menu).
@@ -2621,6 +2624,13 @@ class MainWindow(QMainWindow):
             f"Created {plot_type} chart", 3000)
 
     # ── Insert image ─────────────────────────────────────────────────
+
+    def _insert_sparkline(self):
+        sheet = self._active_sheet()
+        if not sheet:
+            return
+        from .insert_ops import insert_sparkline
+        insert_sparkline(sheet)
 
     def _insert_image(self):
         path, _ = QFileDialog.getOpenFileName(
