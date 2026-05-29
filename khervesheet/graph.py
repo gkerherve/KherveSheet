@@ -119,7 +119,7 @@ class EmbeddedChart(QWidget):
                  row_start=None, row_end=None):
         # Parent must be the table viewport so we paint over the grid.
         super().__init__(parent)
-        self.setAutoFillBackground(True)
+        self.setAutoFillBackground(False)
         self.setMouseTracking(True)
         self._source_sheet = source_sheet
         self._series = []
@@ -1025,6 +1025,13 @@ class EmbeddedChart(QWidget):
             dlg.apply_to_chart(self)
         elif result == self.SWITCH_TO_PLOT_DETAILS:
             self._open_plot_details()
+
+    def paintEvent(self, event):
+        """Fill the entire widget with white so grid cells don't bleed."""
+        p = QPainter(self)
+        p.fillRect(self.rect(), Qt.white)
+        p.end()
+        super().paintEvent(event)
 
     # ── Context menu ────────────────────────────────────────────────
     def contextMenuEvent(self, event):
