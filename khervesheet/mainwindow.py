@@ -596,6 +596,41 @@ class MainWindow(QMainWindow):
         self._solver_btn.clicked.connect(self._open_solver)
         plot_bar.addWidget(self._solver_btn)
 
+        # ── Insert button with dropdown ────────────────────────────
+        self._insert_btn = QToolButton()
+        self._insert_btn.setIcon(icons.symbol_icon(28))
+        self._insert_btn.setToolTip("Insert")
+        self._insert_btn.setPopupMode(QToolButton.InstantPopup)
+        ins_menu = QMenu(self._insert_btn)
+        ins_menu.addAction("Checkbox", self._insert_checkbox)
+        ins_menu.addAction("Dropdown\u2026", self._insert_dropdown)
+        # Emoji submenu
+        emoji_sub2 = ins_menu.addMenu("Emoji")
+        from .insert_ops import build_emoji_grid
+        def _tb_emoji_cb(ch):
+            s = self._active_sheet()
+            if not s:
+                return
+            r, c = s.table.currentRow(), s.table.currentColumn()
+            if r < 0 or c < 0:
+                return
+            it = s.table.item(r, c)
+            if it is None:
+                from PyQt5.QtWidgets import QTableWidgetItem
+                it = QTableWidgetItem(ch)
+                s.table.setItem(r, c, it)
+            else:
+                it.setText(it.text() + ch)
+            s._shadow[(r, c)] = it.text()
+        _tb_ewa = QWidgetAction(emoji_sub2)
+        _tb_ewa.setDefaultWidget(build_emoji_grid(emoji_sub2, _tb_emoji_cb))
+        emoji_sub2.addAction(_tb_ewa)
+        ins_menu.addSeparator()
+        ins_menu.addAction("Comment\tCtrl+Alt+M", self._insert_comment)
+        ins_menu.addAction("Note\tShift+F2", self._insert_note)
+        self._insert_btn.setMenu(ins_menu)
+        plot_bar.addWidget(self._insert_btn)
+
         # ── Merge/Unmerge button (in formatting toolbar) ─────────
         self._merge_btn = QToolButton()
         self._merge_btn.setIcon(icons.merge_cells_icon(28))

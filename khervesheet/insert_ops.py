@@ -12,7 +12,7 @@ the Free Software Foundation, either version 3 of the License, or
 import json
 import re
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QEvent, QObject
 from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -32,7 +32,7 @@ def insert_checkbox(sheet):
         return
     it = sheet.table.item(row, col)
     old = it.text() if it else ""
-    new_val = "FALSE"
+    new_val = ""
     if it is None:
         it = QTableWidgetItem(new_val)
         sheet.table.setItem(row, col, it)
@@ -48,18 +48,14 @@ def insert_checkbox(sheet):
 
 
 def toggle_checkbox(sheet, row, col):
-    """Toggle a checkbox cell between TRUE and FALSE."""
+    """Toggle a checkbox cell between checked and unchecked."""
     it = sheet.table.item(row, col)
     if it is None:
         return
     if it.checkState() == Qt.Checked:
         it.setCheckState(Qt.Unchecked)
-        it.setText("FALSE")
-        sheet._shadow[(row, col)] = "FALSE"
     else:
         it.setCheckState(Qt.Checked)
-        it.setText("TRUE")
-        sheet._shadow[(row, col)] = "TRUE"
 
 
 # ── Dropdown (data validation) ──────────────────────────────────────
@@ -123,6 +119,18 @@ def insert_dropdown(sheet, parent=None):
                     sheet._shadow[(r, c)] = items[0]
 
 
+class _DropdownCloseFilter(QObject):
+    """Deletes the dropdown combo when it loses focus."""
+    def __init__(self, combo, sheet):
+        super().__init__(combo)
+        self._combo = combo
+        self._sheet = sheet
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Hide:
+            QTimer.singleShot(200, self._combo.deleteLater)
+        return False
+
+
 def show_dropdown_for_cell(sheet, row, col):
     """Show a QComboBox popup for a dropdown-validated cell."""
     dd = getattr(sheet, '_cell_dropdowns', {})
@@ -134,9 +142,6 @@ def show_dropdown_for_cell(sheet, row, col):
     it = sheet.table.item(row, col)
     if it and it.text() in items:
         combo.setCurrentText(it.text())
-    rect = sheet.table.visualItemRect(
-        sheet.table.item(row, col) or QTableWidgetItem())
-    # Fallback position.
     x = sheet.table.columnViewportPosition(col)
     y = (sheet.table.rowViewportPosition(row)
          + sheet.table.rowHeight(row))
@@ -145,20 +150,22 @@ def show_dropdown_for_cell(sheet, row, col):
     combo.show()
     combo.showPopup()
 
-    def _apply(text):
+    def _apply(idx):
+        text = combo.itemText(idx)
         it = sheet.table.item(row, col)
         old = it.text() if it else ""
         if it is None:
+            from PyQt5.QtWidgets import QTableWidgetItem
             it = QTableWidgetItem(text)
             sheet.table.setItem(row, col, it)
         else:
             it.setText(text)
         sheet._shadow[(row, col)] = text
-        combo.deleteLater()
+        QTimer.singleShot(0, combo.deleteLater)
 
-    combo.activated[str].connect(_apply)
-    combo.hidePopup = lambda _orig=combo.hidePopup: (
-        _orig(), QTimer.singleShot(100, combo.deleteLater))
+    combo.activated[int].connect(_apply)
+    # Delete combo when popup is closed without selecting
+    combo.installEventFilter(_DropdownCloseFilter(combo, sheet))
     return True
 
 
@@ -235,39 +242,55 @@ def open_link(sheet, row, col):
 
 # ── Comment / Note ──────────────────────────────────────────────────
 def insert_comment(sheet, parent=None):
-    """Add or edit a comment on the current cell."""
+    """Add or edit a white comment on the current cell."""
     row = sheet.table.currentRow()
     col = sheet.table.currentColumn()
     if row < 0 or col < 0:
         return
-    notes = getattr(sheet, '_cell_notes', {})
-    existing = notes.get((row, col), "")
+    existing = sheet._cell_notes.get((row, col), {})
+    old_text = existing.get("text", "") if isinstance(existing, dict) else str(existing)
     text, ok = QInputDialog.getMultiLineText(
-        parent or sheet, "Cell Comment",
+        parent or sheet, "Edit Comment",
         f"Comment for {_cell_ref(row, col)}:",
-        existing)
+        old_text)
     if not ok:
         return
-    if not hasattr(sheet, '_cell_notes'):
-        sheet._cell_notes = {}
     if text.strip():
-        sheet._cell_notes[(row, col)] = text
-        # Add a red triangle indicator via the tooltip.
+        sheet._cell_notes[(row, col)] = {"text": text, "kind": "comment"}
         it = sheet.table.item(row, col)
         if it is None:
             it = QTableWidgetItem("")
             sheet.table.setItem(row, col, it)
-        it.setToolTip(text)
+        it.setToolTip("")  # We handle hover ourselves
     else:
         sheet._cell_notes.pop((row, col), None)
-        it = sheet.table.item(row, col)
-        if it:
-            it.setToolTip("")
+    sheet.table.viewport().update()
 
 
 def insert_note(sheet, parent=None):
-    """Alias for insert_comment — Notes and Comments share the model."""
-    insert_comment(sheet, parent)
+    """Add or edit a yellow sticky note on the current cell."""
+    row = sheet.table.currentRow()
+    col = sheet.table.currentColumn()
+    if row < 0 or col < 0:
+        return
+    existing = sheet._cell_notes.get((row, col), {})
+    old_text = existing.get("text", "") if isinstance(existing, dict) else str(existing)
+    text, ok = QInputDialog.getMultiLineText(
+        parent or sheet, "Edit Note",
+        f"Note for {_cell_ref(row, col)}:",
+        old_text)
+    if not ok:
+        return
+    if text.strip():
+        sheet._cell_notes[(row, col)] = {"text": text, "kind": "note"}
+        it = sheet.table.item(row, col)
+        if it is None:
+            it = QTableWidgetItem("")
+            sheet.table.setItem(row, col, it)
+        it.setToolTip("")  # We handle hover ourselves
+    else:
+        sheet._cell_notes.pop((row, col), None)
+    sheet.table.viewport().update()
 
 
 def _cell_ref(row, col):
@@ -790,10 +813,11 @@ def load_insert_data(sheet, json_str):
         sheet._cell_notes.clear()
         for k, v in d['notes'].items():
             r, c = map(int, k.split(","))
-            sheet._cell_notes[(r, c)] = v
-            it = sheet.table.item(r, c)
-            if it:
-                it.setToolTip(v)
+            # v may be a dict {"text": ..., "kind": ...} or a plain string
+            if isinstance(v, str):
+                sheet._cell_notes[(r, c)] = {"text": v, "kind": "note"}
+            else:
+                sheet._cell_notes[(r, c)] = v
     if 'links' in d:
         sheet._cell_links.clear()
         for k, v in d['links'].items():

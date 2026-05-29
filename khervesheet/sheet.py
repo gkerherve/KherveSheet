@@ -726,6 +726,9 @@ class SheetWidget(QWidget):
         self._cell_links: dict = {}
         self._fmt_delegate._notes = self._cell_notes
         self._fmt_delegate._dropdowns = self._cell_dropdowns
+        self._note_popup = None  # floating note widget
+        self._copied_meta = None  # metadata from last copy
+        self._copy_origin = None  # (top_row, left_col) of copy source
 
         # ── Internal state ───────────────────────────────────────────
         self._shadow: dict = {}          # (row, col) → last-known text
@@ -777,6 +780,7 @@ class SheetWidget(QWidget):
         self._march_timer.timeout.connect(self._march_tick)
         self._painting_ants = False   # recursion guard for paint event
 
+        self.table.setMouseTracking(True)
         self.table.viewport().setMouseTracking(True)
         self.table.viewport().installEventFilter(self)
         self.table.installEventFilter(self)
@@ -1983,6 +1987,53 @@ class SheetWidget(QWidget):
 
         menu.exec_(self.table.horizontalHeader().mapToGlobal(pos))
 
+    # ── Note / comment hover popup ─────────────────────────────────
+    def _show_note_popup(self, row, col):
+        """Show a floating sticky note for the cell."""
+        note = self._cell_notes.get((row, col))
+        if not note:
+            self._hide_note_popup()
+            return
+        text = note.get("text", "") if isinstance(note, dict) else str(note)
+        kind = note.get("kind", "note") if isinstance(note, dict) else "note"
+        if not text:
+            self._hide_note_popup()
+            return
+
+        if self._note_popup is None:
+            self._note_popup = QLabel(self.table.viewport())
+            self._note_popup.setWordWrap(True)
+            self._note_popup.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self._note_popup.setMargin(8)
+
+        if kind == "note":
+            self._note_popup.setStyleSheet(
+                "QLabel { background: #fff9c4; border: 1px solid #e0d85e;"
+                " padding: 6px; font-size: 11px; }")
+        else:
+            self._note_popup.setStyleSheet(
+                "QLabel { background: #ffffff; border: 1px solid #cccccc;"
+                " padding: 6px; font-size: 11px; }")
+
+        self._note_popup.setText(text)
+        self._note_popup.adjustSize()
+        # Position near the cell
+        x = self.table.columnViewportPosition(col) + self.table.columnWidth(col)
+        y = self.table.rowViewportPosition(row)
+        # Keep within viewport
+        vp = self.table.viewport()
+        if x + self._note_popup.width() > vp.width():
+            x = self.table.columnViewportPosition(col) - self._note_popup.width()
+        if y + self._note_popup.height() > vp.height():
+            y = vp.height() - self._note_popup.height()
+        self._note_popup.move(max(0, x), max(0, y))
+        self._note_popup.show()
+        self._note_popup.raise_()
+
+    def _hide_note_popup(self):
+        if self._note_popup is not None:
+            self._note_popup.hide()
+
     def _cell_menu(self, pos):
         menu = QMenu(self)
 
@@ -2054,9 +2105,11 @@ class SheetWidget(QWidget):
             return
         s = sel[0]
         rows = []
+        meta = {}  # (dr, dc) -> metadata dict
         for r in range(s.topRow(), s.bottomRow() + 1):
             row_data = []
             for c in range(s.leftColumn(), s.rightColumn() + 1):
+                dr, dc = r - s.topRow(), c - s.leftColumn()
                 # Copy the formula if the cell has one, else display text.
                 formula = self._cell_formulas.get((r, c))
                 if formula:
@@ -2064,8 +2117,23 @@ class SheetWidget(QWidget):
                 else:
                     it = self.table.item(r, c)
                     row_data.append(it.text() if it else "")
+                # Collect metadata
+                cell_meta = {}
+                it = self.table.item(r, c)
+                if it and (it.flags() & Qt.ItemIsUserCheckable):
+                    cell_meta["checkbox"] = (it.checkState() == Qt.Checked)
+                if (r, c) in self._cell_dropdowns:
+                    cell_meta["dropdown"] = self._cell_dropdowns[(r, c)]
+                if (r, c) in self._cell_notes:
+                    cell_meta["note"] = self._cell_notes[(r, c)]
+                if (r, c) in self._cell_sparklines:
+                    cell_meta["sparkline"] = self._cell_sparklines[(r, c)]
+                if cell_meta:
+                    meta[(dr, dc)] = cell_meta
             rows.append("\t".join(row_data))
         QApplication.clipboard().setText("\n".join(rows))
+        self._copied_meta = meta
+        self._copy_origin = (s.topRow(), s.leftColumn())
         # Start marching ants around copied range.
         self._start_marching_ants(s)
 
@@ -2229,6 +2297,21 @@ class SheetWidget(QWidget):
                         self._shadow[(r, c)] = val
                         if old != val:
                             changes.append((r, c, old, val))
+                    # Restore metadata from copy
+                    if self._copied_meta:
+                        dm = self._copied_meta.get((dr, dc))
+                        if dm:
+                            if "checkbox" in dm:
+                                it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+                                it.setCheckState(
+                                    Qt.Checked if dm["checkbox"] else Qt.Unchecked)
+                            if "dropdown" in dm:
+                                self._cell_dropdowns[(r, c)] = dm["dropdown"]
+                            if "note" in dm:
+                                self._cell_notes[(r, c)] = dm["note"]
+                            if "sparkline" in dm:
+                                self._cell_sparklines[(r, c)] = dm["sparkline"]
+                                self._fmt_delegate._sparklines[(r, c)] = dm["sparkline"]
         finally:
             self.table.blockSignals(False)
         if changes and self._undo_stack:
@@ -2702,12 +2785,26 @@ class SheetWidget(QWidget):
             self._painting_ants = False
             return False  # let Qt do its normal painting
 
+        if etype == QEvent.Leave:
+            self._hide_note_popup()
+
         if etype == QEvent.MouseMove and not self._fill_dragging:
             hr = self._fill_handle_rect()
             if hr and hr.contains(event.pos()):
                 self.table.viewport().setCursor(Qt.CrossCursor)
             else:
                 self.table.viewport().unsetCursor()
+            # Note / comment hover popup
+            pos = event.pos()
+            idx = self.table.indexAt(pos)
+            if idx.isValid():
+                key = (idx.row(), idx.column())
+                if key in self._cell_notes:
+                    self._show_note_popup(idx.row(), idx.column())
+                else:
+                    self._hide_note_popup()
+            else:
+                self._hide_note_popup()
 
         elif (etype == QEvent.MouseButtonPress
               and event.button() == Qt.LeftButton):
