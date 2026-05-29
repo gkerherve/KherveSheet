@@ -130,7 +130,10 @@ class EmbeddedChart(QWidget):
                  row_start=None, row_end=None):
         # Parent must be the table viewport so we paint over the grid.
         super().__init__(parent)
-        self.setAutoFillBackground(False)
+        self.setAutoFillBackground(True)
+        pal = self.palette()
+        pal.setColor(pal.Window, Qt.white)
+        self.setPalette(pal)
         self.setMouseTracking(True)
         self._source_sheet = source_sheet
         self._series = []
