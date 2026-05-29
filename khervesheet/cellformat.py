@@ -14,8 +14,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
-from PyQt5.QtCore import Qt, QRect, QRectF, QModelIndex
-from PyQt5.QtGui import QPen, QColor, QPainter, QFontMetrics
+from PyQt5.QtCore import Qt, QPoint, QRect, QRectF, QModelIndex
+from PyQt5.QtGui import QPen, QColor, QPainter, QFontMetrics, QPolygon
 from PyQt5.QtWidgets import (
     QStyledItemDelegate, QStyleOptionViewItem, QTableWidget,
     QStyle,
@@ -182,6 +182,10 @@ class CellFormatDelegate(QStyledItemDelegate):
         # Sparklines: {(row, col): {"col": int, "r1": int, "r2": int,
         #              "type": "line"|"bar"|"winloss", "color": str}}
         self._sparklines: Dict[Tuple[int, int], dict] = {}
+        # Notes: {(row, col): str} — pointer set by SheetWidget
+        self._notes: Dict[Tuple[int, int], str] = {}
+        # Dropdowns: {(row, col): list[str]} — pointer set by SheetWidget
+        self._dropdowns: Dict[Tuple[int, int], list] = {}
 
     def paint(self, painter: QPainter,
               option: QStyleOptionViewItem,
@@ -226,6 +230,40 @@ class CellFormatDelegate(QStyledItemDelegate):
         spark = self._sparklines.get(key)
         if spark:
             self._paint_sparkline(painter, option.rect, spark)
+
+        # Draw note indicator (red triangle, top-right corner).
+        if key in self._notes:
+            painter.save()
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#ff0000"))
+            r = option.rect
+            tri_size = 6
+            triangle = QPolygon([
+                QPoint(r.right() - tri_size, r.top()),
+                QPoint(r.right(), r.top()),
+                QPoint(r.right(), r.top() + tri_size),
+            ])
+            painter.drawPolygon(triangle)
+            painter.restore()
+
+        # Draw dropdown arrow indicator (small ▼, right edge).
+        if key in self._dropdowns:
+            painter.save()
+            r = option.rect
+            arrow_w = 12
+            arrow_rect = QRect(r.right() - arrow_w, r.top(),
+                               arrow_w, r.height())
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#666666"))
+            cx = arrow_rect.center().x()
+            cy = arrow_rect.center().y()
+            triangle = QPolygon([
+                QPoint(cx - 3, cy - 2),
+                QPoint(cx + 3, cy - 2),
+                QPoint(cx, cy + 2),
+            ])
+            painter.drawPolygon(triangle)
+            painter.restore()
 
         # Draw formula reference border on top.
         if ref_color:

@@ -236,7 +236,6 @@ class MainWindow(QMainWindow):
 
         # Sparkline.
         insert_menu.addAction("Sparkline\u2026", self._insert_sparkline)
-        insert_menu.addAction("Remove Sparkline", self._remove_sparkline)
         insert_menu.addSeparator()
 
         # Function submenu (mirrors Formulas menu).

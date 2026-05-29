@@ -787,7 +787,7 @@ def load_insert_data(sheet, json_str):
         return
     d = json.loads(json_str)
     if 'notes' in d:
-        sheet._cell_notes = {}
+        sheet._cell_notes.clear()
         for k, v in d['notes'].items():
             r, c = map(int, k.split(","))
             sheet._cell_notes[(r, c)] = v
@@ -795,7 +795,7 @@ def load_insert_data(sheet, json_str):
             if it:
                 it.setToolTip(v)
     if 'links' in d:
-        sheet._cell_links = {}
+        sheet._cell_links.clear()
         for k, v in d['links'].items():
             r, c = map(int, k.split(","))
             sheet._cell_links[(r, c)] = v
@@ -806,12 +806,13 @@ def load_insert_data(sheet, json_str):
                 it.setFont(f)
                 it.setForeground(QColor("#0563C1"))
     if 'dropdowns' in d:
-        sheet._cell_dropdowns = {}
+        sheet._cell_dropdowns.clear()
         for k, v in d['dropdowns'].items():
             r, c = map(int, k.split(","))
             sheet._cell_dropdowns[(r, c)] = v
     if 'sparklines' in d:
-        sheet._cell_sparklines = {}
+        sheet._cell_sparklines.clear()
+        sheet._fmt_delegate._sparklines.clear()
         for k, v in d['sparklines'].items():
             r, c = map(int, k.split(","))
             sheet._cell_sparklines[(r, c)] = v

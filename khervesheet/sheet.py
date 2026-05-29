@@ -719,6 +719,14 @@ class SheetWidget(QWidget):
             self._cell_formats, self.table)
         self.table.setItemDelegate(self._fmt_delegate)
 
+        # ── Insert-ops metadata (shared with delegate for painting) ──
+        self._cell_notes: dict = {}
+        self._cell_dropdowns: dict = {}
+        self._cell_sparklines: dict = {}
+        self._cell_links: dict = {}
+        self._fmt_delegate._notes = self._cell_notes
+        self._fmt_delegate._dropdowns = self._cell_dropdowns
+
         # ── Internal state ───────────────────────────────────────────
         self._shadow: dict = {}          # (row, col) → last-known text
         self._cell_formulas: dict = {}   # (row, col) → "=formula"
@@ -1037,7 +1045,13 @@ class SheetWidget(QWidget):
             self._formula_bar.setText(it.text() if it else "")
 
     def _on_cell_double_clicked(self, row, col):
-        """Show formula ref highlights when entering edit mode."""
+        """Show formula ref highlights or dropdown when entering edit mode."""
+        # Show dropdown popup if cell has one.
+        dd = self._cell_dropdowns.get((row, col))
+        if dd:
+            from .insert_ops import show_dropdown_for_cell
+            show_dropdown_for_cell(self, row, col)
+            return
         formula = self._cell_formulas.get((row, col))
         if formula:
             self._update_ref_highlights(formula)
@@ -1994,29 +2008,6 @@ class SheetWidget(QWidget):
         menu.addSeparator()
         menu.addAction("Format Cells\u2026",
                        lambda: self.window()._open_format_cells_dialog())
-
-        # Sparkline actions — only show Remove if selection has sparklines
-        sp = getattr(self, '_cell_sparklines', {})
-        has_spark = False
-        sel = self.table.selectedRanges()
-        if sel:
-            for rng in sel:
-                for r in range(rng.topRow(), rng.bottomRow() + 1):
-                    for c in range(rng.leftColumn(), rng.rightColumn() + 1):
-                        if (r, c) in sp:
-                            has_spark = True
-                            break
-                    if has_spark:
-                        break
-                if has_spark:
-                    break
-        else:
-            r, c = self.table.currentRow(), self.table.currentColumn()
-            if (r, c) in sp:
-                has_spark = True
-        if has_spark:
-            menu.addSeparator()
-            menu.addAction("Remove Sparkline", self._remove_sparkline)
 
         menu.exec_(self.table.viewport().mapToGlobal(pos))
 
