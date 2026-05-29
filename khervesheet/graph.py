@@ -2565,12 +2565,20 @@ class LegendEditorDialog(QDialog):
 
         root.addWidget(spacing_group)
 
-        # ── OK / Cancel ────────────────────────────────────────────
+        # ── OK / Apply / Cancel ────────────────────────────────────
         buttons = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+            QDialogButtonBox.Ok | QDialogButtonBox.Apply
+            | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        buttons.button(QDialogButtonBox.Apply).clicked.connect(
+            self._on_apply)
         root.addWidget(buttons)
+
+    # ── Live apply ─────────────────────────────────────────────────
+    def _on_apply(self):
+        """Apply legend properties without closing the dialog."""
+        self.apply_to_chart(self._chart)
 
     # ── Color pickers ──────────────────────────────────────────────
     def _pick_label_color(self):
