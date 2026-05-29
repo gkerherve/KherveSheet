@@ -38,7 +38,7 @@ _DEFAULT_LINEWIDTH = 1.0
 _DEFAULT_MARKERSIZE = 3.0
 
 # Resize handle size in pixels.
-_HANDLE = 8
+_HANDLE = 12  # matches layout margin for handle hit-testing
 
 # Module-level clipboard for chart cut/copy/paste.
 _chart_clipboard = None
@@ -104,8 +104,9 @@ class EmbeddedChart(QWidget):
         self.resize(480, 320)
 
         # ── Layout ──────────────────────────────────────────────────
+        _m = 12  # margin for selection handles
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setContentsMargins(_m, _m, _m, _m)
         layout.setSpacing(0)
 
         # Matplotlib figure — no title bar, just the plot.
@@ -1320,8 +1321,8 @@ class EmbeddedChart(QWidget):
                         except Exception:
                             self._panning = False
                         return True
-                    # Not panning — just consume the click (chart stays selected)
-                    return True
+                    # Not panning — let matplotlib handle (legend drag etc.)
+                    return False
                 # Outside axes (margins) → start chart drag.
                 self._drag_origin = event.globalPos()
                 self._drag_widget_pos = self.pos()
@@ -1550,28 +1551,26 @@ class EmbeddedChart(QWidget):
             p = QPainter(self)
             p.setRenderHint(QPainter.Antialiasing, False)
             w, h = self.width(), self.height()
-            hs = 7  # handle square half-size
-            margin = hs + 1  # inset so handles are fully inside
-            # Solid border
-            p.setPen(QPen(QColor("#444444"), 1))
+            hr = 5   # handle circle radius
+            m = 12   # margin matching layout contents margins
+            # Black border around the canvas area
+            p.setPen(QPen(QColor("#000000"), 2))
             p.setBrush(Qt.NoBrush)
-            p.drawRect(margin, margin,
-                       w - margin * 2 - 1, h - margin * 2 - 1)
-            # 8 square handles on the border
+            p.drawRect(m - 1, m - 1,
+                       w - m * 2 + 1, h - m * 2 + 1)
+            # 8 circular handles in the margin, centred on the border
+            cx0, cy0 = m - 1, m - 1           # top-left corner
+            cx1, cy1 = w - m, h - m           # bottom-right corner
+            cxm, cym = w // 2, h // 2         # midpoints
             handle_pts = [
-                (margin, margin),
-                (w // 2, margin),
-                (w - margin - 1, margin),
-                (margin, h // 2),
-                (w - margin - 1, h // 2),
-                (margin, h - margin - 1),
-                (w // 2, h - margin - 1),
-                (w - margin - 1, h - margin - 1),
+                (cx0, cy0), (cxm, cy0), (cx1, cy0),
+                (cx0, cym),              (cx1, cym),
+                (cx0, cy1), (cxm, cy1), (cx1, cy1),
             ]
-            p.setPen(QPen(QColor("#444444"), 1))
+            p.setPen(QPen(QColor("#000000"), 1.2))
             p.setBrush(QBrush(QColor("#ffffff")))
             for hx, hy in handle_pts:
-                p.drawRect(hx - hs, hy - hs, hs * 2, hs * 2)
+                p.drawEllipse(hx - hr, hy - hr, hr * 2, hr * 2)
             p.end()
 
 
