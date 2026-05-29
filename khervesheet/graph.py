@@ -356,6 +356,9 @@ class EmbeddedChart(QWidget):
                             sd["markersize"] = float(sizes[0] ** 0.5)
                     except Exception:
                         pass
+                    # Scatter marker shape (stored in series dict).
+                    if s.get("marker"):
+                        sd["marker"] = s["marker"]
                 else:
                     # Line2D artist.
                     if hasattr(artist, 'get_linestyle'):
@@ -552,6 +555,15 @@ class EmbeddedChart(QWidget):
                             artist.set_sizes([sd["markersize"] ** 2])
                         except Exception:
                             pass
+                    if "marker" in sd:
+                        mk = sd["marker"]
+                        chart._series[i]["marker"] = mk
+                        if mk != "None":
+                            from matplotlib.markers import MarkerStyle
+                            marker = MarkerStyle(mk)
+                            path = marker.get_path().transformed(
+                                marker.get_transform())
+                            artist.set_paths([path])
                 else:
                     # Line2D.
                     if "linestyle" in sd and hasattr(artist, 'set_linestyle'):
@@ -2099,6 +2111,12 @@ class PlotDetailsDialog(QDialog):
                     self.marker_size.setValue(sizes[0] ** 0.5)
             except Exception:
                 pass
+            # Restore marker shape from series dict.
+            saved_mk = s.get("marker", "o")
+            for i, (_, code) in enumerate(_MARKERS):
+                if code == str(saved_mk):
+                    self.marker_combo.setCurrentIndex(i)
+                    break
         elif artist is not None:
             # Line2D artist.
             if hasattr(artist, 'get_linestyle'):
@@ -2233,6 +2251,16 @@ class PlotDetailsDialog(QDialog):
                     artist.set_sizes([sz ** 2])
                 except Exception:
                     pass
+                # Marker shape for scatter.
+                idx = self.marker_combo.currentIndex()
+                mk = _MARKERS[idx][1]
+                if mk != "None":
+                    from matplotlib.markers import MarkerStyle
+                    marker = MarkerStyle(mk)
+                    path = marker.get_path().transformed(
+                        marker.get_transform())
+                    artist.set_paths([path])
+                s["marker"] = mk
                 if hasattr(artist, 'set_label'):
                     artist.set_label(self.label_edit.text())
             elif artist is not None:
