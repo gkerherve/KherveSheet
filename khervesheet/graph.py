@@ -33,6 +33,17 @@ from matplotlib.backends.backend_qt5agg import (
 from matplotlib.figure import Figure
 
 
+class _OpaqueCanvas(FigureCanvas):
+    """FigureCanvas that paints a solid white background first so that
+    the grid cells underneath never bleed through."""
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.fillRect(self.rect(), Qt.white)
+        p.end()
+        super().paintEvent(event)
+
+
 # ── Plot defaults ───────────────────────────────────────────────────
 _DEFAULT_LINEWIDTH = 1.0
 _DEFAULT_MARKERSIZE = 3.0
@@ -155,8 +166,7 @@ class EmbeddedChart(QWidget):
         self._figure = Figure(figsize=(5, 3), dpi=100,
                               facecolor='white')
         self._figure.patch.set_alpha(1.0)
-        self._canvas = FigureCanvas(self._figure)
-        self._canvas.setStyleSheet("background-color: white;")
+        self._canvas = _OpaqueCanvas(self._figure)
         self._canvas.setMouseTracking(True)
         if plot_type == "3D Surface":
             from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
