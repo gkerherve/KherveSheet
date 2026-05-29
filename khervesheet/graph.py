@@ -1438,7 +1438,7 @@ class EmbeddedChart(QWidget):
                     self.setCursor(Qt.OpenHandCursor)
                 else:
                     self.setCursor(Qt.ArrowCursor)
-                return True
+                return False  # let mpl handle (legend drag etc.)
             self.setCursor(Qt.SizeAllCursor)
             return False
 
