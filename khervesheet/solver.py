@@ -563,10 +563,24 @@ class SolverDialog(QDialog):
         # Build objective function
         _SOLVE_DEC = 15  # full precision during optimisation
 
+        def _fmt_display(v, dec):
+            """Format a float for cell display (matches sheet style)."""
+            v = float(v)
+            if v == int(v) and abs(v) < 1e15:
+                return str(int(v))
+            s = f"{round(v, dec):.{dec}f}"
+            return s.rstrip("0").rstrip(".")
+
         def _set_vars(x, full_prec=True):
             """Write trial values into the sheet (silently)."""
             for i, (r, c) in enumerate(var_cells):
-                self._sheet._set_cell_quiet(r, c, str(x[i]))
+                if full_prec:
+                    self._sheet._set_cell_quiet(r, c, repr(float(x[i])))
+                else:
+                    # Format for display using cell's own precision.
+                    dec = self._sheet._cell_decimals(r, c)
+                    self._sheet._set_cell_quiet(
+                        r, c, _fmt_display(x[i], dec))
             # Recalculate formulas that depend on variable cells.
             # Use high precision so the optimizer sees smooth gradients.
             dec = _SOLVE_DEC if full_prec else None
@@ -742,7 +756,12 @@ class SolverDialog(QDialog):
                     BulkCellEditCmd(self._sheet, changes, "Solver"))
 
         obj_val = self._sheet.cell_text(*obj_rc)
+        # Show a clean number in the message.
+        try:
+            obj_display = f"{float(obj_val):g}"
+        except (ValueError, TypeError):
+            obj_display = obj_val
         QMessageBox.information(
             self, "Solver",
             f"Solver found a solution.\n"
-            f"Objective cell value: {obj_val}")
+            f"Objective cell value: {obj_display}")
