@@ -154,13 +154,17 @@ class EmbeddedChart(QWidget):
         # Matplotlib figure — no title bar, just the plot.
         self._figure = Figure(figsize=(5, 3), dpi=100,
                               facecolor='white')
+        self._figure.patch.set_alpha(1.0)
         self._canvas = FigureCanvas(self._figure)
+        self._canvas.setStyleSheet("background-color: white;")
         self._canvas.setMouseTracking(True)
         if plot_type == "3D Surface":
             from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
             self._ax = self._figure.add_subplot(111, projection='3d')
         else:
             self._ax = self._figure.add_subplot(111)
+        self._ax.set_facecolor('white')
+        self._ax.patch.set_alpha(1.0)
         layout.addWidget(self._canvas, stretch=1)
 
         # Selection-handle overlay — sits above canvas in z-order.
