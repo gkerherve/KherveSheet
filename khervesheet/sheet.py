@@ -1988,6 +1988,31 @@ class SheetWidget(QWidget):
         menu.exec_(self.table.horizontalHeader().mapToGlobal(pos))
 
     # ── Note / comment hover popup ─────────────────────────────────
+    _NOTE_STYLE = (
+        "QLabel {"
+        "  background: #ffffa5;"
+        "  border: 1px solid #c8c870;"
+        "  padding: 8px 10px;"
+        "  font-family: 'Segoe UI', sans-serif;"
+        "  font-size: 11px;"
+        "  color: #333;"
+        "  min-width: 120px;"
+        "  max-width: 260px;"
+        "}"
+    )
+    _COMMENT_STYLE = (
+        "QLabel {"
+        "  background: #ffffff;"
+        "  border: 1px solid #bbbbbb;"
+        "  padding: 8px 10px;"
+        "  font-family: 'Segoe UI', sans-serif;"
+        "  font-size: 11px;"
+        "  color: #333;"
+        "  min-width: 120px;"
+        "  max-width: 260px;"
+        "}"
+    )
+
     def _show_note_popup(self, row, col):
         """Show a floating sticky note for the cell."""
         note = self._cell_notes.get((row, col))
@@ -2001,20 +2026,18 @@ class SheetWidget(QWidget):
             return
 
         if self._note_popup is None:
+            from PyQt5.QtWidgets import QGraphicsDropShadowEffect
             self._note_popup = QLabel(self.table.viewport())
             self._note_popup.setWordWrap(True)
-            self._note_popup.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            self._note_popup.setMargin(8)
+            self._note_popup.setMargin(0)
+            shadow = QGraphicsDropShadowEffect(self._note_popup)
+            shadow.setBlurRadius(12)
+            shadow.setOffset(2, 2)
+            shadow.setColor(QColor(0, 0, 0, 80))
+            self._note_popup.setGraphicsEffect(shadow)
 
-        if kind == "note":
-            self._note_popup.setStyleSheet(
-                "QLabel { background: #fff9c4; border: 1px solid #e0d85e;"
-                " padding: 6px; font-size: 11px; }")
-        else:
-            self._note_popup.setStyleSheet(
-                "QLabel { background: #ffffff; border: 1px solid #cccccc;"
-                " padding: 6px; font-size: 11px; }")
-
+        self._note_popup.setStyleSheet(
+            self._NOTE_STYLE if kind == "note" else self._COMMENT_STYLE)
         self._note_popup.setText(text)
         self._note_popup.adjustSize()
         # Position near the cell
@@ -2060,7 +2083,59 @@ class SheetWidget(QWidget):
         menu.addAction("Format Cells\u2026",
                        lambda: self.window()._open_format_cells_dialog())
 
+        # Note / Comment edit actions
+        row = self.table.currentRow()
+        col = self.table.currentColumn()
+        note = self._cell_notes.get((row, col))
+        if note:
+            kind = note.get("kind", "note") if isinstance(note, dict) else "note"
+            label = "Comment" if kind == "comment" else "Note"
+            menu.addSeparator()
+            menu.addAction(f"Edit {label}\u2026",
+                           lambda: self._edit_note(row, col))
+            menu.addAction(f"Delete {label}",
+                           lambda: self._delete_note(row, col))
+        else:
+            menu.addSeparator()
+            menu.addAction("Add Comment\u2026",
+                           lambda: self._add_note(row, col, "comment"))
+            menu.addAction("Add Note\u2026",
+                           lambda: self._add_note(row, col, "note"))
+
         menu.exec_(self.table.viewport().mapToGlobal(pos))
+
+    def _edit_note(self, row, col):
+        """Open edit dialog for an existing note/comment."""
+        note = self._cell_notes.get((row, col))
+        if not note:
+            return
+        kind = note.get("kind", "note") if isinstance(note, dict) else "note"
+        if kind == "comment":
+            from .insert_ops import insert_comment
+            # Temporarily select the cell so insert_comment targets it
+            self.table.setCurrentCell(row, col)
+            insert_comment(self, self.window())
+        else:
+            from .insert_ops import insert_note
+            self.table.setCurrentCell(row, col)
+            insert_note(self, self.window())
+
+    def _delete_note(self, row, col):
+        """Remove a note/comment from a cell."""
+        self._cell_notes.pop((row, col), None)
+        self._hide_note_popup()
+        idx = self.table.model().index(row, col)
+        self.table.update(idx)
+
+    def _add_note(self, row, col, kind):
+        """Add a new note or comment to the cell."""
+        self.table.setCurrentCell(row, col)
+        if kind == "comment":
+            from .insert_ops import insert_comment
+            insert_comment(self, self.window())
+        else:
+            from .insert_ops import insert_note
+            insert_note(self, self.window())
 
     def _remove_sparkline(self):
         """Remove sparklines from selected cells."""
