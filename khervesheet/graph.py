@@ -781,15 +781,27 @@ class EmbeddedChart(QWidget):
         else:
             self._clear_show_data()
 
-    # Colours for data range outlines (Excel uses purple for X, blue for Y).
-    _RANGE_COLORS = [
-        "#4472C4",  # blue
-        "#7030A0",  # purple
-        "#70AD47",  # green
-        "#FFC000",  # amber
-        "#ED7D31",  # orange
-        "#FF0000",  # red
-    ]
+    # Grey used for X-data column overlays (not plotted, just the domain).
+    _X_RANGE_COLOR = "#808080"
+
+    @staticmethod
+    def _artist_color_hex(artist):
+        """Return the colour of *artist* as a hex string, or None."""
+        from matplotlib.colors import to_hex
+        try:
+            if hasattr(artist, 'get_color'):
+                c = artist.get_color()
+                if isinstance(c, str):
+                    return c if c.startswith('#') else to_hex(c)
+                if hasattr(c, '__len__') and len(c) >= 3:
+                    return to_hex(c)
+            if hasattr(artist, 'get_facecolor'):
+                fc = artist.get_facecolor()
+                if hasattr(fc, '__len__') and len(fc) > 0:
+                    return to_hex(fc[0])
+        except Exception:
+            pass
+        return None
 
     def _apply_show_data(self):
         """Highlight source data ranges with coloured border overlays."""
@@ -800,29 +812,31 @@ class EmbeddedChart(QWidget):
         table = sheet.table
         overlays = []
 
-        color_idx = 0
+        # Track X columns already overlaid so we don't double-draw.
+        x_cols_done = set()
+
         for i, (s, yc) in enumerate(
                 zip(self._series, self._y_cols)):
             r0 = s.get("y_row_start", 0)
             r1 = s.get("y_row_end", len(s.get("y", [])) - 1)
 
-            # X column overlay
+            # X column overlay — transparent grey
             xc = s.get("x_col", self._x_col)
-            if xc is not None:
+            if xc is not None and xc not in x_cols_done:
+                x_cols_done.add(xc)
                 xr0 = s.get("x_row_start", 0)
                 xr1 = s.get("x_row_end", r1)
-                c = self._RANGE_COLORS[color_idx % len(self._RANGE_COLORS)]
-                color_idx += 1
                 ov = self._create_range_overlay(
-                    table, xr0, xc, xr1, xc, c)
+                    table, xr0, xc, xr1, xc, self._X_RANGE_COLOR)
                 if ov:
                     overlays.append(ov)
 
-            # Y column overlay
-            c = self._RANGE_COLORS[color_idx % len(self._RANGE_COLORS)]
-            color_idx += 1
+            # Y column overlay — use actual line/artist colour
+            line_color = self._artist_color_hex(s.get("artist"))
+            if line_color is None:
+                line_color = "#4472C4"  # fallback blue
             ov = self._create_range_overlay(
-                table, r0, yc, r1, yc, c)
+                table, r0, yc, r1, yc, line_color)
             if ov:
                 overlays.append(ov)
 
