@@ -1229,8 +1229,13 @@ class SheetWidget(QWidget):
         for deps in self._dependents.values():
             deps.discard(key)
 
-    def _recalc_dependents(self, row, col, visited=None):
-        """Re-evaluate cells that depend on (row, col), recursively."""
+    def _recalc_dependents(self, row, col, visited=None,
+                           decimals=None):
+        """Re-evaluate cells that depend on (row, col), recursively.
+
+        *decimals* overrides per-cell precision when set (used by the
+        Solver to keep full precision during optimisation).
+        """
         if visited is None:
             visited = set()
         deps = self._dependents.get((row, col))
@@ -1244,10 +1249,12 @@ class SheetWidget(QWidget):
             formula = self._cell_formulas.get((dr, dc))
             if not formula:
                 continue
-            dec = self._cell_decimals(dr, dc)
+            dec = (decimals if decimals is not None
+                   else self._cell_decimals(dr, dc))
             result = str(self._evaluate_formula(formula, dr, dc, dec))
-            # Apply per-cell number format to the result.
-            result = self._apply_cell_number_format(result, dr, dc)
+            # Apply per-cell number format (skip during solver).
+            if decimals is None:
+                result = self._apply_cell_number_format(result, dr, dc)
             self.table.blockSignals(True)
             it = self.table.item(dr, dc)
             if it is None:
@@ -1259,7 +1266,8 @@ class SheetWidget(QWidget):
             self.table.blockSignals(False)
             changed_cols.add(dc)
             # Cascade: recalc cells that depend on this one too.
-            self._recalc_dependents(dr, dc, visited)
+            self._recalc_dependents(dr, dc, visited,
+                                    decimals=decimals)
         # Notify charts about columns that changed via formula recalc.
         for c in changed_cols:
             self.data_changed.emit(c)

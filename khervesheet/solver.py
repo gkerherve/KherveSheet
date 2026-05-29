@@ -561,22 +561,34 @@ class SolverDialog(QDialog):
             bounds = [(None, None)] * len(var_cells)
 
         # Build objective function
-        def _set_vars(x):
+        _SOLVE_DEC = 15  # full precision during optimisation
+
+        def _set_vars(x, full_prec=True):
             """Write trial values into the sheet (silently)."""
-            self._sheet.table.blockSignals(True)
             for i, (r, c) in enumerate(var_cells):
                 self._sheet._set_cell_quiet(r, c, str(x[i]))
-            self._sheet.table.blockSignals(False)
-            # Recalculate formulas that depend on variable cells
+            # Recalculate formulas that depend on variable cells.
+            # Use high precision so the optimizer sees smooth gradients.
+            dec = _SOLVE_DEC if full_prec else None
             for r, c in var_cells:
-                self._sheet._recalc_dependents(r, c)
+                self._sheet._recalc_dependents(r, c, decimals=dec)
 
         def _obj(x):
             _set_vars(x)
-            try:
-                val = float(self._sheet.cell_text(*obj_rc))
-            except (ValueError, TypeError):
-                return 1e30
+            # Read objective — evaluate formula at full precision
+            # to avoid rounding that flattens the gradient.
+            formula = self._sheet._cell_formulas.get(obj_rc)
+            if formula:
+                try:
+                    val = float(self._sheet._evaluate_formula(
+                        formula, obj_rc[0], obj_rc[1], _SOLVE_DEC))
+                except (ValueError, TypeError):
+                    return 1e30
+            else:
+                try:
+                    val = float(self._sheet.cell_text(*obj_rc))
+                except (ValueError, TypeError):
+                    return 1e30
             if sense == "max":
                 return -val
             elif sense == "value":
@@ -605,30 +617,41 @@ class SolverDialog(QDialog):
                     self._sheet._set_cell_quiet(r, c, txt)
                 return
 
+            def _read_cell_full(rc):
+                """Read a cell value at full precision."""
+                f = self._sheet._cell_formulas.get(rc)
+                if f:
+                    try:
+                        return float(self._sheet._evaluate_formula(
+                            f, rc[0], rc[1], _SOLVE_DEC))
+                    except (ValueError, TypeError):
+                        pass
+                try:
+                    return float(self._sheet.cell_text(*rc))
+                except (ValueError, TypeError):
+                    return None
+
             if con.op == "<=":
                 def _cfn(x, _rc=con_rc, _rhs=rhs_val):
                     _set_vars(x)
-                    try:
-                        v = float(self._sheet.cell_text(*_rc))
-                    except (ValueError, TypeError):
+                    v = _read_cell_full(_rc)
+                    if v is None:
                         return -1e30
                     return _rhs - v  # >= 0 means cell <= rhs
                 scipy_constraints.append({"type": "ineq", "fun": _cfn})
             elif con.op == ">=":
                 def _cfn(x, _rc=con_rc, _rhs=rhs_val):
                     _set_vars(x)
-                    try:
-                        v = float(self._sheet.cell_text(*_rc))
-                    except (ValueError, TypeError):
+                    v = _read_cell_full(_rc)
+                    if v is None:
                         return -1e30
                     return v - _rhs  # >= 0 means cell >= rhs
                 scipy_constraints.append({"type": "ineq", "fun": _cfn})
             elif con.op == "=":
                 def _cfn(x, _rc=con_rc, _rhs=rhs_val):
                     _set_vars(x)
-                    try:
-                        v = float(self._sheet.cell_text(*_rc))
-                    except (ValueError, TypeError):
+                    v = _read_cell_full(_rc)
+                    if v is None:
                         return -1e30
                     return v - _rhs  # == 0
                 scipy_constraints.append({"type": "eq", "fun": _cfn})
@@ -686,11 +709,9 @@ class SolverDialog(QDialog):
             return
 
         if not result.success:
-            # Still write the best result found, but warn user
-            _set_vars(result.x)
-            # Recalc all dependents for final state
-            for r, c in var_cells:
-                self._sheet._recalc_dependents(r, c)
+            # Still write the best result found, but warn user.
+            # Use normal precision for final display formatting.
+            _set_vars(result.x, full_prec=False)
             reply = QMessageBox.warning(
                 self, "Solver",
                 f"Solver could not find a solution.\n"
@@ -705,9 +726,8 @@ class SolverDialog(QDialog):
                     self._sheet._recalc_dependents(r, c)
                 return
         else:
-            _set_vars(result.x)
-            for r, c in var_cells:
-                self._sheet._recalc_dependents(r, c)
+            # Final write at normal display precision.
+            _set_vars(result.x, full_prec=False)
 
         # Push undo command for all changed cells
         if self._sheet._undo_stack:
