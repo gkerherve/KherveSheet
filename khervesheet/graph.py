@@ -119,6 +119,7 @@ class EmbeddedChart(QWidget):
                  row_start=None, row_end=None):
         # Parent must be the table viewport so we paint over the grid.
         super().__init__(parent)
+        self.setAutoFillBackground(True)
         self.setMouseTracking(True)
         self._source_sheet = source_sheet
         self._series = []
@@ -151,7 +152,8 @@ class EmbeddedChart(QWidget):
         layout.setSpacing(0)
 
         # Matplotlib figure — no title bar, just the plot.
-        self._figure = Figure(figsize=(5, 3), dpi=100)
+        self._figure = Figure(figsize=(5, 3), dpi=100,
+                              facecolor='white')
         self._canvas = FigureCanvas(self._figure)
         self._canvas.setMouseTracking(True)
         if plot_type == "3D Surface":
