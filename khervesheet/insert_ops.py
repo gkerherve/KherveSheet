@@ -553,17 +553,47 @@ class SpellCheckDialog(QDialog):
 
 # ── Sparklines ──────────────────────────────────────────────────────
 
-class SparklineDialog(QDialog):
-    """Dialog to configure a sparkline for the current cell."""
+_PICK_STYLE = "QLineEdit { border: 2px solid #3a78b4; background: #eef4fb; }"
+_NORMAL_STYLE = ""
 
-    def __init__(self, default_range="", parent=None):
+
+class _SparkPickLineEdit(QLineEdit):
+    """QLineEdit that highlights when it is the active cell-pick target."""
+
+    def __init__(self, parent_dlg, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._parent_dlg = parent_dlg
+
+    def focusInEvent(self, ev):
+        super().focusInEvent(ev)
+        self._parent_dlg._set_active_pick(self)
+
+
+class SparklineDialog(QDialog):
+    """Non-modal dialog to configure a sparkline for the current cell.
+
+    Stays above the main window so the user can click cells to pick the
+    data range interactively.
+    """
+
+    def __init__(self, default_range, sheet, target_row, target_col,
+                 parent=None):
         super().__init__(parent)
         self.setWindowTitle("Insert Sparkline")
+        self.setWindowModality(Qt.NonModal)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_DeleteOnClose, True)
         self.resize(340, 200)
+
+        self._sheet = sheet
+        self._target_row = target_row
+        self._target_col = target_col
+        self._active_edit = None
+
         layout = QFormLayout(self)
 
-        self.range_edit = QLineEdit(default_range)
-        self.range_edit.setPlaceholderText("e.g. B1:B20")
+        self.range_edit = _SparkPickLineEdit(self, default_range)
+        self.range_edit.setPlaceholderText("e.g. B1:B20 or click cells")
         layout.addRow("Data Range:", self.range_edit)
 
         self.type_combo = QComboBox()
@@ -575,9 +605,14 @@ class SparklineDialog(QDialog):
 
         bb = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept)
+        bb.accepted.connect(self._on_ok)
         bb.rejected.connect(self.reject)
         layout.addRow(bb)
+
+        # Connect sheet selection to cell-pick
+        self._sheet.table.itemSelectionChanged.connect(
+            self._on_sheet_selection)
+        self._set_active_pick(self.range_edit)
 
     @property
     def spark_type(self):
@@ -585,11 +620,81 @@ class SparklineDialog(QDialog):
         return {"Line": "line", "Bar": "bar",
                 "Win/Loss": "winloss"}.get(t, "line")
 
+    def _set_active_pick(self, edit):
+        if self._active_edit and self._active_edit is not edit:
+            self._active_edit.setStyleSheet(_NORMAL_STYLE)
+        self._active_edit = edit
+        edit.setStyleSheet(_PICK_STYLE)
+
+    def _on_sheet_selection(self):
+        if self._active_edit is None or not self.isVisible():
+            return
+        ref = _selection_ref_str(self._sheet)
+        if ref:
+            self._active_edit.setText(ref)
+            self.activateWindow()
+
+    def _on_ok(self):
+        rng = self.range_edit.text().strip()
+        parsed = _parse_range(rng)
+        if parsed is None:
+            QMessageBox.warning(self, "Invalid Range",
+                                "Enter a single-column range like B1:B20.")
+            return
+        src_col, r1, r2 = parsed
+        spark = {
+            "col": src_col, "r1": r1, "r2": r2,
+            "type": self.spark_type,
+            "color": self.color_edit.text().strip() or "#4472c4",
+        }
+        row, col = self._target_row, self._target_col
+        self._sheet._fmt_delegate._sparklines[(row, col)] = spark
+        if not hasattr(self._sheet, '_cell_sparklines'):
+            self._sheet._cell_sparklines = {}
+        self._sheet._cell_sparklines[(row, col)] = spark
+        idx = self._sheet.table.model().index(row, col)
+        self._sheet.table.update(idx)
+        self.accept()
+
+    def _disconnect(self):
+        try:
+            self._sheet.table.itemSelectionChanged.disconnect(
+                self._on_sheet_selection)
+        except (TypeError, RuntimeError):
+            pass
+
+    def closeEvent(self, ev):
+        self._disconnect()
+        super().closeEvent(ev)
+
+    def reject(self):
+        self._disconnect()
+        super().reject()
+
+
+def _selection_ref_str(sheet):
+    """Build a ref string from the sheet's current selection."""
+    from .sheet import col_index_to_letter
+    sel = sheet.table.selectedRanges()
+    if not sel:
+        r = sheet.table.currentRow()
+        c = sheet.table.currentColumn()
+        if r >= 0 and c >= 0:
+            return f"{col_index_to_letter(c)}{r + 1}"
+        return ""
+    rng = sel[0]
+    tl = f"{col_index_to_letter(rng.leftColumn())}{rng.topRow() + 1}"
+    if rng.rowCount() == 1 and rng.columnCount() == 1:
+        return tl
+    br = f"{col_index_to_letter(rng.rightColumn())}{rng.bottomRow() + 1}"
+    return f"{tl}:{br}"
+
 
 def _parse_range(range_str):
-    """Parse 'A1:A20' → (col, r1, r2) or None."""
-    m = re.match(r'^([A-Za-z]+)(\d+):([A-Za-z]+)(\d+)$',
-                 range_str.strip())
+    """Parse 'A1:A20' or '$A$1:$A$20' → (col, r1, r2) or None."""
+    # Strip $ signs for absolute ref compatibility
+    cleaned = range_str.strip().replace("$", "")
+    m = re.match(r'^([A-Za-z]+)(\d+):([A-Za-z]+)(\d+)$', cleaned)
     if not m:
         return None
     c1 = _col_to_idx(m.group(1))
@@ -608,7 +713,7 @@ def _col_to_idx(letters):
 
 
 def insert_sparkline(sheet):
-    """Show dialog and insert a sparkline in the current cell."""
+    """Show non-modal dialog to insert a sparkline in the current cell."""
     row = sheet.table.currentRow()
     col = sheet.table.currentColumn()
     if row < 0 or col < 0:
@@ -619,30 +724,42 @@ def insert_sparkline(sheet):
     letter = col_index_to_letter(col)
     default = f"{letter}1:{letter}{row}" if row > 0 else ""
 
-    dlg = SparklineDialog(default, sheet)
-    if dlg.exec_() != QDialog.Accepted:
-        return
-    rng = dlg.range_edit.text().strip()
-    parsed = _parse_range(rng)
-    if parsed is None:
-        QMessageBox.warning(sheet, "Invalid Range",
-                            "Enter a single-column range like B1:B20.")
-        return
-    src_col, r1, r2 = parsed
-    spark = {
-        "col": src_col, "r1": r1, "r2": r2,
-        "type": dlg.spark_type,
-        "color": dlg.color_edit.text().strip() or "#4472c4",
-    }
-    # Store on the delegate for painting.
-    sheet._fmt_delegate._sparklines[(row, col)] = spark
-    # Also store on the sheet for persistence.
-    if not hasattr(sheet, '_cell_sparklines'):
-        sheet._cell_sparklines = {}
-    sheet._cell_sparklines[(row, col)] = spark
-    # Force repaint.
-    idx = sheet.table.model().index(row, col)
-    sheet.table.update(idx)
+    dlg = SparklineDialog(default, sheet, row, col, parent=sheet)
+    dlg.show()
+
+
+def remove_sparklines(sheet):
+    """Remove sparklines from all selected cells."""
+    sel = sheet.table.selectedRanges()
+    if not sel:
+        row = sheet.table.currentRow()
+        col = sheet.table.currentColumn()
+        if row < 0 or col < 0:
+            return
+        cells = [(row, col)]
+    else:
+        cells = []
+        for rng in sel:
+            for r in range(rng.topRow(), rng.bottomRow() + 1):
+                for c in range(rng.leftColumn(), rng.rightColumn() + 1):
+                    cells.append((r, c))
+
+    removed = False
+    sparklines = getattr(sheet, '_cell_sparklines', {})
+    delegate_sp = sheet._fmt_delegate._sparklines
+    for r, c in cells:
+        if (r, c) in sparklines:
+            del sparklines[(r, c)]
+            removed = True
+        if (r, c) in delegate_sp:
+            del delegate_sp[(r, c)]
+            removed = True
+        idx = sheet.table.model().index(r, c)
+        sheet.table.update(idx)
+
+    if not removed:
+        QMessageBox.information(sheet, "Remove Sparkline",
+                                "No sparklines in the selected cells.")
 
 
 # ── Persistence helpers ─────────────────────────────────────────────

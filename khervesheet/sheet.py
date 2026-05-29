@@ -1995,7 +1995,35 @@ class SheetWidget(QWidget):
         menu.addAction("Format Cells\u2026",
                        lambda: self.window()._open_format_cells_dialog())
 
+        # Sparkline actions — only show Remove if selection has sparklines
+        sp = getattr(self, '_cell_sparklines', {})
+        has_spark = False
+        sel = self.table.selectedRanges()
+        if sel:
+            for rng in sel:
+                for r in range(rng.topRow(), rng.bottomRow() + 1):
+                    for c in range(rng.leftColumn(), rng.rightColumn() + 1):
+                        if (r, c) in sp:
+                            has_spark = True
+                            break
+                    if has_spark:
+                        break
+                if has_spark:
+                    break
+        else:
+            r, c = self.table.currentRow(), self.table.currentColumn()
+            if (r, c) in sp:
+                has_spark = True
+        if has_spark:
+            menu.addSeparator()
+            menu.addAction("Remove Sparkline", self._remove_sparkline)
+
         menu.exec_(self.table.viewport().mapToGlobal(pos))
+
+    def _remove_sparkline(self):
+        """Remove sparklines from selected cells."""
+        from .insert_ops import remove_sparklines
+        remove_sparklines(self)
 
     def _column_stats(self, col):
         """Show statistics for a single column."""
@@ -2227,6 +2255,11 @@ class SheetWidget(QWidget):
         if not sel:
             return
         changes = []
+        sparklines = getattr(self, '_cell_sparklines', {})
+        delegate_sp = self._fmt_delegate._sparklines
+        notes = getattr(self, '_cell_notes', {})
+        links = getattr(self, '_cell_links', {})
+        dropdowns = getattr(self, '_cell_dropdowns', {})
         self.table.blockSignals(True)
         try:
             for s in sel:
@@ -2242,6 +2275,21 @@ class SheetWidget(QWidget):
                                 it.setText("")
                             self._shadow[(r, c)] = ""
                             changes.append((r, c, old, ""))
+                        # Clear checkbox flag
+                        if it and (it.flags() & Qt.ItemIsUserCheckable):
+                            it.setFlags(it.flags() & ~Qt.ItemIsUserCheckable)
+                            it.setData(Qt.CheckStateRole, None)
+                        # Clear insert-ops metadata
+                        sparklines.pop((r, c), None)
+                        delegate_sp.pop((r, c), None)
+                        notes.pop((r, c), None)
+                        links.pop((r, c), None)
+                        dropdowns.pop((r, c), None)
+                        # Clear formula
+                        self._cell_formulas.pop((r, c), None)
+                        # Force repaint
+                        idx = self.table.model().index(r, c)
+                        self.table.update(idx)
         finally:
             self.table.blockSignals(False)
         if changes and self._undo_stack:

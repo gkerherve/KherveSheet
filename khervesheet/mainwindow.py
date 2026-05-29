@@ -236,6 +236,7 @@ class MainWindow(QMainWindow):
 
         # Sparkline.
         insert_menu.addAction("Sparkline\u2026", self._insert_sparkline)
+        insert_menu.addAction("Remove Sparkline", self._remove_sparkline)
         insert_menu.addSeparator()
 
         # Function submenu (mirrors Formulas menu).
@@ -2631,6 +2632,13 @@ class MainWindow(QMainWindow):
             return
         from .insert_ops import insert_sparkline
         insert_sparkline(sheet)
+
+    def _remove_sparkline(self):
+        sheet = self._active_sheet()
+        if not sheet:
+            return
+        from .insert_ops import remove_sparklines
+        remove_sparklines(sheet)
 
     def _insert_image(self):
         path, _ = QFileDialog.getOpenFileName(
