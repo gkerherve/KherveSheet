@@ -761,6 +761,36 @@ class EmbeddedChart(QWidget):
             self._apply_header_labels()
         self._canvas.draw_idle()
 
+    def shift_column_refs(self, at, delta):
+        """Shift stored source-column indices when a column is inserted
+        (delta=+1) or removed (delta=-1) at index *at*, so the chart keeps
+        following its data like Excel. Returns True if anything changed."""
+        def shift(idx):
+            if idx is None:
+                return None, False
+            if delta > 0:
+                return (idx + delta, True) if idx >= at else (idx, False)
+            if idx > at:
+                return idx + delta, True
+            return idx, False
+
+        changed = False
+        new_x, ch = shift(self._x_col)
+        self._x_col = new_x
+        changed = changed or ch
+        new_y = []
+        for c in self._y_cols:
+            nc, ch = shift(c)
+            new_y.append(nc)
+            changed = changed or ch
+        self._y_cols = new_y
+        for s in self._series:
+            if s.get("x_col") is not None:
+                nc, ch = shift(s["x_col"])
+                s["x_col"] = nc
+                changed = changed or ch
+        return changed
+
     def _apply_header_labels(self, refresh_legend=True):
         """Set each series' label from the first row of its Y range (the
         column header). Used when 'first row is a header' is enabled, and

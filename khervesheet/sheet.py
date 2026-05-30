@@ -338,6 +338,7 @@ class InsertColumnCmd(QUndoCommand):
         self.sheet.table.removeColumn(self.col)
         self.sheet._col_designations = dict(self.old_desigs)
         self.sheet.table.blockSignals(False)
+        self.sheet._shift_charts(self.col, -1)
         self.sheet._refresh_headers()
 
     def redo(self):
@@ -355,6 +356,7 @@ class InsertColumnCmd(QUndoCommand):
                 new_desigs[c] = d
         self.sheet._col_designations = new_desigs
         self.sheet.table.blockSignals(False)
+        self.sheet._shift_charts(self.col, +1)
         self.sheet._refresh_headers()
 
 
@@ -381,6 +383,7 @@ class DeleteColumnCmd(QUndoCommand):
                 self.sheet._cell_formulas[(row, self.col)] = formula
         self.sheet._col_designations = dict(self.old_desigs)
         self.sheet.table.blockSignals(False)
+        self.sheet._shift_charts(self.col, +1)
         self.sheet._refresh_headers()
 
     def redo(self):
@@ -400,6 +403,7 @@ class DeleteColumnCmd(QUndoCommand):
                 new_desigs[c] = d
         self.sheet._col_designations = new_desigs
         self.sheet.table.blockSignals(False)
+        self.sheet._shift_charts(self.col, -1)
         self.sheet._refresh_headers()
 
 
@@ -2498,6 +2502,16 @@ class SheetWidget(QWidget):
             cur += 1
         self._refresh_headers()
 
+    def _shift_charts(self, at: int, delta: int):
+        """Shift plotted column references on every embedded chart when a
+        column is inserted (delta=+1) or removed (delta=-1) at *at*, then
+        re-read so charts follow their data like Excel."""
+        for chart in getattr(self, "_charts", []):
+            if chart.shift_column_refs(at, delta):
+                chart._refresh_data()
+                if getattr(chart, "_header_row", False):
+                    chart._apply_header_labels()
+
     def _insert_column(self, col: int):
         old_desigs = dict(self._col_designations)
         self.table.insertColumn(col)
@@ -2509,6 +2523,7 @@ class SheetWidget(QWidget):
             else:
                 new_desigs[c] = d
         self._col_designations = new_desigs
+        self._shift_charts(col, +1)
         self._refresh_headers()
         if self._undo_stack:
             self._undo_stack.push(
@@ -2536,6 +2551,7 @@ class SheetWidget(QWidget):
             else:
                 new_desigs[c] = d
         self._col_designations = new_desigs
+        self._shift_charts(col, -1)
         self._refresh_headers()
         if self._undo_stack:
             self._undo_stack.push(
