@@ -873,6 +873,11 @@ class EmbeddedChart(QWidget):
 
         self._show_data_active = True
         self._show_data_overlays = overlays
+        # Keep the chart above the range overlays so its opaque white
+        # background hides the highlights where they overlap the chart.
+        self.raise_()
+        if self._handle_overlay.isVisible():
+            self._handle_overlay.raise_()
 
     @staticmethod
     def _create_range_overlay(table, r0, c0, r1, c1, color_hex):
@@ -1761,9 +1766,9 @@ class _ColorButton(QPushButton):
 
     def _pick(self):
         dlg = QColorDialog(QColor(self._color), self)
-        dlg.setOption(QColorDialog.DontUseNativeDialog)
-        if dlg.exec_() == QDialog.Accepted:
-            c = dlg.currentColor()
+        dlg.setStyleSheet("")
+        if dlg.exec_() == QColorDialog.Accepted:
+            c = dlg.selectedColor()
             self._color = c.name()
             self._update_style()
 
@@ -2654,9 +2659,9 @@ class LegendEditorDialog(QDialog):
     def _pick_label_color(self):
         from PyQt5.QtWidgets import QColorDialog
         dlg = QColorDialog(QColor(self._label_color), self)
-        dlg.setOption(QColorDialog.DontUseNativeDialog)
-        if dlg.exec_() == QDialog.Accepted:
-            c = dlg.currentColor()
+        dlg.setStyleSheet("")
+        if dlg.exec_() == QColorDialog.Accepted:
+            c = dlg.selectedColor()
             self._label_color = c.name()
             self._color_btn.setStyleSheet(
                 f"background-color: {c.name()}; border: 1px solid #888;")
@@ -2664,9 +2669,9 @@ class LegendEditorDialog(QDialog):
     def _pick_edge_color(self):
         from PyQt5.QtWidgets import QColorDialog
         dlg = QColorDialog(QColor(self._edge_color), self)
-        dlg.setOption(QColorDialog.DontUseNativeDialog)
-        if dlg.exec_() == QDialog.Accepted:
-            c = dlg.currentColor()
+        dlg.setStyleSheet("")
+        if dlg.exec_() == QColorDialog.Accepted:
+            c = dlg.selectedColor()
             self._edge_color = c.name()
             self._edge_btn.setStyleSheet(
                 f"background-color: {c.name()}; border: 1px solid #888;")
@@ -2674,9 +2679,9 @@ class LegendEditorDialog(QDialog):
     def _pick_face_color(self):
         from PyQt5.QtWidgets import QColorDialog
         dlg = QColorDialog(QColor(self._face_color), self)
-        dlg.setOption(QColorDialog.DontUseNativeDialog)
-        if dlg.exec_() == QDialog.Accepted:
-            c = dlg.currentColor()
+        dlg.setStyleSheet("")
+        if dlg.exec_() == QColorDialog.Accepted:
+            c = dlg.selectedColor()
             self._face_color = c.name()
             self._face_btn.setStyleSheet(
                 f"background-color: {c.name()}; border: 1px solid #888;")
