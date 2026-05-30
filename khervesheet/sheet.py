@@ -1272,21 +1272,55 @@ class SheetWidget(QWidget):
 
     def _recalc_dependents(self, row, col, visited=None,
                            decimals=None):
-        """Re-evaluate cells that depend on (row, col), recursively.
+        """Re-evaluate every formula cell that transitively depends on
+        (row, col), in topological order.
+
+        Evaluating in dependency order is essential for aggregates: a
+        cell like SUM(K2:K3002) must be recomputed only after *all* of
+        its K inputs have updated, not after the first one (which a
+        naive depth-first cascade would do, leaving the sum stale).
 
         *decimals* overrides per-cell precision when set (used by the
         Solver to keep full precision during optimisation).
         """
-        if visited is None:
-            visited = set()
-        deps = self._dependents.get((row, col))
-        if not deps:
+        # 1. Collect all transitively-affected formula cells.
+        affected = set()
+        stack = [(row, col)]
+        while stack:
+            for dep in self._dependents.get(stack.pop(), ()):
+                if dep not in affected:
+                    affected.add(dep)
+                    stack.append(dep)
+        if not affected:
             return
+
+        # 2. Topologically order them. Edge u -> v means v depends on u
+        #    (v is in _dependents[u]); evaluate u before v. The seed
+        #    cell is not in *affected*, so cells depending only on it
+        #    start with in-degree 0.
+        indeg = {k: 0 for k in affected}
+        adj = {k: [] for k in affected}
+        for u in affected:
+            for v in self._dependents.get(u, ()):
+                if v in affected:
+                    adj[u].append(v)
+                    indeg[v] += 1
+        queue = [k for k in affected if indeg[k] == 0]
+        order = []
+        while queue:
+            u = queue.pop()
+            order.append(u)
+            for v in adj[u]:
+                indeg[v] -= 1
+                if indeg[v] == 0:
+                    queue.append(v)
+        # Append any cells left in a dependency cycle (best effort).
+        if len(order) < len(affected):
+            order.extend(k for k in affected if k not in set(order))
+
+        # 3. Evaluate in order.
         changed_cols = set()
-        for (dr, dc) in list(deps):
-            if (dr, dc) in visited:
-                continue
-            visited.add((dr, dc))
+        for (dr, dc) in order:
             formula = self._cell_formulas.get((dr, dc))
             if not formula:
                 continue
@@ -1306,9 +1340,6 @@ class SheetWidget(QWidget):
             self._shadow[(dr, dc)] = result
             self.table.blockSignals(False)
             changed_cols.add(dc)
-            # Cascade: recalc cells that depend on this one too.
-            self._recalc_dependents(dr, dc, visited,
-                                    decimals=decimals)
         # Notify charts about columns that changed via formula recalc.
         if not self._suppress_recalc_signals:
             for c in changed_cols:
