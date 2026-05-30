@@ -1076,6 +1076,14 @@ class MainWindow(QMainWindow):
                 f.attrs['version'] = 1
                 f.attrs['sheet_count'] = len(sheet_tabs)
 
+                ct = getattr(wb, '_combined_tab', None)
+                if ct is not None:
+                    try:
+                        f.attrs['layout_settings'] = json.dumps(
+                            ct.get_settings())
+                    except Exception:
+                        pass
+
                 for out_i, si in enumerate(sheet_tabs):
                     sheet = wb.tabs.widget(si)
                     name = wb.tabs.tabText(si)
@@ -1279,6 +1287,15 @@ class MainWindow(QMainWindow):
                     return
 
                 sheet_count = int(f.attrs['sheet_count'])
+                layout_settings = None
+                ls_raw = f.attrs.get('layout_settings')
+                if ls_raw is not None:
+                    if isinstance(ls_raw, bytes):
+                        ls_raw = ls_raw.decode('utf-8')
+                    try:
+                        layout_settings = json.loads(ls_raw)
+                    except Exception:
+                        layout_settings = None
 
                 # Create fresh workbook.
                 wb = WorkbookWidget()
@@ -1593,6 +1610,8 @@ class MainWindow(QMainWindow):
 
             wb._combined_tab = None
             wb.ensure_layout_tabs()
+            if layout_settings:
+                wb._combined_tab.apply_settings(layout_settings)
 
             self._status_msg(
                 f"Loaded {path}", 5000)

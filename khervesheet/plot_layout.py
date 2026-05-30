@@ -36,15 +36,25 @@ from PyQt5.QtWidgets import (
 
 
 # Publication figure-size presets: (label, width_mm, height_mm).
+# "Custom…" must stay last — it is the sentinel with zero size.
 _SIZE_PRESETS = [
     ("Nature single (89×66 mm)", 89, 66),
     ("Nature double (183×137 mm)", 183, 137),
     ("ACS single (83×63 mm)", 83, 63),
     ("ACS double (178×102 mm)", 178, 102),
+    ("PNAS double (178×120 mm)", 178, 120),
+    ("2-column wide (190×120 mm)", 190, 120),
     ("A4 landscape (250×170 mm)", 250, 170),
+    ("A4 portrait (170×250 mm)", 170, 250),
+    ("Full page (190×230 mm)", 190, 230),
+    ("Letter landscape (240×180 mm)", 240, 180),
     ("Square (120×120 mm)", 120, 120),
+    ("Large square (180×180 mm)", 180, 180),
     ("Custom…", 0, 0),
 ]
+
+# How subplots are filled into the grid.
+_FILL_ORDERS = [("By row", "row"), ("By column", "col")]
 
 _MM_PER_IN = 25.4
 
@@ -361,6 +371,11 @@ class _BaseLayoutTab(QWidget):
         self._cols.setValue(2)
         self._cols.valueChanged.connect(self._render)
         gform.addRow("Columns per row:", self._cols)
+        self._fill_order = QComboBox()
+        for label, _val in _FILL_ORDERS:
+            self._fill_order.addItem(label)
+        self._fill_order.currentIndexChanged.connect(self._render)
+        gform.addRow("Fill order:", self._fill_order)
         self._wspace = QDoubleSpinBox()
         self._wspace.setRange(0.0, 2.0)
         self._wspace.setSingleStep(0.05)
@@ -374,6 +389,18 @@ class _BaseLayoutTab(QWidget):
         self._hspace.valueChanged.connect(self._render)
         gform.addRow("Vertical gap:", self._hspace)
         v.addWidget(grid_box)
+
+        margin_box = QGroupBox("Outer margins")
+        mform = QFormLayout(margin_box)
+        self._m_left = self._margin_spin(0.10)
+        mform.addRow("Left:", self._m_left)
+        self._m_right = self._margin_spin(0.97)
+        mform.addRow("Right:", self._m_right)
+        self._m_top = self._margin_spin(0.94)
+        mform.addRow("Top:", self._m_top)
+        self._m_bottom = self._margin_spin(0.10)
+        mform.addRow("Bottom:", self._m_bottom)
+        v.addWidget(margin_box)
 
         size_box = QGroupBox(self._size_group_label)
         sform = QFormLayout(size_box)
@@ -407,16 +434,75 @@ class _BaseLayoutTab(QWidget):
 
         return panel
 
+    def _margin_spin(self, value):
+        sb = QDoubleSpinBox()
+        sb.setRange(0.0, 1.0)
+        sb.setSingleStep(0.01)
+        sb.setDecimals(2)
+        sb.setValue(value)
+        sb.valueChanged.connect(self._render)
+        return sb
+
     def _on_preset(self, idx):
         if idx < 0 or idx >= len(_SIZE_PRESETS):
             return
         _label, w, h = _SIZE_PRESETS[idx]
         if w and h:
+            prev = self._suspend
             self._suspend = True
             self._width_mm.setValue(w)
             self._height_mm.setValue(h)
+            self._suspend = prev
+            if not prev:
+                self._render()
+
+    # ── Settings (persisted in the .ksheet file) ─────────────────────
+    def get_settings(self):
+        return {
+            "cols": self._cols.value(),
+            "fill_order": self._fill_order.currentIndex(),
+            "wspace": self._wspace.value(),
+            "hspace": self._hspace.value(),
+            "margins": {
+                "left": self._m_left.value(),
+                "right": self._m_right.value(),
+                "top": self._m_top.value(),
+                "bottom": self._m_bottom.value(),
+            },
+            "size_preset": self._size_preset.currentIndex(),
+            "width_mm": self._width_mm.value(),
+            "height_mm": self._height_mm.value(),
+            "dpi": self._dpi.value(),
+        }
+
+    def apply_settings(self, st):
+        if not st:
+            return
+        self._suspend = True
+        try:
+            self._cols.setValue(int(st.get("cols", self._cols.value())))
+            self._fill_order.setCurrentIndex(int(st.get("fill_order", 0)))
+            self._wspace.setValue(
+                float(st.get("wspace", self._wspace.value())))
+            self._hspace.setValue(
+                float(st.get("hspace", self._hspace.value())))
+            m = st.get("margins", {})
+            self._m_left.setValue(float(m.get("left", self._m_left.value())))
+            self._m_right.setValue(
+                float(m.get("right", self._m_right.value())))
+            self._m_top.setValue(float(m.get("top", self._m_top.value())))
+            self._m_bottom.setValue(
+                float(m.get("bottom", self._m_bottom.value())))
+            self._size_preset.setCurrentIndex(
+                int(st.get("size_preset", self._size_preset.currentIndex())))
+            self._width_mm.setValue(
+                float(st.get("width_mm", self._width_mm.value())))
+            self._height_mm.setValue(
+                float(st.get("height_mm", self._height_mm.value())))
+            self._dpi.setValue(int(st.get("dpi", self._dpi.value())))
+        finally:
             self._suspend = False
-            self._render()
+        self._render()
 
     # ── Plot list model ─────────────────────────────────────────────
     def rebuild_from_workbook(self):
@@ -529,17 +615,23 @@ class CombinedLayoutTab(_BaseLayoutTab):
         n = len(items)
         cols = min(self._cols.value(), n)
         rows = (n + cols - 1) // cols
+        order = _FILL_ORDERS[self._fill_order.currentIndex()][1]
         for i, it in enumerate(items):
             d = it["dict"]
+            if order == "col":
+                pos = (i % rows) * cols + (i // rows) + 1
+            else:
+                pos = i + 1
             kw = {"projection": "3d"} if _is_3d(d) else {}
-            ax = fig.add_subplot(rows, cols, i + 1, **kw)
+            ax = fig.add_subplot(rows, cols, pos, **kw)
             try:
                 render_chart(fig, ax, d)
             except Exception:
                 ax.text(0.5, 0.5, "render error", ha="center",
                         va="center", transform=ax.transAxes)
         fig.subplots_adjust(
-            left=0.08, right=0.97, top=0.94, bottom=0.08,
+            left=self._m_left.value(), right=self._m_right.value(),
+            top=self._m_top.value(), bottom=self._m_bottom.value(),
             wspace=self._wspace.value(), hspace=self._hspace.value())
         self._canvas.draw_idle()
 
