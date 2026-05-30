@@ -685,24 +685,45 @@ class SolverDialog(QDialog):
         def _pump(*_args, **_kwargs):
             QApplication.processEvents()
 
+        import numpy as np
+
+        # Powell bounds want finite/±inf entries, not None.
+        powell_bounds = [(-np.inf if lo is None else lo,
+                          np.inf if hi is None else hi)
+                         for (lo, hi) in bounds]
+
+        def _solve_nonlinear():
+            # Spreadsheet models are routinely badly scaled — a peak
+            # amplitude of ~500 sitting next to a background coefficient
+            # of ~0.1 whose term is multiplied by a large x².  Gradient
+            # methods (SLSQP) take a finite-difference Jacobian and
+            # diverge on such conditioning.  Powell is a derivative-free
+            # direction-set method that is immune to this and reliably
+            # matches Excel's GRG on these problems, so prefer it when
+            # there are no constraints.  Fall back to SLSQP only when
+            # constraints are present (Powell can't honour them).
+            if scipy_constraints:
+                return opt.minimize(
+                    _obj, x0, method='SLSQP', bounds=bounds,
+                    constraints=scipy_constraints, callback=_pump,
+                    options={'maxiter': 1000, 'ftol': 1e-9})
+            return opt.minimize(
+                _obj, x0, method='Powell', bounds=powell_bounds,
+                callback=_pump,
+                options={'maxiter': 20000, 'xtol': 1e-8, 'ftol': 1e-8})
+
         # Run solver
         method_name = self._method_combo.currentText()
         self._sheet._suppress_recalc_signals = True
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             if method_name == "GRG Nonlinear":
-                result = opt.minimize(
-                    _obj, x0, method='SLSQP', bounds=bounds,
-                    constraints=scipy_constraints, callback=_pump,
-                    options={'maxiter': 1000, 'ftol': 1e-12})
+                result = _solve_nonlinear()
             elif method_name == "LP Simplex":
-                # For LP, fall back to SLSQP since linprog needs
-                # explicit matrix form which is hard to extract
+                # For LP, fall back to the nonlinear solver since linprog
+                # needs explicit matrix form which is hard to extract
                 # from a general spreadsheet model.
-                result = opt.minimize(
-                    _obj, x0, method='SLSQP', bounds=bounds,
-                    constraints=scipy_constraints, callback=_pump,
-                    options={'maxiter': 1000, 'ftol': 1e-12})
+                result = _solve_nonlinear()
             elif method_name == "Evolutionary":
                 # differential_evolution needs finite bounds
                 de_bounds = []
@@ -729,9 +750,7 @@ class SolverDialog(QDialog):
                     _penalised, de_bounds, maxiter=1000, tol=1e-12,
                     callback=_pump)
             else:
-                result = opt.minimize(
-                    _obj, x0, method='SLSQP', bounds=bounds,
-                    constraints=scipy_constraints, callback=_pump)
+                result = _solve_nonlinear()
         except Exception as exc:
             # Restore on failure
             for (r, c), txt in original.items():
