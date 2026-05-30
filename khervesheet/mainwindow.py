@@ -794,7 +794,6 @@ class MainWindow(QMainWindow):
                     if val.startswith("="):
                         s._on_cell_changed(r, c)
         wb._combined_tab = None
-        wb._grid_tab = None
         wb.ensure_layout_tabs()
         wb.tabs.setCurrentIndex(0)
         self._status_msg("Example loaded", 3000)
@@ -1593,7 +1592,6 @@ class MainWindow(QMainWindow):
                 del sheet._deferred_images
 
             wb._combined_tab = None
-            wb._grid_tab = None
             wb.ensure_layout_tabs()
 
             self._status_msg(

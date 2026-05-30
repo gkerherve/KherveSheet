@@ -110,7 +110,6 @@ class WorkbookWidget(QWidget):
         v.addWidget(self.tabs)
 
         self._combined_tab = None
-        self._grid_tab = None
 
         # Create default sheets
         for i in range(3):
@@ -119,37 +118,33 @@ class WorkbookWidget(QWidget):
         self.tabs.setCurrentIndex(0)
         self.tabs.currentChanged.connect(self._on_current_changed)
 
-    # ── Publication layout tabs (always pinned rightmost) ────────────
+    # ── Publication layout tab (always pinned rightmost) ─────────────
     def ensure_layout_tabs(self):
-        """Create the two layout tabs if missing and pin them last."""
-        from .plot_layout import CombinedLayoutTab, GridLayoutTab
+        """Create the layout tab if missing and pin it last."""
+        from .plot_layout import CombinedLayoutTab
         if (self._combined_tab is None
                 or self.tabs.indexOf(self._combined_tab) < 0):
             self._combined_tab = CombinedLayoutTab(self)
             self.tabs.addTab(self._combined_tab, "Layout")
-        if (self._grid_tab is None
-                or self.tabs.indexOf(self._grid_tab) < 0):
-            self._grid_tab = GridLayoutTab(self)
-            self.tabs.addTab(self._grid_tab, "Layout (grid)")
         self._pin_layout_tabs()
 
     def _pin_layout_tabs(self):
-        """Move both layout tabs to the far right and strip their close
-        buttons so they cannot be deleted like sheets."""
+        """Move the layout tab to the far right and strip its close
+        button so it cannot be deleted like a sheet."""
         from PyQt5.QtWidgets import QTabBar
         bar = self.tabs.tabBar()
-        for tab in (self._combined_tab, self._grid_tab):
-            if tab is None:
-                continue
+        tab = self._combined_tab
+        if tab is None:
+            return
+        idx = self.tabs.indexOf(tab)
+        if idx < 0:
+            return
+        last = self.tabs.count() - 1
+        if idx != last:
+            bar.moveTab(idx, last)
             idx = self.tabs.indexOf(tab)
-            if idx < 0:
-                continue
-            last = self.tabs.count() - 1
-            if idx != last:
-                self.tabs.tabBar().moveTab(idx, last)
-                idx = self.tabs.indexOf(tab)
-            bar.setTabButton(idx, QTabBar.RightSide, None)
-            bar.setTabButton(idx, QTabBar.LeftSide, None)
+        bar.setTabButton(idx, QTabBar.RightSide, None)
+        bar.setTabButton(idx, QTabBar.LeftSide, None)
 
     def _on_current_changed(self, idx):
         w = self.tabs.widget(idx)

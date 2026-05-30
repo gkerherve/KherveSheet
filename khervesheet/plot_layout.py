@@ -1,15 +1,12 @@
-"""Publication layout tabs — aggregate every chart in the workbook.
+"""Publication layout tab — aggregate every chart in the workbook.
 
-Two experimental tabs, always pinned to the right of the sheet tabs:
+``CombinedLayoutTab`` is always pinned to the right of the sheet tabs.
+It lays every (visible) chart out as a subplot of a single matplotlib
+figure, giving real ``wspace``/``hspace`` control and one chosen figure
+size, so the whole layout exports as one clean vector file — the natural
+choice for a publication panel figure.
 
-* ``CombinedLayoutTab`` lays every (visible) chart out as a subplot of a
-  single matplotlib figure, giving real ``wspace``/``hspace`` control and
-  one chosen figure size, so the whole layout exports as one clean vector
-  file — the natural choice for a publication panel figure.
-* ``GridLayoutTab`` renders each chart onto its own canvas inside a
-  ``QGridLayout`` — simpler, with per-plot canvases.
-
-Both reproduce the source charts exactly by replaying the same serialized
+It reproduces the source charts exactly by replaying the same serialized
 dict (``EmbeddedChart.to_dict``) through :func:`render_chart`, which reuses
 the very static helpers the live charts use, so properties round-trip
 identically.
@@ -34,7 +31,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
     QListWidget, QListWidgetItem, QPushButton, QSpinBox, QDoubleSpinBox,
-    QComboBox, QLabel, QScrollArea, QFileDialog, QSplitter,
+    QComboBox, QScrollArea, QFileDialog, QSplitter,
 )
 
 
@@ -559,86 +556,6 @@ class CombinedLayoutTab(_BaseLayoutTab):
             self._figure.savefig(path, format=fmt, dpi=self._dpi.value())
         except Exception:
             self._figure.savefig(path, dpi=self._dpi.value())
-
-
-class GridLayoutTab(_BaseLayoutTab):
-    """All charts as individual canvases inside a QGridLayout."""
-
-    _size_group_label = "Plot size (each)"
-
-    def _build_content(self):
-        self._inner = QWidget()
-        from PyQt5.QtWidgets import QGridLayout
-        self._grid = QGridLayout(self._inner)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(self._inner)
-        return scroll
-
-    def _clear_grid(self):
-        while self._grid.count():
-            item = self._grid.takeAt(0)
-            w = item.widget()
-            if w is not None:
-                w.setParent(None)
-                w.deleteLater()
-
-    def _render(self):
-        if self._suspend:
-            return
-        self._clear_grid()
-        # Gaps in px scaled from the same spacing controls.
-        self._grid.setHorizontalSpacing(int(self._wspace.value() * 60))
-        self._grid.setVerticalSpacing(int(self._hspace.value() * 60))
-        items = self._visible_items()
-        if not items:
-            lbl = QLabel("No plots yet — create charts in the sheets,\n"
-                         "then press Refresh.")
-            lbl.setAlignment(Qt.AlignCenter)
-            lbl.setStyleSheet("color:#888888;")
-            self._grid.addWidget(lbl, 0, 0)
-            return
-        w_in, h_in = self._figsize_in()
-        cols = max(1, self._cols.value())
-        for i, it in enumerate(items):
-            d = it["dict"]
-            fig = Figure(figsize=(w_in, h_in), dpi=100)
-            canvas = FigureCanvas(fig)
-            canvas.setFixedSize(int(w_in * 96), int(h_in * 96))
-            kw = {"projection": "3d"} if _is_3d(d) else {}
-            ax = fig.add_subplot(111, **kw)
-            try:
-                render_chart(fig, ax, d)
-                fig.tight_layout()
-            except Exception:
-                pass
-            canvas.draw_idle()
-            self._grid.addWidget(canvas, i // cols, i % cols)
-
-    def _export(self):
-        items = self._visible_items()
-        if not items:
-            return
-        directory = QFileDialog.getExistingDirectory(
-            self, "Export each plot to folder")
-        if not directory:
-            return
-        import os
-        w_in, h_in = self._figsize_in()
-        for i, it in enumerate(items):
-            fig = Figure(figsize=(w_in, h_in), dpi=self._dpi.value())
-            FigureCanvas(fig)
-            kw = {"projection": "3d"} if _is_3d(it["dict"]) else {}
-            ax = fig.add_subplot(111, **kw)
-            try:
-                render_chart(fig, ax, it["dict"])
-                fig.tight_layout()
-            except Exception:
-                pass
-            safe = "".join(c if c.isalnum() else "_"
-                           for c in it["title"])[:40] or f"plot{i + 1}"
-            fig.savefig(os.path.join(directory, f"{i + 1:02d}_{safe}.svg"),
-                        dpi=self._dpi.value())
 
 
 def is_layout_tab(widget):
