@@ -140,6 +140,7 @@ class EmbeddedChart(QWidget):
         self._fill_artists = []  # fill_between patches
         self._trendlines = []    # TrendlineInfo objects
         self._axis_props = {}    # persisted axis dialog state
+        self._header_row = False  # series labels come from column headers
         # Source column indices for live data updates.
         self._x_col = x_col      # None means row-index X
         self._y_cols = []         # populated by add_series
@@ -445,6 +446,8 @@ class EmbeddedChart(QWidget):
         gp = getattr(self, '_general_props', None)
         if gp:
             d["general_props"] = gp
+        if self._header_row:
+            d["header_row"] = True
         if self._keep_ratio:
             d["keep_ratio"] = True
         if self._tight_layout:
@@ -620,6 +623,11 @@ class EmbeddedChart(QWidget):
                     i, fm, sd.get("fill_target", 0),
                     sd.get("fill_color", "#1f77b4"),
                     sd.get("fill_alpha", 0.3))
+        # Header mode: resync labels from header cells before the legend
+        # is built so it reflects the (possibly edited) column headers.
+        chart._header_row = bool(d.get("header_row", False))
+        if chart._header_row:
+            chart._apply_header_labels(refresh_legend=False)
         # Restore legend visibility, font, and extended properties.
         leg_font = d.get("legend_font")
         leg_size = d.get("legend_size", 8)
@@ -749,7 +757,34 @@ class EmbeddedChart(QWidget):
                 artist.set_offsets(np.column_stack([x, y]))
         self._ax.relim()
         self._ax.autoscale_view()
+        if self._header_row:
+            self._apply_header_labels()
         self._canvas.draw_idle()
+
+    def _apply_header_labels(self, refresh_legend=True):
+        """Set each series' label from the first row of its Y range (the
+        column header). Used when 'first row is a header' is enabled, and
+        re-run on cell edits so the legend tracks the header cells."""
+        sheet = self._source_sheet
+        if not sheet:
+            return
+        for i, s in enumerate(self._series):
+            if i >= len(self._y_cols):
+                continue
+            yc = self._y_cols[i]
+            hdr_row = int(s.get("y_row_start", 0))
+            text = sheet.cell_text(hdr_row, yc).strip()
+            if not text:
+                continue
+            s["label"] = text
+            artist = s.get("artist")
+            if artist is not None and hasattr(artist, "set_label"):
+                artist.set_label(text)
+        if refresh_legend and self._ax.get_legend() is not None:
+            leg = self._ax.legend(loc="best", framealpha=0.8, fontsize=8)
+            if leg:
+                leg.set_draggable(True)
+            self._canvas.draw_idle()
 
     def _refresh_data(self):
         """Re-read source columns and update all series, preserving
@@ -1885,6 +1920,15 @@ class PlotDetailsDialog(QDialog):
         w = QWidget()
         form = QFormLayout(w)
 
+        from PyQt5.QtWidgets import QCheckBox
+        self.header_check = QCheckBox("First row is a header")
+        self.header_check.setToolTip(
+            "Name each series after the first row of its column "
+            "(updates the legend, and tracks edits to that row).")
+        self.header_check.setChecked(
+            bool(getattr(self._chart, "_header_row", False)))
+        form.addRow(self.header_check)
+
         self.x_range_edit = QLineEdit()
         self.x_range_edit.setPlaceholderText("e.g. A1:A20")
         form.addRow("X Range:", self.x_range_edit)
@@ -2367,6 +2411,19 @@ class PlotDetailsDialog(QDialog):
                 leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
                 if leg:
                     leg.set_draggable(True)
+
+        # ── Header-row labelling ──────────────────────────────────
+        chart._header_row = self.header_check.isChecked()
+        if chart._header_row:
+            chart._apply_header_labels()
+            # Reflect the derived names in the dialog's list + label box.
+            for i in range(self._series_list.count()):
+                if i < len(chart._series):
+                    self._series_list.item(i).setText(
+                        chart._series[i]["label"])
+            cur = self._series_list.currentRow()
+            if 0 <= cur < len(chart._series):
+                self.label_edit.setText(chart._series[cur]["label"])
 
         chart._canvas.draw_idle()
 
