@@ -2250,6 +2250,9 @@ class SheetWidget(QWidget):
                     cell_meta["note"] = self._cell_notes[(r, c)]
                 if (r, c) in self._cell_sparklines:
                     cell_meta["sparkline"] = self._cell_sparklines[(r, c)]
+                if (r, c) in self._cell_formats:
+                    cell_meta["format"] = _snapshot_format(
+                        self._cell_formats[(r, c)])
                 if cell_meta:
                     meta[(dr, dc)] = cell_meta
             rows.append("\t".join(row_data))
@@ -2378,6 +2381,8 @@ class SheetWidget(QWidget):
         if row < 0 or col < 0:
             return
         changes = []
+        old_fmts = {}
+        new_fmts = {}
         formula_cells = []  # cells that need formula evaluation
         self.table.blockSignals(True)
         try:
@@ -2434,11 +2439,24 @@ class SheetWidget(QWidget):
                             if "sparkline" in dm:
                                 self._cell_sparklines[(r, c)] = dm["sparkline"]
                                 self._fmt_delegate._sparklines[(r, c)] = dm["sparkline"]
+                            if "format" in dm:
+                                old_fmts[(r, c)] = _snapshot_format(
+                                    self._cell_formats.get((r, c)))
+                                cf = _snapshot_format(dm["format"])
+                                new_fmts[(r, c)] = cf
+                                self._cell_formats[(r, c)] = cf
+                                self._apply_format_to_item(it, cf)
         finally:
             self.table.blockSignals(False)
-        if changes and self._undo_stack is not None:
-            self._undo_stack.push(
-                BulkCellEditCmd(self, changes, "Paste"))
+        if (changes or old_fmts) and self._undo_stack is not None:
+            self._undo_stack.beginMacro("Paste")
+            if changes:
+                self._undo_stack.push(
+                    BulkCellEditCmd(self, changes, "Paste"))
+            if old_fmts:
+                self._undo_stack.push(
+                    FormatCellsCmd(self, old_fmts, new_fmts, "Paste Format"))
+            self._undo_stack.endMacro()
         # Recalculate dependents of pasted formula cells.
         for r, c in formula_cells:
             self.data_changed.emit(c)
