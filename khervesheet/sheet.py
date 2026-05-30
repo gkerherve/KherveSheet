@@ -681,6 +681,15 @@ class SheetWidget(QWidget):
         # charts are not redrawn on every recalc (used by the Solver,
         # which recalculates the model hundreds of times).
         self._suppress_recalc_signals = False
+        # Formula evaluation cache: formula text → compiled code object
+        # (or False if it failed to compile).  Compiled formulas read
+        # live cell values at eval time via the _C/_AGG/_COL helpers, so
+        # the cache never needs invalidating when values change — only a
+        # change to the formula *text* yields a new key.  This keeps the
+        # Solver's repeated recalculation off the regex/parse hot path.
+        self._compiled_cache = {}
+        self._eval_ns = None
+        self._eval_ns_lower = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1559,20 +1568,33 @@ class SheetWidget(QWidget):
     # ── Formula evaluation (basic) ───────────────────────────────────
     def _evaluate_formula(self, formula: str, row: int, col: int,
                           decimals: int = 3):
-        """Evaluate a cell formula.
+        """Evaluate a cell formula (compiled once, then cached).
 
-        Supports:
-        - Cell refs: A1, b5, AA12 (case-insensitive)
-        - Arithmetic: A1+5, A1*A3, A1^2, A1**2
-        - Range functions: SUM(A1:A10), AVERAGE(B1:B20)
-        - Whole-column functions: max(A), min(B), mean(A),
-          sum(C), average(A), count(A)
-        - Math: abs, round, int, float, math.*, np.*
+        Supports cell refs (A1, $B$5), arithmetic (A1^2), range
+        functions (SUM(A1:A10)), whole-column functions (max(A)) and a
+        large library of Excel-style functions.  The formula is parsed
+        and compiled to a Python code object the first time it is seen;
+        thereafter the cached code is evaluated directly, reading live
+        cell values through the _C/_AGG/_COL helpers.
         """
-        expr = formula[1:]  # strip leading =
         try:
+            code = self._compiled_cache.get(formula)
+            if code is None:
+                code = self._compile_formula(formula)
+                self._compiled_cache[formula] = code
+            if code is False:
+                return "#ERROR"
+            result = eval(code, self._build_eval_ns())  # noqa: S307
+            return _format_number(result, decimals)
+        except Exception:
+            return "#ERROR"
+
+    def _build_eval_ns(self):
+        """Build the evaluation namespace once and cache it on self."""
+        if self._eval_ns is not None:
+            return self._eval_ns
+        if True:
             import math
-            import re
 
             import datetime as _dt
 
@@ -1835,93 +1857,77 @@ class SheetWidget(QWidget):
                   "TRUNC": _TRUNC, "COMBIN": _COMBIN,
                   "DEGREES": _DEGREES, "RADIANS": _RADIANS,
                   "LN": math.log, "PRODUCT": math.prod,
+                  # Compiled-formula runtime helpers (read live values).
+                  "_C": self._cell_val,
+                  "_AGG": self._agg_range,
+                  "_COL": self._agg_col,
                   }
+        self._eval_ns = ns
+        _lower = {}
+        for _k in ns:
+            _lower.setdefault(_k.lower(), _k)
+        self._eval_ns_lower = _lower
+        return ns
 
-            # 0. Normalise function names: Sqrt → SQRT, Sin → SIN, etc.
-            # Map any word followed by '(' to its matching ns key.
-            _ns_lower = {}
-            for k in ns:
-                _ns_lower.setdefault(k.lower(), k)
+    # Names that look like cell refs but are functions/constants and so
+    # must not be rewritten into _C(...) calls.
+    _CELLREF_SKIP = frozenset({
+        "log", "exp", "sin", "cos", "tan", "sqrt", "abs", "int", "sum",
+        "min", "max", "len", "avg", "mean", "count", "stdev", "round",
+        "float", "math", "pi", "np", "asin", "acos", "atan", "sinh",
+        "cosh", "tanh", "asinh", "acosh", "atanh", "date", "today",
+        "now", "time", "year", "month", "day", "hour", "minute",
+        "second", "days", "weekday", "left", "right", "mid", "len",
+        "lower", "upper", "proper", "trim", "concat", "concatenate",
+        "substitute", "rept", "find", "replace", "exact", "value",
+        "text", "if", "and", "or", "not", "iferror", "xor", "true",
+        "false", "mod", "power", "quotient", "sign", "even", "odd",
+        "fact", "gcd", "lcm", "rand", "randbetween", "rounddown",
+        "roundup", "trunc", "combin", "degrees", "radians", "ln",
+        "product"})
 
-            def _normalise_func(m):
-                word = m.group(1)
-                if word in ns:
-                    return m.group(0)  # already valid
-                canon = _ns_lower.get(word.lower())
-                if canon:
-                    return canon + "("
-                return m.group(0)
+    def _compile_formula(self, formula):
+        """Parse a formula and compile it to a reusable code object.
 
-            expr = re.sub(r'\b([A-Za-z_]\w*)\s*\(', _normalise_func,
-                          expr)
-
-            # 1. Expand range functions: SUM(A1:A10)
-            expr = self._expand_range_functions(expr)
-
-            # 2. Expand whole-column functions: max(A), min(B), etc.
-            expr = self._expand_column_functions(expr)
-
-            # 3. Replace cell refs like A1, $B$5, A$1, $A1 with values.
-            def _cell_ref(m):
-                letters = m.group(2)
-                rnum = int(m.group(4)) - 1
-                c = letter_to_col_index(letters)
-                it = self.table.item(rnum, c)
-                if it and it.text():
-                    try:
-                        return str(float(it.text()))
-                    except ValueError:
-                        return "0"
-                return "0"
-
-            # Match cell refs: optional $ + 1-3 letters + optional $ +
-            # digits (A1, $A1, A$1, $A$1, AB12, etc.)
-            # but not known functions like log10, exp2.
-            _SKIP = {"log", "exp", "sin", "cos", "tan", "sqrt",
-                     "abs", "int", "sum", "min", "max", "len",
-                     "avg", "mean", "count", "stdev", "round",
-                     "float", "math", "PI", "pi", "np",
-                     "asin", "acos", "atan",
-                     "sinh", "cosh", "tanh",
-                     "asinh", "acosh", "atanh",
-                     "DATE", "TODAY", "NOW", "TIME",
-                     "YEAR", "MONTH", "DAY", "HOUR",
-                     "MINUTE", "SECOND", "DAYS", "WEEKDAY",
-                     "LEFT", "RIGHT", "MID", "LEN",
-                     "LOWER", "UPPER", "PROPER", "TRIM",
-                     "CONCAT", "CONCATENATE", "SUBSTITUTE",
-                     "REPT", "FIND", "REPLACE", "EXACT",
-                     "VALUE", "TEXT",
-                     "IF", "AND", "OR", "NOT",
-                     "IFERROR", "XOR", "TRUE", "FALSE",
-                     "MOD", "POWER", "QUOTIENT", "SIGN",
-                     "EVEN", "ODD", "FACT", "GCD", "LCM",
-                     "RAND", "RANDBETWEEN",
-                     "ROUNDDOWN", "ROUNDUP", "TRUNC",
-                     "COMBIN", "DEGREES", "RADIANS",
-                     "LN", "PRODUCT"}
-
-            def _safe_cell_ref(m):
-                name = m.group(2)
-                if name.lower() in {s.lower() for s in _SKIP}:
-                    return m.group(0)
-                return _cell_ref(m)
-
-            expr = re.sub(r'(\$?)([A-Za-z]{1,3})(\$?)(\d+)\b',
-                          _safe_cell_ref, expr)
-
-            # 4. Replace ^ with ** for exponentiation.
-            expr = expr.replace("^", "**")
-
-            result = eval(expr, ns)  # noqa: S307
-            return _format_number(result, decimals)
-        except Exception:
-            return "#ERROR"
-
-    def _expand_range_functions(self, expr: str) -> str:
-        """Expand SUM(A1:A10) style range references."""
+        Cell refs and aggregate ranges are rewritten into _C/_AGG/_COL
+        calls that read live grid values at eval time, so the compiled
+        object is value-independent and safe to cache by formula text.
+        Returns False if the expression cannot be compiled.
+        """
         import re
+        self._build_eval_ns()
+        ns = self._eval_ns
+        ns_lower = self._eval_ns_lower
+        expr = formula[1:]  # strip leading =
 
+        def _normalise_func(m):
+            word = m.group(1)
+            if word in ns:
+                return m.group(0)
+            canon = ns_lower.get(word.lower())
+            return canon + "(" if canon else m.group(0)
+
+        expr = re.sub(r'\b([A-Za-z_]\w*)\s*\(', _normalise_func, expr)
+        expr = self._compile_range_functions(expr)
+        expr = self._compile_column_functions(expr)
+        expr = re.sub(r'(\$?)([A-Za-z]{1,3})(\$?)(\d+)\b',
+                      self._compile_cell_ref, expr)
+        expr = expr.replace("^", "**")
+        try:
+            return compile(expr, "<formula>", "eval")
+        except Exception:
+            return False
+
+    def _compile_cell_ref(self, m):
+        name = m.group(2)
+        if name.lower() in self._CELLREF_SKIP:
+            return m.group(0)
+        c = letter_to_col_index(m.group(2))
+        r = int(m.group(4)) - 1
+        return f"_C({r},{c})"
+
+    def _compile_range_functions(self, expr: str) -> str:
+        import re
         # Strip one redundant paren pair wrapping a range directly
         # inside an aggregate, e.g. SUM((A1:A10)) → SUM(A1:A10).
         expr = re.sub(
@@ -1929,100 +1935,89 @@ class SheetWidget(QWidget):
             r'\s*\()\s*\(\s*'
             r'(\$?[A-Z]+\$?\d+\s*:\s*\$?[A-Z]+\$?\d+)'
             r'\s*\)',
-            r'\1\2',
-            expr,
-            flags=re.IGNORECASE,
+            r'\1\2', expr, flags=re.IGNORECASE,
         )
 
-        def _expand_range(m):
+        def _expand(m):
             func = m.group(1).lower()
-            start_col = m.group(2)
-            start_row = int(m.group(3))
-            end_col = m.group(4)
-            end_row = int(m.group(5))
-
-            c1 = letter_to_col_index(start_col)
-            c2 = letter_to_col_index(end_col)
-            vals = []
-            for c in range(c1, c2 + 1):
-                for r in range(start_row - 1, end_row):
-                    it = self.table.item(r, c)
-                    if it and it.text():
-                        try:
-                            vals.append(float(it.text()))
-                        except ValueError:
-                            pass
-
-            if func in ("sum",):
-                return str(sum(vals)) if vals else "0"
-            elif func == "sumsq":
-                return str(sum(v * v for v in vals)) if vals else "0"
-            elif func in ("average", "avg", "mean"):
-                return (str(sum(vals) / len(vals))
-                        if vals else "0")
-            elif func == "min":
-                return str(min(vals)) if vals else "0"
-            elif func == "max":
-                return str(max(vals)) if vals else "0"
-            elif func in ("count", "counta"):
-                return str(len(vals))
-            elif func == "stdev":
-                if len(vals) < 2:
-                    return "0"
-                m_ = sum(vals) / len(vals)
-                return str((sum((v - m_)**2 for v in vals)
-                            / (len(vals) - 1)) ** 0.5)
-            return m.group(0)
+            c1 = letter_to_col_index(m.group(2))
+            r1 = int(m.group(3)) - 1
+            c2 = letter_to_col_index(m.group(4))
+            r2 = int(m.group(5)) - 1
+            return f"_AGG('{func}',{c1},{r1},{c2},{r2})"
 
         pattern = (r'(SUMSQ|SUM|AVERAGE|AVG|MEAN|MIN|MAX|COUNTA|COUNT|STDEV)'
-                   r'\s*\(\s*'
-                   r'\$?([A-Z]+)\$?(\d+)\s*:\s*'
+                   r'\s*\(\s*\$?([A-Z]+)\$?(\d+)\s*:\s*'
                    r'\$?([A-Z]+)\$?(\d+)\s*\)')
-        return re.sub(pattern, _expand_range, expr,
-                      flags=re.IGNORECASE)
+        return re.sub(pattern, _expand, expr, flags=re.IGNORECASE)
 
-    def _expand_column_functions(self, expr: str) -> str:
-        """Expand whole-column functions like max(A), min(B),
-        mean(A), sum(C), average(A), count(A)."""
+    def _compile_column_functions(self, expr: str) -> str:
         import re
 
-        def _expand_col(m):
+        def _expand(m):
             func = m.group(1).lower()
-            col_letter = m.group(2).upper()
-            c = letter_to_col_index(col_letter)
-            vals = []
-            for r in range(self.row_count()):
-                it = self.table.item(r, c)
+            c = letter_to_col_index(m.group(2).upper())
+            return f"_COL('{func}',{c})"
+
+        pattern = (r'(SUM|AVERAGE|AVG|MEAN|MIN|MAX|COUNT|STDEV)'
+                   r'\s*\(\s*([A-Z]+)\s*\)')
+        return re.sub(pattern, _expand, expr, flags=re.IGNORECASE)
+
+    # ── Compiled-formula runtime helpers ─────────────────────────────
+    def _cell_val(self, r, c):
+        it = self.table.item(r, c)
+        if it and it.text():
+            try:
+                return float(it.text())
+            except ValueError:
+                return 0.0
+        return 0.0
+
+    def _apply_agg(self, func, vals):
+        if func == "sum":
+            return sum(vals) if vals else 0
+        if func == "sumsq":
+            return sum(v * v for v in vals) if vals else 0
+        if func in ("average", "avg", "mean"):
+            return sum(vals) / len(vals) if vals else 0
+        if func == "min":
+            return min(vals) if vals else 0
+        if func == "max":
+            return max(vals) if vals else 0
+        if func in ("count", "counta"):
+            return len(vals)
+        if func == "stdev":
+            if len(vals) < 2:
+                return 0
+            mn = sum(vals) / len(vals)
+            return (sum((v - mn) ** 2 for v in vals)
+                    / (len(vals) - 1)) ** 0.5
+        return 0
+
+    def _agg_range(self, func, c1, r1, c2, r2):
+        vals = []
+        tbl = self.table
+        for c in range(c1, c2 + 1):
+            for r in range(r1, r2 + 1):
+                it = tbl.item(r, c)
                 if it and it.text():
                     try:
                         vals.append(float(it.text()))
                     except ValueError:
                         pass
+        return self._apply_agg(func, vals)
 
-            if func in ("sum",):
-                return str(sum(vals)) if vals else "0"
-            elif func in ("average", "avg", "mean"):
-                return (str(sum(vals) / len(vals))
-                        if vals else "0")
-            elif func == "min":
-                return str(min(vals)) if vals else "0"
-            elif func == "max":
-                return str(max(vals)) if vals else "0"
-            elif func == "count":
-                return str(len(vals))
-            elif func == "stdev":
-                if len(vals) < 2:
-                    return "0"
-                m_ = sum(vals) / len(vals)
-                return str((sum((v - m_)**2 for v in vals)
-                            / (len(vals) - 1)) ** 0.5)
-            return m.group(0)
-
-        # Match func(A) where A is one or more letters (no digit).
-        pattern = (r'(SUM|AVERAGE|AVG|MEAN|MIN|MAX|COUNT|STDEV)'
-                   r'\s*\(\s*([A-Z]+)\s*\)')
-        return re.sub(pattern, _expand_col, expr,
-                      flags=re.IGNORECASE)
+    def _agg_col(self, func, c):
+        vals = []
+        tbl = self.table
+        for r in range(self.row_count()):
+            it = tbl.item(r, c)
+            if it and it.text():
+                try:
+                    vals.append(float(it.text()))
+                except ValueError:
+                    pass
+        return self._apply_agg(func, vals)
 
     # ── Plot types ───────────────────────────────────────────────────
     PLOT_TYPES = [
