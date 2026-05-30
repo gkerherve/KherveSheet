@@ -82,8 +82,6 @@ def default_general_state(chart):
         "grid_color": "#b0b0b0",
         "grid_alpha": 1.0,
         "grid_style": "-",
-        "spine_top": ax.spines["top"].get_visible(),
-        "spine_right": ax.spines["right"].get_visible(),
         "sketch": bool(getattr(chart, "_sketch_on", False)),
     }
 
@@ -109,9 +107,6 @@ def apply_general_state(chart, state):
                 linestyle=state.get("grid_style", "-"))
     else:
         ax.grid(False)
-
-    ax.spines["top"].set_visible(bool(state.get("spine_top", True)))
-    ax.spines["right"].set_visible(bool(state.get("spine_right", True)))
 
     sketch_on = bool(state.get("sketch", False))
     chart._sketch_on = sketch_on
@@ -186,15 +181,9 @@ class GeneralPropertiesDialog(QDialog):
         gform.addRow("Grid style:", self.grid_style)
         outer.addWidget(grid_box)
 
-        # ── Frame & effects ─────────────────────────────────────────
-        fx_box = QGroupBox("Frame && Effects")
+        # ── Effects ─────────────────────────────────────────────────
+        fx_box = QGroupBox("Effects")
         fxform = QFormLayout(fx_box)
-        self.spine_top = QCheckBox("Show top border")
-        self.spine_top.setChecked(bool(state.get("spine_top", True)))
-        fxform.addRow(self.spine_top)
-        self.spine_right = QCheckBox("Show right border")
-        self.spine_right.setChecked(bool(state.get("spine_right", True)))
-        fxform.addRow(self.spine_right)
         self.sketch_check = QCheckBox("Cartoon (wobbly lines)")
         self.sketch_check.setChecked(bool(state.get("sketch", False)))
         fxform.addRow(self.sketch_check)
@@ -244,8 +233,6 @@ class GeneralPropertiesDialog(QDialog):
             "grid_color": self.grid_color.color(),
             "grid_alpha": self.grid_alpha.value(),
             "grid_style": self.grid_style.currentData(),
-            "spine_top": self.spine_top.isChecked(),
-            "spine_right": self.spine_right.isChecked(),
             "sketch": self.sketch_check.isChecked(),
         }
 
