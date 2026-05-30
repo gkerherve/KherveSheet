@@ -590,9 +590,10 @@ class SolverDialog(QDialog):
                         r, c, _fmt_display(x[i], dec))
             # Recalculate formulas that depend on variable cells.
             # Use high precision so the optimizer sees smooth gradients.
+            # Seed from all variable cells at once so the shared
+            # downstream graph is evaluated only once per trial.
             dec = _SOLVE_DEC if full_prec else None
-            for r, c in var_cells:
-                self._sheet._recalc_dependents(r, c, decimals=dec)
+            self._sheet._recalc_from_seeds(var_cells, decimals=dec)
 
         def _obj(x):
             _set_vars(x)

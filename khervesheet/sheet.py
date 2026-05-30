@@ -1273,19 +1273,29 @@ class SheetWidget(QWidget):
     def _recalc_dependents(self, row, col, visited=None,
                            decimals=None):
         """Re-evaluate every formula cell that transitively depends on
-        (row, col), in topological order.
+        (row, col), in topological order. See _recalc_from_seeds."""
+        self._recalc_from_seeds([(row, col)], decimals=decimals)
+
+    def _recalc_from_seeds(self, seeds, decimals=None):
+        """Re-evaluate every formula cell that transitively depends on
+        any cell in *seeds*, in topological order.
 
         Evaluating in dependency order is essential for aggregates: a
         cell like SUM(K2:K3002) must be recomputed only after *all* of
         its K inputs have updated, not after the first one (which a
         naive depth-first cascade would do, leaving the sum stale).
 
+        Seeding from several cells at once (rather than one recalc per
+        changed cell) avoids re-evaluating the shared downstream graph
+        multiple times — important for the Solver, which changes many
+        variable cells per objective evaluation.
+
         *decimals* overrides per-cell precision when set (used by the
         Solver to keep full precision during optimisation).
         """
         # 1. Collect all transitively-affected formula cells.
         affected = set()
-        stack = [(row, col)]
+        stack = list(seeds)
         while stack:
             for dep in self._dependents.get(stack.pop(), ()):
                 if dep not in affected:
