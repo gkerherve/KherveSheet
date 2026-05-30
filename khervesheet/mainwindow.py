@@ -815,22 +815,23 @@ class MainWindow(QMainWindow):
         self._add_recent(path)
         self._update_title()
 
-    def _save_file(self):
+    def _save_file(self) -> bool:
         if self._current_file:
             if self._current_file.endswith(".ksheet"):
                 self._save_to_ksheet(self._current_file)
             else:
                 self._save_to_csv(self._current_file)
-        else:
-            self._save_file_as()
+            self._undo_stack.setClean()
+            return True
+        return self._save_file_as()
 
-    def _save_file_as(self):
+    def _save_file_as(self) -> bool:
         path, _ = QFileDialog.getSaveFileName(
             self, "Save As", "",
             "KherveSheet (*.ksheet);;"
             "CSV Files (*.csv);;All Files (*)")
         if not path:
-            return
+            return False
         if path.endswith(".ksheet"):
             self._save_to_ksheet(path)
         else:
@@ -838,6 +839,26 @@ class MainWindow(QMainWindow):
         self._current_file = path
         self._add_recent(path)
         self._update_title()
+        self._undo_stack.setClean()
+        return True
+
+    def closeEvent(self, event):
+        """Prompt to save unsaved changes before closing."""
+        if self._undo_stack.isClean():
+            event.accept()
+            return
+        reply = QMessageBox.question(
+            self, "Save Changes?",
+            "You have unsaved changes.\n"
+            "Do you want to save before closing?",
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save)
+        if reply == QMessageBox.Save:
+            event.accept() if self._save_file() else event.ignore()
+        elif reply == QMessageBox.Discard:
+            event.accept()
+        else:
+            event.ignore()
 
     def _import_text(self):
         path, _ = QFileDialog.getOpenFileName(
