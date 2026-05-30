@@ -1027,10 +1027,12 @@ class MainWindow(QMainWindow):
             total = sum((wb_f[t].max_row or 0) for t in titles) or 1
             done = 0
             first = None
+            sheet_by_title = {}
             for title in titles:
                 ws_f = wb_f[title]
                 ws_v = wb_v[title] if wb_v is not None else None
                 sheet = wb.add_sheet(title)
+                sheet_by_title[title] = sheet
                 if first is None:
                     first = sheet
                 done = self._fill_sheet_from_excel(
@@ -1040,6 +1042,17 @@ class MainWindow(QMainWindow):
             self._wire_undo_to_sheets()
             if first is not None:
                 wb.tabs.setCurrentWidget(first)
+
+            # Reconstruct charts and floating text boxes now that the
+            # sheet viewports exist as valid parent widgets.
+            from . import excel_import
+            for title in titles:
+                try:
+                    excel_import.import_charts(
+                        sheet_by_title[title], wb_f[title], sheet_by_title)
+                except Exception:
+                    pass
+            excel_import.import_textboxes(path, sheet_by_title)
             self._status_msg(
                 f"Loaded {len(titles)} sheet(s) from {path}", 5000)
         except Exception as e:
@@ -1072,7 +1085,12 @@ class MainWindow(QMainWindow):
             self._progress.setValue(int(100 * done / total))
             QApplication.processEvents()
             for c in range(n_cols):
-                fv = ws_f.cell(r + 1, c + 1).value
+                xl_cell = ws_f.cell(r + 1, c + 1)
+                fv = xl_cell.value
+                cmt = getattr(xl_cell, "comment", None)
+                if cmt is not None and getattr(cmt, "text", None):
+                    sheet._cell_notes[(r, c)] = {
+                        "text": cmt.text, "kind": "comment"}
                 formula = None
                 if isinstance(fv, str) and fv.startswith("="):
                     formula = fv
