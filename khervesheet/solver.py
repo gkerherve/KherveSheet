@@ -744,7 +744,7 @@ class SolverDialog(QDialog):
             _set_vars(result.x, full_prec=False)
 
         # Push undo command for all changed cells
-        if self._sheet._undo_stack:
+        if self._sheet._undo_stack is not None:
             from .sheet import BulkCellEditCmd
             changes = []
             for (r, c), old_txt in original.items():

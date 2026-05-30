@@ -378,7 +378,7 @@ class EmbeddedImage(QWidget):
                 self._crop_rect = QRectF(new_x1, new_y1, new_w, new_h)
                 self._apply_filters()
                 stack = _find_undo_stack(self.parent())
-                if stack:
+                if stack is not None:
                     stack.push(ImageCropCmd(
                         self, old_crop, self._crop_rect))
             self._cropping = False
@@ -429,7 +429,7 @@ class EmbeddedImage(QWidget):
         self._crop_rect = new_crop
         self._apply_filters()
         stack = _find_undo_stack(self.parent())
-        if stack:
+        if stack is not None:
             stack.push(ImageCropCmd(self, old_crop, new_crop))
 
     # ── Save to file ──────────────────────────────────────────────────
@@ -465,7 +465,7 @@ class EmbeddedImage(QWidget):
             self._brightness = new_b
             self._apply_filters()
             stack = _find_undo_stack(self.parent())
-            if stack:
+            if stack is not None:
                 stack.push(ImageAdjustCmd(
                     self, old_h, old_s, old_b, new_h, new_s, new_b))
 
@@ -584,7 +584,7 @@ class EmbeddedImage(QWidget):
                 self._pixmap = pm
                 self.update()
                 stack = _find_undo_stack(self.parent())
-                if stack:
+                if stack is not None:
                     stack.push(ReplaceImageCmd(
                         self, old_pm, old_crop, old_h, old_s,
                         old_b, pm))
@@ -594,7 +594,7 @@ class EmbeddedImage(QWidget):
         sw = _find_sheet_widget(self.parent())
         if sw:
             stack = getattr(sw, '_undo_stack', None)
-            if stack:
+            if stack is not None:
                 if self in sw._images:
                     sw._images.remove(self)
                 self.hide()

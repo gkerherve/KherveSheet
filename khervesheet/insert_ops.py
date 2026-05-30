@@ -41,7 +41,7 @@ def insert_checkbox(sheet):
     it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
     it.setCheckState(Qt.Unchecked)
     sheet._shadow[(row, col)] = new_val
-    if sheet._undo_stack:
+    if sheet._undo_stack is not None:
         from .sheet import CellEditCmd
         sheet._undo_stack.push(
             CellEditCmd(sheet, row, col, old, new_val))

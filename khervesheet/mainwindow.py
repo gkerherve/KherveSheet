@@ -1807,7 +1807,7 @@ class MainWindow(QMainWindow):
         new_fmts = {}
         for k in old_fmts:
             new_fmts[k] = _snapshot_format(sheet._cell_formats.get(k))
-        if self._undo_stack:
+        if self._undo_stack is not None:
             self._undo_stack.push(
                 FormatCellsCmd(sheet, old_fmts, new_fmts, label))
 
@@ -2496,7 +2496,7 @@ class MainWindow(QMainWindow):
         else:
             it.setText(new_val)
         sheet._shadow[(row, col)] = new_val
-        if sheet._undo_stack:
+        if sheet._undo_stack is not None:
             from .sheet import CellEditCmd
             sheet._undo_stack.push(
                 CellEditCmd(sheet, row, col, old, new_val))
@@ -2738,7 +2738,7 @@ class MainWindow(QMainWindow):
         if not hasattr(sheet, '_images'):
             sheet._images = []
         sheet._images.append(img)
-        if self._undo_stack:
+        if self._undo_stack is not None:
             self._undo_stack.push(InsertImageCmd(sheet, img, label))
         self._status_msg(label, 3000)
 
@@ -2757,7 +2757,7 @@ class MainWindow(QMainWindow):
                 old_fmt = s._col_formats.get(c)
                 s._col_formats[c] = fmt
                 changes.append((c, old_fmt, fmt))
-        if changes and self._undo_stack:
+        if changes and self._undo_stack is not None:
             self._undo_stack.push(
                 SetNumberFormatCmd(s, changes, "Number Format"))
 

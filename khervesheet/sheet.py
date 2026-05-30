@@ -645,6 +645,28 @@ def _format_number(value, decimals=3):
     return s
 
 
+class _MarchingAntsOverlay(QWidget):
+    """Transparent overlay child of the table viewport that paints the
+    animated dashed border around the copied range. Painting in a real
+    paintEvent (rather than on the viewport outside its own paint) is the
+    only reliable way to draw on top of a QAbstractScrollArea."""
+
+    def __init__(self, sheet):
+        super().__init__(sheet.table.viewport())
+        self._sheet = sheet
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_NoSystemBackground)
+        self.hide()
+
+    def paintEvent(self, event):
+        rng = self._sheet._marching_range
+        if rng is None:
+            return
+        painter = QPainter(self)
+        self._sheet._paint_marching_ants(painter)
+        painter.end()
+
+
 # ── SheetWidget ──────────────────────────────────────────────────────
 class SheetWidget(QWidget):
     """A single Excel-style spreadsheet grid."""
@@ -789,7 +811,11 @@ class SheetWidget(QWidget):
         self._march_offset = 0
         self._march_timer = QTimer(self)
         self._march_timer.timeout.connect(self._march_tick)
-        self._painting_ants = False   # recursion guard for paint event
+        self._ants_overlay = _MarchingAntsOverlay(self)
+        self.table.horizontalScrollBar().valueChanged.connect(
+            lambda _=0: self._ants_overlay.update())
+        self.table.verticalScrollBar().valueChanged.connect(
+            lambda _=0: self._ants_overlay.update())
 
         self.table.setMouseTracking(True)
         self.table.viewport().setMouseTracking(True)
@@ -872,7 +898,7 @@ class SheetWidget(QWidget):
         else:
             self._col_designations[col] = desig
         self._refresh_headers()
-        if self._undo_stack:
+        if self._undo_stack is not None:
             self._undo_stack.push(
                 SetDesignationCmd(self, col, old_desig, desig))
 
@@ -915,7 +941,7 @@ class SheetWidget(QWidget):
                     cleared.append((mr, mc, old_text))
         self.table.setSpan(r, c, rs, cs)
         self._merged_ranges.append((r, c, rs, cs))
-        if self._undo_stack:
+        if self._undo_stack is not None:
             self._undo_stack.push(
                 MergeCellsCmd(self, r, c, rs, cs, cleared))
 
@@ -935,7 +961,7 @@ class SheetWidget(QWidget):
             else:
                 keep.append((mr, mc, rs, cs))
         self._merged_ranges = keep
-        if unmerged and self._undo_stack:
+        if unmerged and self._undo_stack is not None:
             self._undo_stack.push(UnmergeCellsCmd(self, unmerged))
 
     def _apply_cell_number_format(self, text: str, row: int,
@@ -1132,7 +1158,7 @@ class SheetWidget(QWidget):
         if self._col_resize_snap is not None:
             old = self._col_resize_snap
             new = {c: self.table.columnWidth(c) for c in old}
-            if old != new and self._undo_stack:
+            if old != new and self._undo_stack is not None:
                 self._undo_stack.push(
                     ResizeSectionsCmd(self, old, new, 'col',
                                      "Resize columns"))
@@ -1140,7 +1166,7 @@ class SheetWidget(QWidget):
         if self._row_resize_snap is not None:
             old = self._row_resize_snap
             new = {r: self.table.rowHeight(r) for r in old}
-            if old != new and self._undo_stack:
+            if old != new and self._undo_stack is not None:
                 self._undo_stack.push(
                     ResizeSectionsCmd(self, old, new, 'row',
                                      "Resize rows"))
@@ -1210,7 +1236,7 @@ class SheetWidget(QWidget):
 
         self._shadow[(row, col)] = new_text
 
-        if self._undo_stack and old_text != new_text:
+        if self._undo_stack is not None and old_text != new_text:
             cmd = CellEditCmd(self, row, col, old_text, new_text)
             self._undo_stack.push(cmd)
 
@@ -2213,7 +2239,10 @@ class SheetWidget(QWidget):
                 # Collect metadata
                 cell_meta = {}
                 it = self.table.item(r, c)
-                if it and (it.flags() & Qt.ItemIsUserCheckable):
+                # A real checkbox cell has CheckStateRole data set; the
+                # ItemIsUserCheckable flag alone is on by default for every
+                # item, so it must NOT be used to detect checkboxes.
+                if it and it.data(Qt.CheckStateRole) is not None:
                     cell_meta["checkbox"] = (it.checkState() == Qt.Checked)
                 if (r, c) in self._cell_dropdowns:
                     cell_meta["dropdown"] = self._cell_dropdowns[(r, c)]
@@ -2235,30 +2264,30 @@ class SheetWidget(QWidget):
         """Begin animated dashed border around the copied range."""
         self._marching_range = sel_range
         self._march_offset = 0
+        self._sync_ants_overlay()
+        self._ants_overlay.show()
+        self._ants_overlay.raise_()
+        self._ants_overlay.update()
         self._march_timer.start(150)  # ~7 fps animation
-        self.table.viewport().update()
 
     def _clear_marching_ants(self):
         """Stop marching ants animation."""
         if self._marching_range is not None:
             self._marching_range = None
             self._march_timer.stop()
-            self.table.viewport().update()
+            self._ants_overlay.hide()
+
+    def _sync_ants_overlay(self):
+        """Keep the overlay covering the whole viewport."""
+        vp = self.table.viewport()
+        self._ants_overlay.setGeometry(vp.rect())
 
     def _march_tick(self):
         """Advance dash offset and repaint."""
         self._march_offset = (self._march_offset + 1) % 8
-        self.table.viewport().update()
-
-    def _draw_marching_ants_overlay(self):
-        """Draw marching ants on the viewport (called after Qt paint)."""
-        if self._marching_range is None:
-            return
-        painter = QPainter(self.table.viewport())
-        if not painter.isActive():
-            return
-        self._paint_marching_ants(painter)
-        painter.end()
+        self._sync_ants_overlay()
+        self._ants_overlay.raise_()
+        self._ants_overlay.update()
 
     def _paint_marching_ants(self, painter):
         """Draw the animated dashed border on the viewport."""
@@ -2324,7 +2353,7 @@ class SheetWidget(QWidget):
                         changes.append((r, c, old, val))
         finally:
             self.table.blockSignals(False)
-        if changes and self._undo_stack:
+        if changes and self._undo_stack is not None:
             self._undo_stack.push(
                 BulkCellEditCmd(self, changes, "Paste Values"))
         self._clear_marching_ants()
@@ -2407,7 +2436,7 @@ class SheetWidget(QWidget):
                                 self._fmt_delegate._sparklines[(r, c)] = dm["sparkline"]
         finally:
             self.table.blockSignals(False)
-        if changes and self._undo_stack:
+        if changes and self._undo_stack is not None:
             self._undo_stack.push(
                 BulkCellEditCmd(self, changes, "Paste"))
         # Recalculate dependents of pasted formula cells.
@@ -2473,7 +2502,7 @@ class SheetWidget(QWidget):
                         self.table.update(idx)
         finally:
             self.table.blockSignals(False)
-        if (changes or old_fmts) and self._undo_stack:
+        if (changes or old_fmts) and self._undo_stack is not None:
             self._undo_stack.beginMacro("Clear")
             if changes:
                 self._undo_stack.push(
@@ -2491,7 +2520,7 @@ class SheetWidget(QWidget):
             row = 0
         self.table.insertRow(row)
         self._refresh_headers()
-        if self._undo_stack:
+        if self._undo_stack is not None:
             self._undo_stack.push(InsertRowCmd(self, row))
 
     def _insert_row_below(self):
@@ -2500,7 +2529,7 @@ class SheetWidget(QWidget):
             row = self.row_count() - 1
         self.table.insertRow(row + 1)
         self._refresh_headers()
-        if self._undo_stack:
+        if self._undo_stack is not None:
             self._undo_stack.push(InsertRowCmd(self, row + 1))
 
     def _delete_selected_rows(self):
@@ -2519,7 +2548,7 @@ class SheetWidget(QWidget):
         for r in rows:
             self.table.removeRow(r)
         self._refresh_headers()
-        if rows_data and self._undo_stack:
+        if rows_data and self._undo_stack is not None:
             self._undo_stack.push(DeleteRowsCmd(self, rows_data))
 
     def _add_10_rows(self):
@@ -2649,7 +2678,7 @@ class SheetWidget(QWidget):
         self._col_designations = new_desigs
         self._shift_charts(col, +1)
         self._refresh_headers()
-        if self._undo_stack:
+        if self._undo_stack is not None:
             self._undo_stack.push(
                 InsertColumnCmd(self, col, old_desigs))
 
@@ -2679,7 +2708,7 @@ class SheetWidget(QWidget):
         self._col_designations = new_desigs
         self._shift_charts(col, -1)
         self._refresh_headers()
-        if self._undo_stack:
+        if self._undo_stack is not None:
             self._undo_stack.push(
                 DeleteColumnCmd(self, col, col_data, old_desigs, col_meta))
 
@@ -2702,7 +2731,7 @@ class SheetWidget(QWidget):
                 cells.append((c, text, formula))
             old_data.append((r, cells))
         self.table.sortItems(col, order)
-        if self._undo_stack:
+        if self._undo_stack is not None:
             self._undo_stack.push(SortColumnCmd(self, old_data, "Sort"))
 
     # ── Drag-fill (Excel-style auto-fill) ────────────────────────────
@@ -2999,16 +3028,9 @@ class SheetWidget(QWidget):
             return super().eventFilter(obj, event)
         etype = event.type()
 
-        # Paint marching ants overlay after the viewport paints normally.
-        if (etype == QEvent.Paint and self._marching_range is not None
-                and not self._painting_ants):
-            # Let Qt paint the cells first, then overlay marching ants.
-            self._painting_ants = True
-            result = super().eventFilter(obj, event)  # noqa: F841
-            # Schedule ants drawing for after Qt finishes painting.
-            QTimer.singleShot(0, self._draw_marching_ants_overlay)
-            self._painting_ants = False
-            return False  # let Qt do its normal painting
+        # Keep the marching-ants overlay sized to the viewport.
+        if (etype == QEvent.Resize and self._marching_range is not None):
+            self._sync_ants_overlay()
 
         if etype == QEvent.Leave:
             self._hide_note_popup()
@@ -3242,7 +3264,7 @@ class SheetWidget(QWidget):
                             changes.append((r, c, old, text))
         finally:
             self.table.blockSignals(False)
-        if changes and self._undo_stack:
+        if changes and self._undo_stack is not None:
             self._undo_stack.push(
                 BulkCellEditCmd(self, changes, "Drag fill"))
         # Recalculate cells that depend on any changed cell.
