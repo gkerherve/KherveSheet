@@ -109,10 +109,53 @@ class WorkbookWidget(QWidget):
         self.tabs.setCornerWidget(corner, Qt.BottomLeftCorner)
         v.addWidget(self.tabs)
 
+        self._combined_tab = None
+        self._grid_tab = None
+
         # Create default sheets
         for i in range(3):
             self.add_sheet(f"Sheet{i + 1}")
+        self.ensure_layout_tabs()
         self.tabs.setCurrentIndex(0)
+        self.tabs.currentChanged.connect(self._on_current_changed)
+
+    # ── Publication layout tabs (always pinned rightmost) ────────────
+    def ensure_layout_tabs(self):
+        """Create the two layout tabs if missing and pin them last."""
+        from .plot_layout import CombinedLayoutTab, GridLayoutTab
+        if (self._combined_tab is None
+                or self.tabs.indexOf(self._combined_tab) < 0):
+            self._combined_tab = CombinedLayoutTab(self)
+            self.tabs.addTab(self._combined_tab, "Layout")
+        if (self._grid_tab is None
+                or self.tabs.indexOf(self._grid_tab) < 0):
+            self._grid_tab = GridLayoutTab(self)
+            self.tabs.addTab(self._grid_tab, "Layout (grid)")
+        self._pin_layout_tabs()
+
+    def _pin_layout_tabs(self):
+        """Move both layout tabs to the far right and strip their close
+        buttons so they cannot be deleted like sheets."""
+        from PyQt5.QtWidgets import QTabBar
+        bar = self.tabs.tabBar()
+        for tab in (self._combined_tab, self._grid_tab):
+            if tab is None:
+                continue
+            idx = self.tabs.indexOf(tab)
+            if idx < 0:
+                continue
+            last = self.tabs.count() - 1
+            if idx != last:
+                self.tabs.tabBar().moveTab(idx, last)
+                idx = self.tabs.indexOf(tab)
+            bar.setTabButton(idx, QTabBar.RightSide, None)
+            bar.setTabButton(idx, QTabBar.LeftSide, None)
+
+    def _on_current_changed(self, idx):
+        w = self.tabs.widget(idx)
+        from .plot_layout import is_layout_tab
+        if is_layout_tab(w):
+            w.rebuild_from_workbook()
 
     # ── Navigation ───────────────────────────────────────────────────
     def _goto_prev_sheet(self):
@@ -141,23 +184,33 @@ class WorkbookWidget(QWidget):
     def add_sheet(self, name: Optional[str] = None) -> SheetWidget:
         s = SheetWidget()
         if not name:
-            idx = self.tabs.count() + 1
+            idx = len(self.all_sheets()) + 1
             name = f"Sheet{idx}"
+        # Insert before any layout tabs so they stay rightmost.
         self.tabs.addTab(s, name)
+        self._pin_layout_tabs()
         self.tabs.setCurrentWidget(s)
         return s
 
     def current_sheet(self) -> Optional[SheetWidget]:
-        return self.tabs.currentWidget() if self.tabs.count() else None
+        w = self.tabs.currentWidget()
+        if isinstance(w, SheetWidget):
+            return w
+        sheets = self.all_sheets()
+        return sheets[0] if sheets else None
 
     def all_sheets(self) -> List[SheetWidget]:
-        return [self.tabs.widget(i) for i in range(self.tabs.count())]
+        return [self.tabs.widget(i) for i in range(self.tabs.count())
+                if isinstance(self.tabs.widget(i), SheetWidget)]
 
     def sheet_names(self) -> List[str]:
-        return [self.tabs.tabText(i) for i in range(self.tabs.count())]
+        return [self.tabs.tabText(i) for i in range(self.tabs.count())
+                if isinstance(self.tabs.widget(i), SheetWidget)]
 
     def _close_tab(self, idx: int):
-        if self.tabs.count() <= 1:
+        if not isinstance(self.tabs.widget(idx), SheetWidget):
+            return
+        if len(self.all_sheets()) <= 1:
             return
         if QMessageBox.question(
                 self, "Delete Sheet",
@@ -173,7 +226,7 @@ class WorkbookWidget(QWidget):
         idx = bar.tabAt(pos)
         menu = QMenu(self)
         menu.addAction("New Sheet", lambda: self.add_sheet())
-        if idx >= 0:
+        if idx >= 0 and isinstance(self.tabs.widget(idx), SheetWidget):
             menu.addAction("Rename Sheet…",
                            lambda: self._rename_tab(idx))
             if self.tabs.count() > 1:
@@ -222,7 +275,8 @@ class WorkbookWidget(QWidget):
         widget = self.tabs.widget(from_idx)
         self.tabs.removeTab(from_idx)
         self.tabs.insertTab(to_idx, widget, text)
-        self.tabs.setCurrentIndex(to_idx)
+        self._pin_layout_tabs()
+        self.tabs.setCurrentIndex(self.tabs.indexOf(widget))
 
     # ── Proxy to current sheet ───────────────────────────────────────
     def __getattr__(self, name: str):
@@ -233,6 +287,8 @@ class WorkbookWidget(QWidget):
         except AttributeError as exc:
             raise AttributeError(name) from exc
         sheet = tabs.currentWidget()
+        if not isinstance(sheet, SheetWidget):
+            sheet = self.current_sheet()
         if sheet is None:
             raise AttributeError(name)
         return getattr(sheet, name)

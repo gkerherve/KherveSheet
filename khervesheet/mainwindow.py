@@ -793,6 +793,9 @@ class MainWindow(QMainWindow):
                 for c, val in enumerate(row):
                     if val.startswith("="):
                         s._on_cell_changed(r, c)
+        wb._combined_tab = None
+        wb._grid_tab = None
+        wb.ensure_layout_tabs()
         wb.tabs.setCurrentIndex(0)
         self._status_msg("Example loaded", 3000)
 
@@ -1067,14 +1070,17 @@ class MainWindow(QMainWindow):
         try:
             wb = self._workbook
             with h5py.File(path, 'w') as f:
+                from .sheet import SheetWidget
+                sheet_tabs = [si for si in range(wb.tabs.count())
+                              if isinstance(wb.tabs.widget(si), SheetWidget)]
                 f.attrs['format'] = 'ksheet'
                 f.attrs['version'] = 1
-                f.attrs['sheet_count'] = wb.tabs.count()
+                f.attrs['sheet_count'] = len(sheet_tabs)
 
-                for si in range(wb.tabs.count()):
+                for out_i, si in enumerate(sheet_tabs):
                     sheet = wb.tabs.widget(si)
                     name = wb.tabs.tabText(si)
-                    sg = f.create_group(f"sheet_{si}")
+                    sg = f.create_group(f"sheet_{out_i}")
                     sg.attrs['name'] = name
                     sg.attrs['rows'] = sheet.row_count()
                     sg.attrs['cols'] = sheet.column_count()
@@ -1585,6 +1591,10 @@ class MainWindow(QMainWindow):
                     img = EmbeddedImage.from_dict(imd, viewport)
                     sheet._images.append(img)
                 del sheet._deferred_images
+
+            wb._combined_tab = None
+            wb._grid_tab = None
+            wb.ensure_layout_tabs()
 
             self._status_msg(
                 f"Loaded {path}", 5000)
