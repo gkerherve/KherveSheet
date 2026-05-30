@@ -56,13 +56,6 @@ _SIZE_PRESETS = [
 # How subplots are filled into the grid.
 _FILL_ORDERS = [("By row", "row"), ("By column", "col")]
 
-# Per-tile style override. Applied on top of a chart's own appearance
-# only when an entry exists for that tile in ``_tile_styles``.
-_DEFAULT_TILE_STYLE = {
-    "face": "#ffffff", "alpha": 1.0,
-    "border_on": True, "edge": "#000000", "edge_w": 1.0,
-}
-
 _MM_PER_IN = 25.4
 
 
@@ -329,7 +322,6 @@ class _BaseLayoutTab(QWidget):
         super().__init__()
         self._workbook = workbook
         self._items = []          # [{title, dict, visible}]
-        self._tile_styles = {}    # title -> per-tile style override dict
         self._suspend = False     # block re-render while repopulating
 
         splitter = QSplitter(Qt.Horizontal, self)
@@ -436,52 +428,11 @@ class _BaseLayoutTab(QWidget):
         sform.addRow("DPI:", self._dpi)
         v.addWidget(size_box)
 
-        v.addWidget(self._build_tile_box())
-
         export = QPushButton("Export…")
         export.clicked.connect(self._export)
         v.addWidget(export)
 
         return panel
-
-    def _build_tile_box(self):
-        """Per-tile background / transparency / border controls that act
-        on the plot currently selected in the list."""
-        from .graph import _ColorButton
-        from PyQt5.QtWidgets import QCheckBox
-
-        box = QGroupBox("Selected tile")
-        form = QFormLayout(box)
-        self._tile_face = _ColorButton(_DEFAULT_TILE_STYLE["face"])
-        self._tile_face.clicked.connect(self._on_tile_style_changed)
-        form.addRow("Background:", self._tile_face)
-        self._tile_alpha = QDoubleSpinBox()
-        self._tile_alpha.setRange(0.0, 1.0)
-        self._tile_alpha.setSingleStep(0.05)
-        self._tile_alpha.setDecimals(2)
-        self._tile_alpha.setValue(1.0)
-        self._tile_alpha.valueChanged.connect(self._on_tile_style_changed)
-        form.addRow("Opacity:", self._tile_alpha)
-        self._tile_border = QCheckBox("Show border")
-        self._tile_border.setChecked(True)
-        self._tile_border.toggled.connect(self._on_tile_style_changed)
-        form.addRow(self._tile_border)
-        self._tile_edge = _ColorButton(_DEFAULT_TILE_STYLE["edge"])
-        self._tile_edge.clicked.connect(self._on_tile_style_changed)
-        form.addRow("Border color:", self._tile_edge)
-        self._tile_edge_w = QDoubleSpinBox()
-        self._tile_edge_w.setRange(0.0, 6.0)
-        self._tile_edge_w.setSingleStep(0.5)
-        self._tile_edge_w.setValue(1.0)
-        self._tile_edge_w.valueChanged.connect(self._on_tile_style_changed)
-        form.addRow("Border width:", self._tile_edge_w)
-        clear = QPushButton("Reset tile")
-        clear.clicked.connect(self._clear_tile_style)
-        form.addRow(clear)
-        self._tile_box = box
-        self._list.currentRowChanged.connect(self._on_tile_selected)
-        box.setEnabled(False)
-        return box
 
     def _margin_spin(self, value):
         sb = QDoubleSpinBox()
@@ -522,7 +473,6 @@ class _BaseLayoutTab(QWidget):
             "width_mm": self._width_mm.value(),
             "height_mm": self._height_mm.value(),
             "dpi": self._dpi.value(),
-            "tiles": dict(self._tile_styles),
         }
 
     def apply_settings(self, st):
@@ -550,7 +500,6 @@ class _BaseLayoutTab(QWidget):
             self._height_mm.setValue(
                 float(st.get("height_mm", self._height_mm.value())))
             self._dpi.setValue(int(st.get("dpi", self._dpi.value())))
-            self._tile_styles = dict(st.get("tiles", {}))
         finally:
             self._suspend = False
         self._render()
@@ -615,82 +564,6 @@ class _BaseLayoutTab(QWidget):
     def _visible_items(self):
         return [it for it in self._items if it["visible"]]
 
-    # ── Per-tile style ──────────────────────────────────────────────
-    def _current_title(self):
-        row = self._list.currentRow()
-        if 0 <= row < len(self._items):
-            return self._items[row]["title"]
-        return None
-
-    def _on_tile_selected(self, row):
-        title = self._current_title()
-        self._tile_box.setEnabled(title is not None)
-        if title is None:
-            return
-        st = self._tile_styles.get(title, _DEFAULT_TILE_STYLE)
-        self._suspend = True
-        self._tile_face.set_color(st.get("face", "#ffffff"))
-        self._tile_alpha.setValue(float(st.get("alpha", 1.0)))
-        self._tile_border.setChecked(bool(st.get("border_on", True)))
-        self._tile_edge.set_color(st.get("edge", "#000000"))
-        self._tile_edge_w.setValue(float(st.get("edge_w", 1.0)))
-        self._suspend = False
-
-    def _on_tile_style_changed(self, *args):
-        if self._suspend:
-            return
-        title = self._current_title()
-        if title is None:
-            return
-        self._tile_styles[title] = {
-            "face": self._tile_face.color(),
-            "alpha": self._tile_alpha.value(),
-            "border_on": self._tile_border.isChecked(),
-            "edge": self._tile_edge.color(),
-            "edge_w": self._tile_edge_w.value(),
-        }
-        self._render()
-
-    def _clear_tile_style(self):
-        title = self._current_title()
-        if title is None:
-            return
-        self._tile_styles.pop(title, None)
-        self._on_tile_selected(self._list.currentRow())
-        self._render()
-
-    @staticmethod
-    def _apply_tile_style(fig, ax, st, renderer, pad=0.01):
-        """Draw a background + border rectangle around the tile.
-
-        The tile spans the axes' *tight* bounding box — which includes
-        the tick labels and the axis titles — plus a small pad, so those
-        labels sit inside the border rather than outside it. Drawn in
-        figure coordinates behind the axes; independent of the plot's own
-        facecolor/spines, which are governed elsewhere."""
-        from matplotlib.patches import Rectangle
-
-        bb = ax.get_tightbbox(renderer)
-        bb = bb.transformed(fig.transFigure.inverted())
-        x0 = max(0.0, bb.x0 - pad)
-        y0 = max(0.0, bb.y0 - pad)
-        x1 = min(1.0, bb.x1 + pad)
-        y1 = min(1.0, bb.y1 + pad)
-
-        on = bool(st.get("border_on", True))
-        rect = Rectangle(
-            (x0, y0), x1 - x0, y1 - y0,
-            transform=fig.transFigure,
-            facecolor=st.get("face", "#ffffff"),
-            alpha=float(st.get("alpha", 1.0)),
-            edgecolor=st.get("edge", "#000000") if on else "none",
-            linewidth=float(st.get("edge_w", 1.0)) if on else 0.0,
-            zorder=0,
-        )
-        fig.add_artist(rect)
-        ax.set_zorder(1)
-        ax.patch.set_visible(False)
-
     def _figsize_in(self):
         return (self._width_mm.value() / _MM_PER_IN,
                 self._height_mm.value() / _MM_PER_IN)
@@ -746,7 +619,6 @@ class CombinedLayoutTab(_BaseLayoutTab):
         cols = min(self._cols.value(), n)
         rows = (n + cols - 1) // cols
         order = _FILL_ORDERS[self._fill_order.currentIndex()][1]
-        tiled = []
         for i, it in enumerate(items):
             d = it["dict"]
             if order == "col":
@@ -760,20 +632,10 @@ class CombinedLayoutTab(_BaseLayoutTab):
             except Exception:
                 ax.text(0.5, 0.5, "render error", ha="center",
                         va="center", transform=ax.transAxes)
-            style = self._tile_styles.get(it["title"])
-            if style:
-                tiled.append((ax, style))
         fig.subplots_adjust(
             left=self._m_left.value(), right=self._m_right.value(),
             top=self._m_top.value(), bottom=self._m_bottom.value(),
             wspace=self._wspace.value(), hspace=self._hspace.value())
-        # Tile rectangles span each axes' tight bbox (labels included),
-        # so a render pass is needed first to size the labels.
-        if tiled:
-            self._canvas.draw()
-            renderer = self._canvas.get_renderer()
-            for ax, style in tiled:
-                self._apply_tile_style(fig, ax, style, renderer)
         self._canvas.draw_idle()
 
     def _export(self):
