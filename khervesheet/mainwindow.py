@@ -1155,6 +1155,10 @@ class MainWindow(QMainWindow):
                                         if hasattr(v, 'item'):
                                             st[k] = v.item()
                             cg.attrs['axis_props'] = json.dumps(ap)
+                        # General (figure-level) properties.
+                        if d.get('general_props'):
+                            cg.attrs['general_props'] = json.dumps(
+                                d['general_props'])
                         # Secondary labels.
                         cg.attrs['top_label'] = d.get(
                             'top_label', '')
@@ -1483,6 +1487,12 @@ class MainWindow(QMainWindow):
                         ap_json = cg.attrs.get('axis_props', '')
                         if ap_json:
                             cd["axis_props"] = json.loads(ap_json)
+                        # General (figure-level) properties.
+                        gp_json = cg.attrs.get('general_props', '')
+                        if isinstance(gp_json, bytes):
+                            gp_json = gp_json.decode('utf-8')
+                        if gp_json:
+                            cd["general_props"] = json.loads(gp_json)
                         # Source column mapping.
                         if 'x_col' in cg.attrs:
                             cd["x_col"] = int(cg.attrs['x_col'])

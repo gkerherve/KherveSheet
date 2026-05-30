@@ -442,6 +442,9 @@ class EmbeddedChart(QWidget):
         }
         if self._axis_props:
             d["axis_props"] = self._axis_props
+        gp = getattr(self, '_general_props', None)
+        if gp:
+            d["general_props"] = gp
         if self._keep_ratio:
             d["keep_ratio"] = True
         if self._tight_layout:
@@ -670,6 +673,12 @@ class EmbeddedChart(QWidget):
                 info = TrendlineInfo.from_dict(td)
                 restore_trendline(chart, info)
                 chart._trendlines.append(info)
+        # Restore general (figure-level) properties last, after all
+        # artists exist so the sketch effect applies to every series.
+        gp = d.get("general_props")
+        if gp:
+            from .general_properties import apply_general_state
+            apply_general_state(chart, gp)
         chart._canvas.draw_idle()
         return chart
 
@@ -1048,17 +1057,62 @@ class EmbeddedChart(QWidget):
                 ax.set_ylim(hi, lo)
         self._canvas.draw_idle()
 
-    # ── Axis properties dialog ─────────────────────────────────────
-    SWITCH_TO_PLOT_DETAILS = 3
+    # ── Property dialog suite (General / Series / Axis) ─────────────
+    # The three property dialogs cross-link via footer buttons. A single
+    # dispatch loop keeps them open in sequence so the user can hop
+    # between them without losing changes (each applies before switching).
+    def _open_general_props(self):
+        self._open_props_suite("general")
 
-    def _open_axis_dialog(self, side):
+    def _open_plot_details(self):
+        self._open_props_suite("series")
+
+    def _open_axis_dialog(self, side="Bottom"):
+        self._open_props_suite("axis", side)
+
+    def _open_props_suite(self, start, axis_side="Bottom"):
         from .axis_dialog import AxisPropertiesDialog
-        dlg = AxisPropertiesDialog(self, side)
-        result = dlg.exec_()
-        if result == QDialog.Accepted:
-            dlg.apply_to_chart(self)
-        elif result == self.SWITCH_TO_PLOT_DETAILS:
-            self._open_plot_details()
+        from .general_properties import GeneralPropertiesDialog
+        nxt = start
+        while nxt is not None:
+            if nxt == "general":
+                dlg = GeneralPropertiesDialog(self)
+                res = dlg.exec_()
+                if res == QDialog.Accepted:
+                    dlg.apply_to_chart(self)
+                    nxt = None
+                elif res == GeneralPropertiesDialog.SWITCH_TO_SERIES:
+                    nxt = "series"
+                elif res == GeneralPropertiesDialog.SWITCH_TO_AXIS:
+                    nxt = "axis"
+                else:
+                    nxt = None
+            elif nxt == "series":
+                dlg = PlotDetailsDialog(self)
+                res = dlg.exec_()
+                if res == QDialog.Accepted:
+                    dlg.apply_to_chart(self)
+                    nxt = None
+                elif res == PlotDetailsDialog.SWITCH_TO_AXIS:
+                    nxt = "axis"
+                elif res == PlotDetailsDialog.SWITCH_TO_GENERAL:
+                    nxt = "general"
+                else:
+                    nxt = None
+            elif nxt == "axis":
+                dlg = AxisPropertiesDialog(self, axis_side)
+                res = dlg.exec_()
+                if res == QDialog.Accepted:
+                    dlg.apply_to_chart(self)
+                    nxt = None
+                elif res == AxisPropertiesDialog.SWITCH_TO_PLOT_DETAILS:
+                    nxt = "series"
+                elif res == AxisPropertiesDialog.SWITCH_TO_GENERAL:
+                    nxt = "general"
+                else:
+                    nxt = None
+            else:
+                nxt = None
 
     def paintEvent(self, event):
         """Fill the entire widget with white so grid cells don't bleed."""
@@ -1070,8 +1124,8 @@ class EmbeddedChart(QWidget):
     # ── Context menu ────────────────────────────────────────────────
     def contextMenuEvent(self, event):
         menu = QMenu(self)
-        menu.addAction("Plot Details\u2026", self._open_plot_details)
-        menu.addAction("Properties\u2026", self._open_properties)
+        menu.addAction("General Properties\u2026", self._open_general_props)
+        menu.addAction("Series Properties\u2026", self._open_plot_details)
         menu.addAction("Edit Legend\u2026", self._open_legend_editor)
         menu.addSeparator()
         menu.addAction("Add Trendline\u2026", self._open_trendline_dialog)
@@ -1275,31 +1329,9 @@ class EmbeddedChart(QWidget):
         self._close_chart()
         dlg.show()
 
-    # ── Plot Details dialog ─────────────────────────────────────────
-    def _open_plot_details(self):
-        dlg = PlotDetailsDialog(self)
-        result = dlg.exec_()
-        if result == QDialog.Accepted:
-            dlg.apply_to_chart(self)
-        elif result == PlotDetailsDialog.SWITCH_TO_AXIS:
-            self._open_axis_dialog("Bottom")
-
-    # ── Properties dialog ───────────────────────────────────────────
+    # ── Double-click opens axis properties ─────────────────────────
     def mouseDoubleClickEvent(self, event):
         self._open_axis_dialog("Bottom")
-
-    def _open_properties(self):
-        dlg = ChartPropertiesDialog(self)
-        if dlg.exec_() == QDialog.Accepted:
-            self._apply_properties(dlg)
-
-    def _apply_properties(self, dlg):
-        ax = self._ax
-        ax.set_title(dlg.title_edit.text())
-        ax.set_xlabel(dlg.xlabel_edit.text())
-        ax.set_ylabel(dlg.ylabel_edit.text())
-        ax.grid(dlg.grid_check.isChecked())
-        self._canvas.draw_idle()
 
     # ── Fill between curves ─────────────────────────────────────────
     def apply_fill(self, series_idx, fill_mode, fill_target_idx,
@@ -1696,36 +1728,6 @@ class _ChartWindow(QDialog):
                 pass
 
 
-class ChartPropertiesDialog(QDialog):
-    """Simple chart properties editor."""
-
-    def __init__(self, chart, parent=None):
-        super().__init__(parent or chart)
-        self.setWindowTitle("Chart Properties")
-        self.resize(350, 200)
-
-        form = QFormLayout(self)
-
-        ax = chart._ax
-        self.title_edit = QLineEdit(ax.get_title())
-        self.xlabel_edit = QLineEdit(ax.get_xlabel())
-        self.ylabel_edit = QLineEdit(ax.get_ylabel())
-        self.grid_check = QCheckBox("Show Grid")
-        self.grid_check.setChecked(ax.xaxis.get_gridlines()[0].get_visible()
-                                    if ax.xaxis.get_gridlines() else False)
-
-        form.addRow("Title:", self.title_edit)
-        form.addRow("X Label:", self.xlabel_edit)
-        form.addRow("Y Label:", self.ylabel_edit)
-        form.addRow(self.grid_check)
-
-        bb = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept)
-        bb.rejected.connect(self.reject)
-        form.addRow(bb)
-
-
 # ── Plot Details Dialog ─────────────────────────────────────────────
 # Simplified version of KhervePlot's PlotDetailsDialog — single layer,
 # series list on the left, property tabs on the right.
@@ -1804,11 +1806,11 @@ class _ColorButton(QPushButton):
 
 
 class PlotDetailsDialog(QDialog):
-    """Simplified Plot Details — series list + property tabs."""
+    """Series Properties — per-series list + property tabs."""
 
     def __init__(self, chart, parent=None):
         super().__init__(parent or chart)
-        self.setWindowTitle("Plot Details")
+        self.setWindowTitle("Series Properties")
         self.resize(640, 480)
         self._chart = chart
 
@@ -1850,6 +1852,9 @@ class PlotDetailsDialog(QDialog):
 
         # ── Footer ──────────────────────────────────────────────────
         footer = QHBoxLayout()
+        general_btn = QPushButton("General Properties\u2026")
+        general_btn.clicked.connect(self._open_general_props)
+        footer.addWidget(general_btn)
         axis_btn = QPushButton("Axis Properties\u2026")
         axis_btn.clicked.connect(self._open_axis_props)
         footer.addWidget(axis_btn)
@@ -1889,13 +1894,19 @@ class PlotDetailsDialog(QDialog):
 
         self._tabs.addTab(w, "Data")
 
-    # Custom result code for dialog switching.
+    # Custom result codes for dialog switching.
     SWITCH_TO_AXIS = 2
+    SWITCH_TO_GENERAL = 4
 
     def _open_axis_props(self):
-        """Close Plot Details and signal to open Axis Properties."""
+        """Close Series Properties and signal to open Axis Properties."""
         self.apply_to_chart(self._chart)
         self.done(self.SWITCH_TO_AXIS)
+
+    def _open_general_props(self):
+        """Close Series Properties and signal to open General Properties."""
+        self.apply_to_chart(self._chart)
+        self.done(self.SWITCH_TO_GENERAL)
 
     def _add_series(self):
         """Add a new series from a column range entered by the user."""

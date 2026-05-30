@@ -159,7 +159,10 @@ class AxisPropertiesDialog(QDialog):
 
         # ── Footer ────────────────────────────────────────────────
         footer = QHBoxLayout()
-        pd_btn = QPushButton("Plot Details\u2026")
+        gen_btn = QPushButton("General Properties\u2026")
+        gen_btn.clicked.connect(self._switch_to_general)
+        footer.addWidget(gen_btn)
+        pd_btn = QPushButton("Series Properties\u2026")
         pd_btn.clicked.connect(self._switch_to_plot_details)
         footer.addWidget(pd_btn)
         footer.addStretch()
@@ -1016,13 +1019,19 @@ class AxisPropertiesDialog(QDialog):
 
     # ── Apply ──────────────────────────────────────────────────────
 
-    # Custom result code for dialog switching.
+    # Custom result codes for dialog switching.
     SWITCH_TO_PLOT_DETAILS = 3
+    SWITCH_TO_GENERAL = 4
 
     def _switch_to_plot_details(self):
-        """Apply settings, close, and signal to open Plot Details."""
+        """Apply settings, close, and signal to open Series Properties."""
         self.apply_to_chart(self._chart)
         self.done(self.SWITCH_TO_PLOT_DETAILS)
+
+    def _switch_to_general(self):
+        """Apply settings, close, and signal to open General Properties."""
+        self.apply_to_chart(self._chart)
+        self.done(self.SWITCH_TO_GENERAL)
 
     def _apply_current(self):
         """Apply current direction to the chart without closing."""
