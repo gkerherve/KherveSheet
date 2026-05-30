@@ -975,7 +975,7 @@ class MainWindow(QMainWindow):
         sheet = self._active_sheet()
         if not sheet:
             return
-        self._show_progress(True)
+        self._show_progress(True, "Saving…")
         try:
             with open(path, 'w', newline='', encoding='utf-8') as f:
                 writer = csv.writer(f)
@@ -1124,7 +1124,7 @@ class MainWindow(QMainWindow):
         sheet = self._active_sheet()
         if not sheet:
             return
-        self._show_progress(True)
+        self._show_progress(True, "Saving…")
         try:
             wb = openpyxl.Workbook()
             ws = wb.active
@@ -1161,7 +1161,7 @@ class MainWindow(QMainWindow):
             return
         import json
         import numpy as np
-        self._show_progress(True)
+        self._show_progress(True, "Saving…")
         try:
             wb = self._workbook
             with h5py.File(path, 'w') as f:
@@ -3398,12 +3398,19 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "Statistics", msg)
 
     # ── Progress bar ─────────────────────────────────────────────────
-    def _show_progress(self, show: bool):
+    def _show_progress(self, show: bool, message: str = "Loading…"):
         if show:
             self._progress.setValue(0)
             self._progress.show()
+            self._status_label.setText(message)
+            # Force an immediate paint so the bar is visible during the
+            # slow file-parse phase that runs before the per-row loop.
+            self._progress.repaint()
+            self._status_label.repaint()
+            QApplication.processEvents()
         else:
             self._progress.hide()
+            self._status_label.setText("Ready")
 
     # ── Help ─────────────────────────────────────────────────────────
     def _show_about(self):
