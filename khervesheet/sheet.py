@@ -336,6 +336,7 @@ class InsertColumnCmd(QUndoCommand):
     def undo(self):
         self.sheet.table.blockSignals(True)
         self.sheet.table.removeColumn(self.col)
+        self.sheet._shift_cell_dicts(self.col, -1)
         self.sheet._col_designations = dict(self.old_desigs)
         self.sheet.table.blockSignals(False)
         self.sheet._shift_charts(self.col, -1)
@@ -347,6 +348,7 @@ class InsertColumnCmd(QUndoCommand):
             return
         self.sheet.table.blockSignals(True)
         self.sheet.table.insertColumn(self.col)
+        self.sheet._shift_cell_dicts(self.col, +1)
         # Shift designations.
         new_desigs = {}
         for c, d in self.old_desigs.items():
@@ -363,7 +365,8 @@ class InsertColumnCmd(QUndoCommand):
 class DeleteColumnCmd(QUndoCommand):
     """Undo/redo for deleting a column."""
 
-    def __init__(self, sheet, col, col_data, old_designations):
+    def __init__(self, sheet, col, col_data, old_designations,
+                 col_meta=None):
         super().__init__(
             f"Delete column {col_index_to_letter(col)}")
         self.sheet = sheet
@@ -371,16 +374,19 @@ class DeleteColumnCmd(QUndoCommand):
         # col_data: [(row, text, formula), ...]
         self.col_data = col_data
         self.old_desigs = dict(old_designations)
+        self.col_meta = col_meta or {}
 
     def undo(self):
         self.sheet.table.blockSignals(True)
         self.sheet.table.insertColumn(self.col)
+        self.sheet._shift_cell_dicts(self.col, +1)
         for row, text, formula in self.col_data:
             it = QTableWidgetItem(text)
             self.sheet.table.setItem(row, self.col, it)
             self.sheet._shadow[(row, self.col)] = text
             if formula:
                 self.sheet._cell_formulas[(row, self.col)] = formula
+        self.sheet._restore_column_meta(self.col, self.col_meta)
         self.sheet._col_designations = dict(self.old_desigs)
         self.sheet.table.blockSignals(False)
         self.sheet._shift_charts(self.col, +1)
@@ -392,6 +398,7 @@ class DeleteColumnCmd(QUndoCommand):
             return
         self.sheet.table.blockSignals(True)
         self.sheet.table.removeColumn(self.col)
+        self.sheet._shift_cell_dicts(self.col, -1)
         # Shift designations.
         new_desigs = {}
         for c, d in self.old_desigs.items():
@@ -2088,7 +2095,6 @@ class SheetWidget(QWidget):
 
         menu.addAction("Insert Row Above", self._insert_row_above)
         menu.addAction("Insert Row Below", self._insert_row_below)
-        menu.addAction("Delete Row(s)", self._delete_selected_rows)
         menu.addAction("Add 10 Rows", self._add_10_rows)
 
         menu.addSeparator()
@@ -2416,6 +2422,8 @@ class SheetWidget(QWidget):
         if not sel:
             return
         changes = []
+        old_fmts = {}
+        new_fmts = {}
         sparklines = getattr(self, '_cell_sparklines', {})
         delegate_sp = self._fmt_delegate._sparklines
         notes = getattr(self, '_cell_notes', {})
@@ -2440,6 +2448,18 @@ class SheetWidget(QWidget):
                         if it and (it.flags() & Qt.ItemIsUserCheckable):
                             it.setFlags(it.flags() & ~Qt.ItemIsUserCheckable)
                             it.setData(Qt.CheckStateRole, None)
+                        # Clear cell formatting (fill, font, borders, align).
+                        if (r, c) in self._cell_formats:
+                            old_fmts[(r, c)] = _snapshot_format(
+                                self._cell_formats.get((r, c)))
+                            new_fmts[(r, c)] = None
+                            self._cell_formats.pop((r, c), None)
+                            if it is not None:
+                                it.setBackground(QBrush())
+                                it.setForeground(QBrush())
+                                it.setFont(QFont(self.table.font()))
+                                it.setTextAlignment(
+                                    Qt.AlignLeft | Qt.AlignVCenter)
                         # Clear insert-ops metadata
                         sparklines.pop((r, c), None)
                         delegate_sp.pop((r, c), None)
@@ -2453,9 +2473,16 @@ class SheetWidget(QWidget):
                         self.table.update(idx)
         finally:
             self.table.blockSignals(False)
-        if changes and self._undo_stack:
-            self._undo_stack.push(
-                BulkCellEditCmd(self, changes, "Clear"))
+        if (changes or old_fmts) and self._undo_stack:
+            self._undo_stack.beginMacro("Clear")
+            if changes:
+                self._undo_stack.push(
+                    BulkCellEditCmd(self, changes, "Clear"))
+            if old_fmts:
+                self._undo_stack.push(
+                    FormatCellsCmd(self, old_fmts, new_fmts, "Clear Format"))
+            self._undo_stack.endMacro()
+        self.table.viewport().update()
 
     # ── Row/column operations ────────────────────────────────────────
     def _insert_row_above(self):
@@ -2512,9 +2539,106 @@ class SheetWidget(QWidget):
                 if getattr(chart, "_header_row", False):
                     chart._apply_header_labels()
 
+    def _per_cell_dicts(self):
+        """All (row, col)-keyed dicts that must track column inserts/deletes
+        so fills, borders, fonts, formulas and metadata follow their data."""
+        dicts = [self._cell_formats, self._cell_formulas, self._cell_notes,
+                 self._cell_dropdowns, self._cell_sparklines,
+                 self._cell_links, self._shadow]
+        dg = getattr(self._fmt_delegate, "_sparklines", None)
+        if isinstance(dg, dict):
+            dicts.append(dg)
+        return dicts
+
+    def _shift_cell_dicts(self, at: int, delta: int):
+        """Shift the column index of every per-cell dict when a column is
+        inserted (delta=+1) or removed (delta=-1) at *at*. Mutates each dict
+        in place to preserve the object identity shared with the delegate."""
+        seen = set()
+        for d in self._per_cell_dicts():
+            if d is None or id(d) in seen:
+                continue
+            seen.add(id(d))
+            new_d = {}
+            for (r, c), v in d.items():
+                if delta > 0:
+                    nc = c + delta if c >= at else c
+                else:
+                    if c == at:
+                        continue
+                    nc = c + delta if c > at else c
+                new_d[(r, nc)] = v
+            d.clear()
+            d.update(new_d)
+
+    def _snapshot_column_meta(self, col: int) -> dict:
+        """Snapshot per-cell formatting/metadata for one column so a column
+        delete can be fully undone."""
+        meta = {"formats": {}, "notes": {}, "dropdowns": {},
+                "sparklines": {}, "links": {}}
+        dg = getattr(self._fmt_delegate, "_sparklines", None)
+        sources = {
+            "formats": self._cell_formats,
+            "notes": self._cell_notes,
+            "dropdowns": self._cell_dropdowns,
+            "sparklines": self._cell_sparklines if not isinstance(dg, dict)
+            else dg,
+            "links": self._cell_links,
+        }
+        for name, src in sources.items():
+            for (r, c), v in src.items():
+                if c == col:
+                    meta[name][r] = (_snapshot_format(v)
+                                     if name == "formats" else v)
+        return meta
+
+    def _restore_column_meta(self, col: int, meta: dict):
+        """Restore metadata captured by :meth:`_snapshot_column_meta` and
+        re-apply the visual cell format."""
+        dg = getattr(self._fmt_delegate, "_sparklines", None)
+        targets = {
+            "notes": self._cell_notes,
+            "dropdowns": self._cell_dropdowns,
+            "sparklines": self._cell_sparklines if not isinstance(dg, dict)
+            else dg,
+            "links": self._cell_links,
+        }
+        for name, target in targets.items():
+            for r, v in meta.get(name, {}).items():
+                target[(r, col)] = v
+        for r, cf in meta.get("formats", {}).items():
+            if cf is None:
+                continue
+            self._cell_formats[(r, col)] = cf
+            it = self.table.item(r, col)
+            if it is None:
+                it = QTableWidgetItem("")
+                self.table.setItem(r, col, it)
+            self._apply_format_to_item(it, cf)
+
+    def _apply_format_to_item(self, it, cf):
+        """Paint a CellFormat's item-stored visuals (fill/font/align)."""
+        it.setBackground(QColor(cf.bg_color) if cf.bg_color else QBrush())
+        it.setForeground(QColor(cf.font_color) if cf.font_color else QBrush())
+        if cf.alignment is not None:
+            it.setTextAlignment(cf.alignment)
+        f = it.font()
+        if cf.bold is not None:
+            f.setBold(cf.bold)
+        if cf.italic is not None:
+            f.setItalic(cf.italic)
+        if cf.underline is not None:
+            f.setUnderline(cf.underline)
+        if cf.font_family is not None:
+            f.setFamily(cf.font_family)
+        if cf.font_size is not None:
+            f.setPointSizeF(cf.font_size)
+        it.setFont(f)
+
     def _insert_column(self, col: int):
         old_desigs = dict(self._col_designations)
         self.table.insertColumn(col)
+        self._shift_cell_dicts(col, +1)
         # Shift designations
         new_desigs = {}
         for c, d in old_desigs.items():
@@ -2540,7 +2664,9 @@ class SheetWidget(QWidget):
             formula = self._cell_formulas.get((r, col))
             col_data.append((r, text, formula))
         old_desigs = dict(self._col_designations)
+        col_meta = self._snapshot_column_meta(col)
         self.table.removeColumn(col)
+        self._shift_cell_dicts(col, -1)
         # Shift designations
         new_desigs = {}
         for c, d in old_desigs.items():
@@ -2555,7 +2681,7 @@ class SheetWidget(QWidget):
         self._refresh_headers()
         if self._undo_stack:
             self._undo_stack.push(
-                DeleteColumnCmd(self, col, col_data, old_desigs))
+                DeleteColumnCmd(self, col, col_data, old_desigs, col_meta))
 
     def _set_column_width(self, col: int):
         cur = self.table.columnWidth(col)
