@@ -660,23 +660,22 @@ class _BaseLayoutTab(QWidget):
         self._render()
 
     @staticmethod
-    def _apply_tile_style(fig, ax, st, wspace, hspace):
-        """Draw a background + border rectangle around the tile cell.
+    def _apply_tile_style(fig, ax, st, renderer, pad=0.01):
+        """Draw a background + border rectangle around the tile.
 
-        The tile is the subplot's grid cell expanded by half the
-        inter-plot gap on each side, so it covers the axis-label margin
-        rather than just the plotting area. The rectangle is drawn in
-        figure coordinates behind the axes — independent of the plot's
-        own facecolor/spines, which are governed elsewhere."""
+        The tile spans the axes' *tight* bounding box — which includes
+        the tick labels and the axis titles — plus a small pad, so those
+        labels sit inside the border rather than outside it. Drawn in
+        figure coordinates behind the axes; independent of the plot's own
+        facecolor/spines, which are governed elsewhere."""
         from matplotlib.patches import Rectangle
 
-        pos = ax.get_position()
-        gx = wspace * pos.width / 2.0
-        gy = hspace * pos.height / 2.0
-        x0 = max(0.0, pos.x0 - gx)
-        y0 = max(0.0, pos.y0 - gy)
-        x1 = min(1.0, pos.x1 + gx)
-        y1 = min(1.0, pos.y1 + gy)
+        bb = ax.get_tightbbox(renderer)
+        bb = bb.transformed(fig.transFigure.inverted())
+        x0 = max(0.0, bb.x0 - pad)
+        y0 = max(0.0, bb.y0 - pad)
+        x1 = min(1.0, bb.x1 + pad)
+        y1 = min(1.0, bb.y1 + pad)
 
         on = bool(st.get("border_on", True))
         rect = Rectangle(
@@ -764,15 +763,17 @@ class CombinedLayoutTab(_BaseLayoutTab):
             style = self._tile_styles.get(it["title"])
             if style:
                 tiled.append((ax, style))
-        wspace = self._wspace.value()
-        hspace = self._hspace.value()
         fig.subplots_adjust(
             left=self._m_left.value(), right=self._m_right.value(),
             top=self._m_top.value(), bottom=self._m_bottom.value(),
-            wspace=wspace, hspace=hspace)
-        # Tile rectangles need finalized axes positions, so draw last.
-        for ax, style in tiled:
-            self._apply_tile_style(fig, ax, style, wspace, hspace)
+            wspace=self._wspace.value(), hspace=self._hspace.value())
+        # Tile rectangles span each axes' tight bbox (labels included),
+        # so a render pass is needed first to size the labels.
+        if tiled:
+            self._canvas.draw()
+            renderer = self._canvas.get_renderer()
+            for ax, style in tiled:
+                self._apply_tile_style(fig, ax, style, renderer)
         self._canvas.draw_idle()
 
     def _export(self):
