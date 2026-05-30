@@ -677,6 +677,10 @@ class SheetWidget(QWidget):
         super().__init__()
         self._undo_stack = None  # set by MainWindow after construction
         self._default_format = "General"
+        # When set, _recalc_dependents skips data_changed emissions so
+        # charts are not redrawn on every recalc (used by the Solver,
+        # which recalculates the model hundreds of times).
+        self._suppress_recalc_signals = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1306,8 +1310,9 @@ class SheetWidget(QWidget):
             self._recalc_dependents(dr, dc, visited,
                                     decimals=decimals)
         # Notify charts about columns that changed via formula recalc.
-        for c in changed_cols:
-            self.data_changed.emit(c)
+        if not self._suppress_recalc_signals:
+            for c in changed_cols:
+                self.data_changed.emit(c)
 
     def _set_cell_quiet(self, row, col, text):
         """Set cell text without triggering signals."""

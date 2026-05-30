@@ -677,13 +677,22 @@ class SolverDialog(QDialog):
                     return v - _rhs  # == 0
                 scipy_constraints.append({"type": "eq", "fun": _cfn})
 
+        # Keep the GUI responsive: scipy runs synchronously on the GUI
+        # thread, so pump the event loop periodically. Charts are not
+        # redrawn during the search (signals suppressed) — they refresh
+        # once at the end.
+        def _pump(*_args, **_kwargs):
+            QApplication.processEvents()
+
         # Run solver
         method_name = self._method_combo.currentText()
+        self._sheet._suppress_recalc_signals = True
+        QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
             if method_name == "GRG Nonlinear":
                 result = opt.minimize(
                     _obj, x0, method='SLSQP', bounds=bounds,
-                    constraints=scipy_constraints,
+                    constraints=scipy_constraints, callback=_pump,
                     options={'maxiter': 1000, 'ftol': 1e-12})
             elif method_name == "LP Simplex":
                 # For LP, fall back to SLSQP since linprog needs
@@ -691,7 +700,7 @@ class SolverDialog(QDialog):
                 # from a general spreadsheet model.
                 result = opt.minimize(
                     _obj, x0, method='SLSQP', bounds=bounds,
-                    constraints=scipy_constraints,
+                    constraints=scipy_constraints, callback=_pump,
                     options={'maxiter': 1000, 'ftol': 1e-12})
             elif method_name == "Evolutionary":
                 # differential_evolution needs finite bounds
@@ -716,11 +725,12 @@ class SolverDialog(QDialog):
                             v += 1e6 * cv ** 2
                     return v
                 result = opt.differential_evolution(
-                    _penalised, de_bounds, maxiter=1000, tol=1e-12)
+                    _penalised, de_bounds, maxiter=1000, tol=1e-12,
+                    callback=_pump)
             else:
                 result = opt.minimize(
                     _obj, x0, method='SLSQP', bounds=bounds,
-                    constraints=scipy_constraints)
+                    constraints=scipy_constraints, callback=_pump)
         except Exception as exc:
             # Restore on failure
             for (r, c), txt in original.items():
@@ -728,6 +738,9 @@ class SolverDialog(QDialog):
             QMessageBox.critical(
                 self, "Solver Error", f"Solver failed:\n{exc}")
             return
+        finally:
+            self._sheet._suppress_recalc_signals = False
+            QApplication.restoreOverrideCursor()
 
         if not result.success:
             # Still write the best result found, but warn user.
