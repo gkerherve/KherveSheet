@@ -1876,6 +1876,18 @@ class SheetWidget(QWidget):
         """Expand SUM(A1:A10) style range references."""
         import re
 
+        # Strip one redundant paren pair wrapping a range directly
+        # inside an aggregate, e.g. SUM((A1:A10)) → SUM(A1:A10).
+        expr = re.sub(
+            r'(\b(?:SUMSQ|SUM|AVERAGE|AVG|MEAN|MIN|MAX|COUNTA|COUNT|STDEV)'
+            r'\s*\()\s*\(\s*'
+            r'(\$?[A-Z]+\$?\d+\s*:\s*\$?[A-Z]+\$?\d+)'
+            r'\s*\)',
+            r'\1\2',
+            expr,
+            flags=re.IGNORECASE,
+        )
+
         def _expand_range(m):
             func = m.group(1).lower()
             start_col = m.group(2)
@@ -1897,6 +1909,8 @@ class SheetWidget(QWidget):
 
             if func in ("sum",):
                 return str(sum(vals)) if vals else "0"
+            elif func == "sumsq":
+                return str(sum(v * v for v in vals)) if vals else "0"
             elif func in ("average", "avg", "mean"):
                 return (str(sum(vals) / len(vals))
                         if vals else "0")
@@ -1904,7 +1918,7 @@ class SheetWidget(QWidget):
                 return str(min(vals)) if vals else "0"
             elif func == "max":
                 return str(max(vals)) if vals else "0"
-            elif func == "count":
+            elif func in ("count", "counta"):
                 return str(len(vals))
             elif func == "stdev":
                 if len(vals) < 2:
@@ -1914,7 +1928,7 @@ class SheetWidget(QWidget):
                             / (len(vals) - 1)) ** 0.5)
             return m.group(0)
 
-        pattern = (r'(SUM|AVERAGE|AVG|MEAN|MIN|MAX|COUNT|STDEV)'
+        pattern = (r'(SUMSQ|SUM|AVERAGE|AVG|MEAN|MIN|MAX|COUNTA|COUNT|STDEV)'
                    r'\s*\(\s*'
                    r'\$?([A-Z]+)\$?(\d+)\s*:\s*'
                    r'\$?([A-Z]+)\$?(\d+)\s*\)')
