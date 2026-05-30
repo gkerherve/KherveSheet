@@ -1237,6 +1237,8 @@ class EmbeddedChart(QWidget):
                               lambda: self._export_image("png"))
         export_menu.addAction("Save as PDF\u2026",
                               lambda: self._export_image("pdf"))
+        export_menu.addAction("Save as SVG\u2026",
+                              lambda: self._export_image("svg"))
 
         menu.addSeparator()
         menu.addAction("Update Plot", self._refresh_data)
