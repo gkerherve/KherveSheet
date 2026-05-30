@@ -882,8 +882,11 @@ class EmbeddedChart(QWidget):
 
         self._show_data_active = True
         self._show_data_overlays = overlays
-        # Keep the chart above the range overlays so its opaque white
-        # background hides the highlights where they overlap the chart.
+        # Keep every chart above the range overlays so the column-colour
+        # highlights never bleed over a plot — not just the active one.
+        for chart in getattr(sheet, "_charts", []):
+            if chart is not self:
+                chart.raise_()
         self.raise_()
         if self._handle_overlay.isVisible():
             self._handle_overlay.raise_()
