@@ -1743,6 +1743,38 @@ _MARKERS = [
 ]
 
 
+# Scoped stylesheet that restores the default grey look of the
+# non-native QColorDialog. On Windows there is no native colour dialog,
+# so QColorDialog is always Qt's own widget; under the app-wide
+# stylesheet its internal custom widgets (gradient picker, swatch
+# arrays, preview) otherwise render with black backgrounds.
+_COLOR_DIALOG_QSS = (
+    "QColorDialog { background:#f0f0f0; }"
+    "QColorDialog QWidget { background:#f0f0f0; color:#000000; }"
+    "QColorDialog QLabel { background:transparent; color:#000000; }"
+    "QColorDialog QLineEdit, QColorDialog QSpinBox {"
+    " background:#ffffff; color:#000000; border:1px solid #a0a0a0;"
+    " border-radius:2px; padding:2px 4px; }"
+    "QColorDialog QPushButton {"
+    " background:#e1e1e1; color:#000000; border:1px solid #a0a0a0;"
+    " border-radius:2px; padding:3px 10px; }"
+    "QColorDialog QPushButton:hover {"
+    " background:#e6efff; border-color:#3a78b4; }"
+)
+
+
+def _pick_color(initial, parent):
+    """Open a colour picker with the default grey look and return the
+    chosen colour as a hex string, or None if cancelled."""
+    dlg = QColorDialog(QColor(initial), parent)
+    dlg.setStyleSheet(_COLOR_DIALOG_QSS)
+    if dlg.exec_() == QColorDialog.Accepted:
+        c = dlg.selectedColor()
+        if c.isValid():
+            return c.name()
+    return None
+
+
 class _ColorButton(QPushButton):
     """Small button that shows and edits a colour."""
 
@@ -1765,11 +1797,9 @@ class _ColorButton(QPushButton):
             f"background: {self._color}; border: 1px solid #888;")
 
     def _pick(self):
-        dlg = QColorDialog(QColor(self._color), self)
-        dlg.setStyleSheet("")
-        if dlg.exec_() == QColorDialog.Accepted:
-            c = dlg.selectedColor()
-            self._color = c.name()
+        c = _pick_color(self._color, self)
+        if c is not None:
+            self._color = c
             self._update_style()
 
 
@@ -2657,34 +2687,25 @@ class LegendEditorDialog(QDialog):
 
     # ── Color pickers ──────────────────────────────────────────────
     def _pick_label_color(self):
-        from PyQt5.QtWidgets import QColorDialog
-        dlg = QColorDialog(QColor(self._label_color), self)
-        dlg.setStyleSheet("")
-        if dlg.exec_() == QColorDialog.Accepted:
-            c = dlg.selectedColor()
-            self._label_color = c.name()
+        c = _pick_color(self._label_color, self)
+        if c is not None:
+            self._label_color = c
             self._color_btn.setStyleSheet(
-                f"background-color: {c.name()}; border: 1px solid #888;")
+                f"background-color: {c}; border: 1px solid #888;")
 
     def _pick_edge_color(self):
-        from PyQt5.QtWidgets import QColorDialog
-        dlg = QColorDialog(QColor(self._edge_color), self)
-        dlg.setStyleSheet("")
-        if dlg.exec_() == QColorDialog.Accepted:
-            c = dlg.selectedColor()
-            self._edge_color = c.name()
+        c = _pick_color(self._edge_color, self)
+        if c is not None:
+            self._edge_color = c
             self._edge_btn.setStyleSheet(
-                f"background-color: {c.name()}; border: 1px solid #888;")
+                f"background-color: {c}; border: 1px solid #888;")
 
     def _pick_face_color(self):
-        from PyQt5.QtWidgets import QColorDialog
-        dlg = QColorDialog(QColor(self._face_color), self)
-        dlg.setStyleSheet("")
-        if dlg.exec_() == QColorDialog.Accepted:
-            c = dlg.selectedColor()
-            self._face_color = c.name()
+        c = _pick_color(self._face_color, self)
+        if c is not None:
+            self._face_color = c
             self._face_btn.setStyleSheet(
-                f"background-color: {c.name()}; border: 1px solid #888;")
+                f"background-color: {c}; border: 1px solid #888;")
 
     # ── Apply ──────────────────────────────────────────────────────
     def apply_to_chart(self, chart):
