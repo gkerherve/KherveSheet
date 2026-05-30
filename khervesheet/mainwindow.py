@@ -982,39 +982,114 @@ class MainWindow(QMainWindow):
                 "openpyxl is required for Excel import.\n"
                 "Install with: pip install openpyxl")
             return
-        sheet = self._active_sheet()
-        if not sheet:
-            return
-        sheet.clear_all_data()
         self._show_progress(True)
         try:
-            wb = openpyxl.load_workbook(path, data_only=True)
-            ws = wb.active
-            n_rows = ws.max_row or 0
-            n_cols = ws.max_column or 0
+            # data_only=False keeps the formula text (=SUM(...)); a second
+            # pass with data_only=True provides Excel's last-computed values
+            # so cells display correctly the moment they load, before our
+            # own engine recalculates them.
+            wb_f = openpyxl.load_workbook(path, data_only=False)
+            try:
+                wb_v = openpyxl.load_workbook(path, data_only=True)
+            except Exception:
+                wb_v = None
 
-            sheet.table.blockSignals(True)
-            sheet.table.setColumnCount(n_cols)
-            sheet.table.setRowCount(n_rows)
-            sheet._refresh_headers()
+            wb = self._workbook
+            # Replace the existing sheet tabs with one tab per worksheet.
+            for s in wb.all_sheets():
+                idx = wb.tabs.indexOf(s)
+                if idx >= 0:
+                    wb.tabs.removeTab(idx)
+                    s.deleteLater()
 
-            from PyQt5.QtWidgets import QTableWidgetItem
-            for r in range(n_rows):
-                self._progress.setValue(int(100 * r / max(1, n_rows)))
-                QApplication.processEvents()
-                for c in range(n_cols):
-                    cell = ws.cell(r + 1, c + 1)
-                    val = str(cell.value) if cell.value is not None else ""
-                    sheet.table.setItem(r, c, QTableWidgetItem(val))
-                    sheet._shadow[(r, c)] = val
-            sheet.table.blockSignals(False)
+            titles = wb_f.sheetnames
+            total = sum((wb_f[t].max_row or 0) for t in titles) or 1
+            done = 0
+            first = None
+            for title in titles:
+                ws_f = wb_f[title]
+                ws_v = wb_v[title] if wb_v is not None else None
+                sheet = wb.add_sheet(title)
+                if first is None:
+                    first = sheet
+                done = self._fill_sheet_from_excel(
+                    sheet, ws_f, ws_v, done, total)
 
+            wb.ensure_layout_tabs()
+            self._wire_undo_to_sheets()
+            if first is not None:
+                wb.tabs.setCurrentWidget(first)
             self._status_msg(
-                f"Loaded {n_rows} × {n_cols} from {path}", 5000)
+                f"Loaded {len(titles)} sheet(s) from {path}", 5000)
         except Exception as e:
             QMessageBox.warning(self, "Import Error", str(e))
         finally:
             self._show_progress(False)
+
+    @staticmethod
+    def _excel_value_str(v) -> str:
+        """Format an openpyxl cell value for grid display."""
+        if isinstance(v, bool):
+            return "TRUE" if v else "FALSE"
+        if isinstance(v, float) and v == int(v):
+            return str(int(v))
+        return str(v)
+
+    def _fill_sheet_from_excel(self, sheet, ws_f, ws_v, done, total):
+        """Populate one SheetWidget from a worksheet, preserving
+        formulas.  Returns the running progress counter."""
+        from PyQt5.QtWidgets import QTableWidgetItem
+        n_rows = ws_f.max_row or 0
+        n_cols = ws_f.max_column or 0
+        sheet.table.blockSignals(True)
+        sheet.table.setColumnCount(max(n_cols, 1))
+        sheet.table.setRowCount(max(n_rows, 1))
+        sheet._refresh_headers()
+        uncached = []
+        for r in range(n_rows):
+            done += 1
+            self._progress.setValue(int(100 * done / total))
+            QApplication.processEvents()
+            for c in range(n_cols):
+                fv = ws_f.cell(r + 1, c + 1).value
+                formula = None
+                if isinstance(fv, str) and fv.startswith("="):
+                    formula = fv
+                elif fv is not None:
+                    # Array/data-table formulas carry their text here.
+                    t = getattr(fv, "text", None)
+                    if isinstance(t, str) and t.startswith("="):
+                        formula = t
+                if formula is not None:
+                    sheet._cell_formulas[(r, c)] = formula
+                    sheet._register_deps(r, c, formula)
+                    cached = (ws_v.cell(r + 1, c + 1).value
+                              if ws_v is not None else None)
+                    if cached is not None:
+                        display = self._excel_value_str(cached)
+                    else:
+                        display = str(sheet._evaluate_formula(
+                            formula, r, c, sheet._cell_decimals(r, c)))
+                        uncached.append((r, c))
+                    sheet.table.setItem(r, c, QTableWidgetItem(display))
+                    sheet._shadow[(r, c)] = display
+                else:
+                    val = self._excel_value_str(fv) if fv is not None else ""
+                    sheet.table.setItem(r, c, QTableWidgetItem(val))
+                    sheet._shadow[(r, c)] = val
+        # If Excel never cached values, our engine must compute them; a
+        # second pass resolves simple forward references.
+        for _ in range(2 if uncached else 0):
+            for (r, c) in uncached:
+                fm = sheet._cell_formulas.get((r, c))
+                res = str(sheet._evaluate_formula(
+                    fm, r, c, sheet._cell_decimals(r, c)))
+                it = sheet.table.item(r, c)
+                if it is not None:
+                    it.setText(res)
+                sheet._shadow[(r, c)] = res
+        sheet.table.blockSignals(False)
+        return done
 
     def _save_to_excel(self, path: str):
         try:
