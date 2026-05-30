@@ -660,15 +660,37 @@ class _BaseLayoutTab(QWidget):
         self._render()
 
     @staticmethod
-    def _apply_tile_style(ax, st):
-        ax.patch.set_facecolor(st.get("face", "#ffffff"))
-        ax.patch.set_alpha(float(st.get("alpha", 1.0)))
+    def _apply_tile_style(fig, ax, st, wspace, hspace):
+        """Draw a background + border rectangle around the tile cell.
+
+        The tile is the subplot's grid cell expanded by half the
+        inter-plot gap on each side, so it covers the axis-label margin
+        rather than just the plotting area. The rectangle is drawn in
+        figure coordinates behind the axes — independent of the plot's
+        own facecolor/spines, which are governed elsewhere."""
+        from matplotlib.patches import Rectangle
+
+        pos = ax.get_position()
+        gx = wspace * pos.width / 2.0
+        gy = hspace * pos.height / 2.0
+        x0 = max(0.0, pos.x0 - gx)
+        y0 = max(0.0, pos.y0 - gy)
+        x1 = min(1.0, pos.x1 + gx)
+        y1 = min(1.0, pos.y1 + gy)
+
         on = bool(st.get("border_on", True))
-        for sp in ax.spines.values():
-            sp.set_visible(on)
-            if on:
-                sp.set_edgecolor(st.get("edge", "#000000"))
-                sp.set_linewidth(float(st.get("edge_w", 1.0)))
+        rect = Rectangle(
+            (x0, y0), x1 - x0, y1 - y0,
+            transform=fig.transFigure,
+            facecolor=st.get("face", "#ffffff"),
+            alpha=float(st.get("alpha", 1.0)),
+            edgecolor=st.get("edge", "#000000") if on else "none",
+            linewidth=float(st.get("edge_w", 1.0)) if on else 0.0,
+            zorder=0,
+        )
+        fig.add_artist(rect)
+        ax.set_zorder(1)
+        ax.patch.set_visible(False)
 
     def _figsize_in(self):
         return (self._width_mm.value() / _MM_PER_IN,
@@ -725,6 +747,7 @@ class CombinedLayoutTab(_BaseLayoutTab):
         cols = min(self._cols.value(), n)
         rows = (n + cols - 1) // cols
         order = _FILL_ORDERS[self._fill_order.currentIndex()][1]
+        tiled = []
         for i, it in enumerate(items):
             d = it["dict"]
             if order == "col":
@@ -740,11 +763,16 @@ class CombinedLayoutTab(_BaseLayoutTab):
                         va="center", transform=ax.transAxes)
             style = self._tile_styles.get(it["title"])
             if style:
-                self._apply_tile_style(ax, style)
+                tiled.append((ax, style))
+        wspace = self._wspace.value()
+        hspace = self._hspace.value()
         fig.subplots_adjust(
             left=self._m_left.value(), right=self._m_right.value(),
             top=self._m_top.value(), bottom=self._m_bottom.value(),
-            wspace=self._wspace.value(), hspace=self._hspace.value())
+            wspace=wspace, hspace=hspace)
+        # Tile rectangles need finalized axes positions, so draw last.
+        for ax, style in tiled:
+            self._apply_tile_style(fig, ax, style, wspace, hspace)
         self._canvas.draw_idle()
 
     def _export(self):
