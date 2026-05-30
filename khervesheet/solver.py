@@ -47,29 +47,27 @@ def _parse_ref(ref: str) -> Optional[Tuple[int, int]]:
 
 
 def _parse_range(text: str) -> List[Tuple[int, int]]:
-    """Parse a cell reference or range like 'A1:A5' → list of (row, col)."""
-    text = text.strip()
-    if ':' in text:
-        parts = text.split(':')
-        if len(parts) != 2:
-            return []
-        start = _parse_ref(parts[0])
-        end = _parse_ref(parts[1])
-        if start is None or end is None:
-            return []
-        r1, c1 = start
-        r2, c2 = end
-        cells = []
-        for r in range(min(r1, r2), max(r1, r2) + 1):
-            for c in range(min(c1, c2), max(c1, c2) + 1):
-                cells.append((r, c))
-        return cells
-    # Comma-separated refs
-    cells = []
+    """Parse one or more comma-separated cell references / ranges into a
+    flat list of (row, col). Handles 'A1', 'A1:A5', and
+    'A1:A5,C1:D3' (multiple non-contiguous blocks)."""
+    cells: List[Tuple[int, int]] = []
     for part in text.split(','):
         part = part.strip()
+        if not part:
+            continue
         if ':' in part:
-            cells.extend(_parse_range(part))
+            ends = part.split(':')
+            if len(ends) != 2:
+                continue
+            start = _parse_ref(ends[0])
+            end = _parse_ref(ends[1])
+            if start is None or end is None:
+                continue
+            r1, c1 = start
+            r2, c2 = end
+            for r in range(min(r1, r2), max(r1, r2) + 1):
+                for c in range(min(c1, c2), max(c1, c2) + 1):
+                    cells.append((r, c))
         else:
             rc = _parse_ref(part)
             if rc:
@@ -82,8 +80,19 @@ def _ref_str(row: int, col: int) -> str:
     return f"${col_index_to_letter(col)}${row + 1}"
 
 
+def _range_ref_str(rng) -> str:
+    """One QTableWidgetSelectionRange → '$A$1' or '$A$1:$B$3'."""
+    tl = _ref_str(rng.topRow(), rng.leftColumn())
+    if rng.rowCount() == 1 and rng.columnCount() == 1:
+        return tl
+    br = _ref_str(rng.bottomRow(), rng.rightColumn())
+    return f"{tl}:{br}"
+
+
 def _selection_ref_str(sheet: SheetWidget) -> str:
-    """Build a ref string from the sheet's current selection."""
+    """Build a ref string from the sheet's current selection. Multiple
+    non-contiguous ranges (Ctrl-selected) are joined with commas, so the
+    variable-cell field can collect several blocks Excel-style."""
     sel = sheet.table.selectedRanges()
     if not sel:
         r = sheet.table.currentRow()
@@ -91,12 +100,7 @@ def _selection_ref_str(sheet: SheetWidget) -> str:
         if r >= 0 and c >= 0:
             return _ref_str(r, c)
         return ""
-    rng = sel[0]
-    tl = _ref_str(rng.topRow(), rng.leftColumn())
-    if rng.rowCount() == 1 and rng.columnCount() == 1:
-        return tl
-    br = _ref_str(rng.bottomRow(), rng.rightColumn())
-    return f"{tl}:{br}"
+    return ",".join(_range_ref_str(rng) for rng in sel)
 
 
 # ── Pickable line-edit (highlights when listening) ──────────────────
@@ -521,8 +525,11 @@ class SolverDialog(QDialog):
             QMessageBox.warning(self, "Solver", "Invalid objective cell.")
             return
 
-        # Parse variable cells
-        var_cells = _parse_range(self._var_edit.text())
+        # Parse variable cells (may span several comma-separated ranges).
+        # Deduplicate while preserving order so overlapping ranges don't
+        # create duplicate optimiser variables.
+        parsed = _parse_range(self._var_edit.text())
+        var_cells = list(dict.fromkeys(parsed))
         if not var_cells:
             QMessageBox.warning(self, "Solver",
                                 "Invalid variable cell range.")
