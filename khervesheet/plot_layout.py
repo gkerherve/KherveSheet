@@ -56,6 +56,13 @@ _SIZE_PRESETS = [
 # How subplots are filled into the grid.
 _FILL_ORDERS = [("By row", "row"), ("By column", "col")]
 
+# Per-tile style override. Applied on top of a chart's own appearance
+# only when an entry exists for that tile in ``_tile_styles``.
+_DEFAULT_TILE_STYLE = {
+    "face": "#ffffff", "alpha": 1.0,
+    "border_on": True, "edge": "#000000", "edge_w": 1.0,
+}
+
 _MM_PER_IN = 25.4
 
 
@@ -322,6 +329,7 @@ class _BaseLayoutTab(QWidget):
         super().__init__()
         self._workbook = workbook
         self._items = []          # [{title, dict, visible}]
+        self._tile_styles = {}    # title -> per-tile style override dict
         self._suspend = False     # block re-render while repopulating
 
         splitter = QSplitter(Qt.Horizontal, self)
@@ -428,11 +436,52 @@ class _BaseLayoutTab(QWidget):
         sform.addRow("DPI:", self._dpi)
         v.addWidget(size_box)
 
+        v.addWidget(self._build_tile_box())
+
         export = QPushButton("Export…")
         export.clicked.connect(self._export)
         v.addWidget(export)
 
         return panel
+
+    def _build_tile_box(self):
+        """Per-tile background / transparency / border controls that act
+        on the plot currently selected in the list."""
+        from .graph import _ColorButton
+        from PyQt5.QtWidgets import QCheckBox
+
+        box = QGroupBox("Selected tile")
+        form = QFormLayout(box)
+        self._tile_face = _ColorButton(_DEFAULT_TILE_STYLE["face"])
+        self._tile_face.clicked.connect(self._on_tile_style_changed)
+        form.addRow("Background:", self._tile_face)
+        self._tile_alpha = QDoubleSpinBox()
+        self._tile_alpha.setRange(0.0, 1.0)
+        self._tile_alpha.setSingleStep(0.05)
+        self._tile_alpha.setDecimals(2)
+        self._tile_alpha.setValue(1.0)
+        self._tile_alpha.valueChanged.connect(self._on_tile_style_changed)
+        form.addRow("Opacity:", self._tile_alpha)
+        self._tile_border = QCheckBox("Show border")
+        self._tile_border.setChecked(True)
+        self._tile_border.toggled.connect(self._on_tile_style_changed)
+        form.addRow(self._tile_border)
+        self._tile_edge = _ColorButton(_DEFAULT_TILE_STYLE["edge"])
+        self._tile_edge.clicked.connect(self._on_tile_style_changed)
+        form.addRow("Border color:", self._tile_edge)
+        self._tile_edge_w = QDoubleSpinBox()
+        self._tile_edge_w.setRange(0.0, 6.0)
+        self._tile_edge_w.setSingleStep(0.5)
+        self._tile_edge_w.setValue(1.0)
+        self._tile_edge_w.valueChanged.connect(self._on_tile_style_changed)
+        form.addRow("Border width:", self._tile_edge_w)
+        clear = QPushButton("Reset tile")
+        clear.clicked.connect(self._clear_tile_style)
+        form.addRow(clear)
+        self._tile_box = box
+        self._list.currentRowChanged.connect(self._on_tile_selected)
+        box.setEnabled(False)
+        return box
 
     def _margin_spin(self, value):
         sb = QDoubleSpinBox()
@@ -473,6 +522,7 @@ class _BaseLayoutTab(QWidget):
             "width_mm": self._width_mm.value(),
             "height_mm": self._height_mm.value(),
             "dpi": self._dpi.value(),
+            "tiles": dict(self._tile_styles),
         }
 
     def apply_settings(self, st):
@@ -500,6 +550,7 @@ class _BaseLayoutTab(QWidget):
             self._height_mm.setValue(
                 float(st.get("height_mm", self._height_mm.value())))
             self._dpi.setValue(int(st.get("dpi", self._dpi.value())))
+            self._tile_styles = dict(st.get("tiles", {}))
         finally:
             self._suspend = False
         self._render()
@@ -564,6 +615,61 @@ class _BaseLayoutTab(QWidget):
     def _visible_items(self):
         return [it for it in self._items if it["visible"]]
 
+    # ── Per-tile style ──────────────────────────────────────────────
+    def _current_title(self):
+        row = self._list.currentRow()
+        if 0 <= row < len(self._items):
+            return self._items[row]["title"]
+        return None
+
+    def _on_tile_selected(self, row):
+        title = self._current_title()
+        self._tile_box.setEnabled(title is not None)
+        if title is None:
+            return
+        st = self._tile_styles.get(title, _DEFAULT_TILE_STYLE)
+        self._suspend = True
+        self._tile_face.set_color(st.get("face", "#ffffff"))
+        self._tile_alpha.setValue(float(st.get("alpha", 1.0)))
+        self._tile_border.setChecked(bool(st.get("border_on", True)))
+        self._tile_edge.set_color(st.get("edge", "#000000"))
+        self._tile_edge_w.setValue(float(st.get("edge_w", 1.0)))
+        self._suspend = False
+
+    def _on_tile_style_changed(self, *args):
+        if self._suspend:
+            return
+        title = self._current_title()
+        if title is None:
+            return
+        self._tile_styles[title] = {
+            "face": self._tile_face.color(),
+            "alpha": self._tile_alpha.value(),
+            "border_on": self._tile_border.isChecked(),
+            "edge": self._tile_edge.color(),
+            "edge_w": self._tile_edge_w.value(),
+        }
+        self._render()
+
+    def _clear_tile_style(self):
+        title = self._current_title()
+        if title is None:
+            return
+        self._tile_styles.pop(title, None)
+        self._on_tile_selected(self._list.currentRow())
+        self._render()
+
+    @staticmethod
+    def _apply_tile_style(ax, st):
+        ax.patch.set_facecolor(st.get("face", "#ffffff"))
+        ax.patch.set_alpha(float(st.get("alpha", 1.0)))
+        on = bool(st.get("border_on", True))
+        for sp in ax.spines.values():
+            sp.set_visible(on)
+            if on:
+                sp.set_edgecolor(st.get("edge", "#000000"))
+                sp.set_linewidth(float(st.get("edge_w", 1.0)))
+
     def _figsize_in(self):
         return (self._width_mm.value() / _MM_PER_IN,
                 self._height_mm.value() / _MM_PER_IN)
@@ -588,7 +694,9 @@ class CombinedLayoutTab(_BaseLayoutTab):
         self._figure = Figure(figsize=(7.2, 5.4), dpi=100)
         self._canvas = FigureCanvas(self._figure)
         scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
+        # Keep the panel at its chosen size; don't stretch with the window.
+        scroll.setWidgetResizable(False)
+        scroll.setAlignment(Qt.AlignCenter)
         scroll.setWidget(self._canvas)
         self._scroll = scroll
         return scroll
@@ -601,9 +709,10 @@ class CombinedLayoutTab(_BaseLayoutTab):
         items = self._visible_items()
         w_in, h_in = self._figsize_in()
         fig.set_size_inches(w_in, h_in)
-        dpi = self._dpi.value()
         # Show on screen at a viewable scale; export uses full DPI.
-        self._canvas.setMinimumSize(int(w_in * 96), int(h_in * 96))
+        # Fixed (not minimum) so the panel keeps its size when the window
+        # is resized rather than stretching to fill the viewport.
+        self._canvas.setFixedSize(int(w_in * 96), int(h_in * 96))
         if not items:
             ax = fig.add_subplot(111)
             ax.text(0.5, 0.5, "No plots yet — create charts in the sheets,\n"
@@ -629,6 +738,9 @@ class CombinedLayoutTab(_BaseLayoutTab):
             except Exception:
                 ax.text(0.5, 0.5, "render error", ha="center",
                         va="center", transform=ax.transAxes)
+            style = self._tile_styles.get(it["title"])
+            if style:
+                self._apply_tile_style(ax, style)
         fig.subplots_adjust(
             left=self._m_left.value(), right=self._m_right.value(),
             top=self._m_top.value(), bottom=self._m_bottom.value(),
