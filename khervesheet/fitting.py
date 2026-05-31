@@ -265,6 +265,11 @@ class FittingDialog(QDialog):
         # Actions
         arow = QHBoxLayout()
         self._fit_btn = QPushButton("Fit")
+        self._fit_help_btn = QPushButton("?")
+        self._fit_help_btn.setFixedWidth(28)
+        self._fit_help_btn.setToolTip(
+            "How to constrain peaks against one another")
+        self._fit_help_btn.clicked.connect(self._show_constraint_help)
         self._apply_btn = QPushButton("Apply to Sheet")
         self._apply_btn.setEnabled(False)
         self._chart_chk = QCheckBox("Create chart")
@@ -274,6 +279,7 @@ class FittingDialog(QDialog):
             "points and every fitted curve as a line")
         self._close_btn = QPushButton("Close")
         arow.addWidget(self._fit_btn)
+        arow.addWidget(self._fit_help_btn)
         arow.addWidget(self._apply_btn)
         arow.addWidget(self._chart_chk)
         arow.addStretch()
@@ -374,6 +380,69 @@ class FittingDialog(QDialog):
         view = QTextEdit()
         view.setReadOnly(True)
         view.setHtml("".join(html))
+        lay.addWidget(view)
+        btn = QPushButton("Close")
+        btn.clicked.connect(dlg.accept)
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(btn)
+        lay.addLayout(row)
+        dlg.exec_()
+
+    def _show_constraint_help(self):
+        """Explain how to constrain peaks against one another."""
+        html = """
+<html><body style='font-family:sans-serif;'>
+<h3>Constraining peaks against one another</h3>
+
+<p>Each added function has its own row of parameters. Two kinds of
+limits are available:</p>
+
+<h4>1. Per-peak bounds</h4>
+<p>Select a peak in the list, then set <b>Min</b> / <b>Max</b> on any of
+its parameters, or untick <b>Vary</b> to hold a parameter fixed. These
+apply only to the selected peak, so every peak can be bounded
+differently.</p>
+
+<h4>2. Tying peaks together (the <i>Expr</i> column)</h4>
+<p>Type a formula in the <b>Expr</b> column to make a parameter follow
+another one. Reference any parameter as
+<code>&lt;prefix&gt;_&lt;name&gt;</code>, where the prefix is shown in
+the function list (e.g. <code>[p0]</code>, <code>[p1]</code>). When a
+parameter has an expression it is computed, not fitted (its Min/Max/Vary
+are ignored).</p>
+
+<p><b>Examples</b> (peak&nbsp;1 = <code>p0</code>, peak&nbsp;2 =
+<code>p1</code>):</p>
+<table cellspacing='0' cellpadding='4' border='1'
+       style='border-collapse:collapse;'>
+<tr style='background:#eef4fb;'><th>On parameter</th><th>Expr</th>
+<th>Effect</th></tr>
+<tr><td>p1 center</td><td><code>p0_center + 1.5</code></td>
+<td>Peak 2 sits a fixed 1.5 above peak 1 (spin-orbit splitting).</td></tr>
+<tr><td>p1 amplitude</td><td><code>0.5 * p0_amplitude</code></td>
+<td>Fixed 2:1 area ratio between the two peaks.</td></tr>
+<tr><td>p1 sigma</td><td><code>p0_sigma</code></td>
+<td>Both peaks share the same width.</td></tr>
+<tr><td>p1 fwhm</td><td><code>p0_fwhm</code></td>
+<td>Equal FWHM across peaks.</td></tr>
+</table>
+
+<p>You can use any parameter of any peak and ordinary arithmetic
+(<code>+ - * /</code>, parentheses, powers). Circular references (A
+depends on B and B on A) are not allowed.</p>
+
+<p><b>Tip:</b> to keep a doublet's separation and ratio fixed while
+fitting the pair as one, give peak&nbsp;2 an <code>Expr</code> on its
+centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
+</body></html>"""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Constraining Peaks — Help")
+        dlg.resize(640, 520)
+        lay = QVBoxLayout(dlg)
+        view = QTextEdit()
+        view.setReadOnly(True)
+        view.setHtml(html)
         lay.addWidget(view)
         btn = QPushButton("Close")
         btn.clicked.connect(dlg.accept)
