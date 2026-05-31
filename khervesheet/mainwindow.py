@@ -239,8 +239,10 @@ class MainWindow(QMainWindow):
         insert_menu.addAction("Image\u2026", self._insert_image)
 
         # Shapes submenu (full gallery, grouped by category).
-        shapes_menu = insert_menu.addMenu("Shapes")
-        self._populate_shapes_menu(shapes_menu)
+        shapes_menu = self._make_shape_gallery()
+        shapes_menu.setTitle("Shapes")
+        shapes_menu.setIcon(icons.shapes_button_icon(24))
+        insert_menu.addMenu(shapes_menu)
 
         # Sparkline.
         insert_menu.addAction("Sparkline\u2026", self._insert_sparkline)
@@ -590,9 +592,7 @@ class MainWindow(QMainWindow):
         self._shapes_btn.setIcon(icons.shapes_button_icon(28))
         self._shapes_btn.setToolTip("Insert Shape")
         self._shapes_btn.setPopupMode(QToolButton.InstantPopup)
-        shapes_tb_menu = QMenu(self._shapes_btn)
-        self._populate_shapes_menu(shapes_tb_menu)
-        self._shapes_btn.setMenu(shapes_tb_menu)
+        self._shapes_btn.setMenu(self._make_shape_gallery())
         plot_bar.addWidget(self._shapes_btn)
 
         # ── Symbol insertion button ──────────────────────────────
@@ -2985,19 +2985,11 @@ class MainWindow(QMainWindow):
             self._undo_stack.push(InsertImageCmd(sheet, img, label))
         self._status_msg(label, 3000)
 
-    def _populate_shapes_menu(self, menu):
-        """Fill *menu* with the shape gallery grouped into Excel-style
-        categories (Lines, Rectangles, Basic Shapes, ...)."""
-        from . import shape_defs
-        for cat in shape_defs.CATEGORY_ORDER:
-            entries = shape_defs.shapes_in_category(cat)
-            if not entries:
-                continue
-            sub = menu.addMenu(cat)
-            for stype, slabel in entries:
-                sub.addAction(
-                    icons.shape_icon(stype, 24), slabel,
-                    lambda _=False, t=stype: self._insert_shape(t))
+    def _make_shape_gallery(self):
+        """A drop-down gallery of every shape, grouped by category in a
+        multi-column icon grid (Excel-style)."""
+        from .shape_gallery import ShapeGalleryMenu
+        return ShapeGalleryMenu(self._insert_shape, self)
 
     def _insert_shape(self, shape_type="rectangle"):
         """Create an EmbeddedShape on the active sheet (undoable)."""

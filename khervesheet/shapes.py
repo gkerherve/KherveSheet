@@ -236,10 +236,30 @@ class EmbeddedShape(QWidget):
 
     # ── Painting ──────────────────────────────────────────────────────
 
+    def _content_rect(self):
+        """Rect the shape is drawn into.  When rotated, it is shrunk so
+        the rotated shape's bounding box still fits inside the widget and
+        nothing (e.g. an arrowhead) gets clipped at the edges."""
+        inner = QRectF(self.rect().adjusted(_PAD, _PAD, -_PAD, -_PAD))
+        if not self._rotation:
+            return inner
+        import math
+        th = math.radians(self._rotation)
+        cs, sn = abs(math.cos(th)), abs(math.sin(th))
+        w, h = inner.width(), inner.height()
+        bw = w * cs + h * sn
+        bh = w * sn + h * cs
+        f = min(w / bw if bw else 1.0, h / bh if bh else 1.0)
+        if f >= 1.0:
+            return inner
+        nw, nh = w * f, h * f
+        c = inner.center()
+        return QRectF(c.x() - nw / 2, c.y() - nh / 2, nw, nh)
+
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
-        inner = self.rect().adjusted(_PAD, _PAD, -_PAD, -_PAD)
+        inner = self._content_rect()
 
         # Apply rotation around the widget centre for the shape content.
         p.save()
@@ -260,7 +280,7 @@ class EmbeddedShape(QWidget):
         else:
             p.setBrush(Qt.NoBrush)
 
-        shape_defs.draw_shape(p, QRectF(inner), st)
+        shape_defs.draw_shape(p, inner, st)
 
         # Text (all shapes), hidden while the inline editor is open.
         if self._text and self._inline_editor is None:
