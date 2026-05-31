@@ -448,25 +448,45 @@ class CellFormatDelegate(QStyledItemDelegate):
     def _draw_borders(self, painter, rect, cf):
         """Draw cell format borders."""
         painter.save()
-        painter.setClipRect(rect)
+        # Expand clip rect so thick borders aren't clipped at cell edges
+        max_w = max(
+            (cf.border_top.width if cf.border_top else 0),
+            (cf.border_bottom.width if cf.border_bottom else 0),
+            (cf.border_left.width if cf.border_left else 0),
+            (cf.border_right.width if cf.border_right else 0),
+        )
+        margin = int(max_w / 2) + 1
+        painter.setClipRect(rect.adjusted(-margin, -margin, margin, margin))
         if cf.border_top:
-            painter.setPen(QPen(QColor(cf.border_top.color),
-                                cf.border_top.width,
-                                Qt.PenStyle(cf.border_top.style)))
-            painter.drawLine(rect.topLeft(), rect.topRight())
+            pen = QPen(QColor(cf.border_top.color),
+                       cf.border_top.width,
+                       Qt.PenStyle(cf.border_top.style))
+            pen.setCapStyle(Qt.FlatCap)
+            painter.setPen(pen)
+            y = rect.top()
+            painter.drawLine(rect.left(), y, rect.right(), y)
         if cf.border_bottom:
-            painter.setPen(QPen(QColor(cf.border_bottom.color),
-                                cf.border_bottom.width,
-                                Qt.PenStyle(cf.border_bottom.style)))
-            painter.drawLine(rect.bottomLeft(), rect.bottomRight())
+            pen = QPen(QColor(cf.border_bottom.color),
+                       cf.border_bottom.width,
+                       Qt.PenStyle(cf.border_bottom.style))
+            pen.setCapStyle(Qt.FlatCap)
+            painter.setPen(pen)
+            y = rect.bottom()
+            painter.drawLine(rect.left(), y, rect.right(), y)
         if cf.border_left:
-            painter.setPen(QPen(QColor(cf.border_left.color),
-                                cf.border_left.width,
-                                Qt.PenStyle(cf.border_left.style)))
-            painter.drawLine(rect.topLeft(), rect.bottomLeft())
+            pen = QPen(QColor(cf.border_left.color),
+                       cf.border_left.width,
+                       Qt.PenStyle(cf.border_left.style))
+            pen.setCapStyle(Qt.FlatCap)
+            painter.setPen(pen)
+            x = rect.left()
+            painter.drawLine(x, rect.top(), x, rect.bottom())
         if cf.border_right:
-            painter.setPen(QPen(QColor(cf.border_right.color),
-                                cf.border_right.width,
-                                Qt.PenStyle(cf.border_right.style)))
-            painter.drawLine(rect.topRight(), rect.bottomRight())
+            pen = QPen(QColor(cf.border_right.color),
+                       cf.border_right.width,
+                       Qt.PenStyle(cf.border_right.style))
+            pen.setCapStyle(Qt.FlatCap)
+            painter.setPen(pen)
+            x = rect.right()
+            painter.drawLine(x, rect.top(), x, rect.bottom())
         painter.restore()
