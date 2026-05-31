@@ -17,6 +17,7 @@ the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 """
 
+import re
 from typing import Optional
 
 import numpy as np
@@ -49,6 +50,16 @@ def _range_to_col_rows(text: str):
     cols = sorted({c for _, c in cells})
     rows = sorted({r for r, _ in cells})
     return cols[0], rows[0], rows[-1]
+
+
+def _expand_expr(expr: str, param_name: str) -> str:
+    """Expand a bare peak reference in a constraint expression to the
+    parameter on the same row.  In the 'center' row, ``p0`` means
+    ``p0_center``; ``0.5*p1`` on the amplitude row means
+    ``0.5*p1_amplitude``.  Fully-qualified names (``p0_sigma``) are left
+    untouched."""
+    return re.sub(r"\bp(\d+)(?!\w)",
+                  lambda m: f"p{m.group(1)}_{param_name}", expr)
 
 
 def _fmt_bound(v):
@@ -438,20 +449,26 @@ the function list (e.g. <code>[p0]</code>, <code>[p1]</code>). When a
 parameter has an expression it is computed, not fitted (its Min/Max/Vary
 are ignored).</p>
 
+<p><b>Shorthand:</b> a bare peak name refers to the <i>same parameter on
+that peak</i> — so on the <i>centre</i> row, <code>p0</code> means
+<code>p0_center</code>, and on the <i>amplitude</i> row <code>p1</code>
+means <code>p1_amplitude</code>. Write the full
+<code>p0_sigma</code> form only to reference a different parameter.</p>
+
 <p><b>Examples</b> (peak&nbsp;1 = <code>p0</code>, peak&nbsp;2 =
 <code>p1</code>):</p>
 <table cellspacing='0' cellpadding='4' border='1'
        style='border-collapse:collapse;'>
 <tr style='background:#eef4fb;'><th>On parameter</th><th>Expr</th>
 <th>Effect</th></tr>
-<tr><td>p1 center</td><td><code>p0_center + 1.5</code></td>
+<tr><td>p1 center</td><td><code>p0 + 1.5</code></td>
 <td>Peak 2 sits a fixed 1.5 above peak 1 (spin-orbit splitting).</td></tr>
-<tr><td>p1 amplitude</td><td><code>0.5 * p0_amplitude</code></td>
+<tr><td>p1 amplitude</td><td><code>0.5 * p0</code></td>
 <td>Fixed 2:1 area ratio between the two peaks.</td></tr>
-<tr><td>p1 sigma</td><td><code>p0_sigma</code></td>
+<tr><td>p1 sigma</td><td><code>p0</code></td>
 <td>Both peaks share the same width.</td></tr>
-<tr><td>p1 fwhm</td><td><code>p0_fwhm</code></td>
-<td>Equal FWHM across peaks.</td></tr>
+<tr><td>p1 center</td><td><code>p0_center + 2*p0_sigma</code></td>
+<td>Mix parameters explicitly when needed.</td></tr>
 </table>
 
 <p>You can use any parameter of any peak and ordinary arithmetic
@@ -586,9 +603,11 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
                 self._table.setItem(r, 4, vary_it)
                 expr_it = QTableWidgetItem(spec.get("expr", ""))
                 expr_it.setToolTip(
-                    "Tie this parameter to others, e.g. "
-                    "p0_center+1.5 or 0.5*p0_amplitude (peak prefixes "
-                    "are shown in the list above)")
+                    "Tie this parameter to others. A bare peak name uses "
+                    "this same row, so on the centre row 'p0' means "
+                    "p0_center; e.g. p0+1.5 or 0.5*p0. Use p0_sigma to "
+                    "reference a different parameter. Prefixes are shown "
+                    "in the list above.")
                 self._table.setItem(r, 5, expr_it)
         self._table.blockSignals(False)
 
@@ -715,7 +734,11 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
                 expr = spec.get("expr", "").strip()
                 if expr:
                     # Tie this parameter to others (inter-peak constraint).
-                    params[full].set(value=spec["value"], expr=expr)
+                    # A bare peak reference (p0) expands to this row's
+                    # parameter on that peak (p0_center on the centre row).
+                    params[full].set(
+                        value=spec["value"],
+                        expr=_expand_expr(expr, name))
                 else:
                     params[full].set(
                         value=spec["value"], min=spec["min"],
@@ -943,6 +966,15 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
             lines.append(f"  {name:16s} = {par.value:.6g}{err}")
         self._report.setPlainText("\n".join(lines))
 
+    def _last_used_column(self) -> int:
+        """Rightmost column that holds any value anywhere on the sheet
+        (-1 if the sheet is empty)."""
+        maxc = -1
+        for (_r, c), v in getattr(self._sheet, "_shadow", {}).items():
+            if v not in ("", None) and c > maxc:
+                maxc = c
+        return maxc
+
     # ── Write results back to the sheet ─────────────────────────────
 
     def _apply_to_sheet(self):
@@ -962,7 +994,10 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
         out_cols.append(("fit_total", total))
         out_cols.append(("fit_residual", resid))
 
-        start_col = ycol + 2
+        # Place the results a couple of columns past the last column that
+        # holds any data, so they never overwrite the source data (or a
+        # previous fit's output).
+        start_col = max(ycol + 2, self._last_used_column() + 2)
         need_cols = start_col + len(out_cols)
         if self._sheet.table.columnCount() < need_cols:
             self._sheet.table.setColumnCount(need_cols)
