@@ -264,7 +264,14 @@ class SolverDialog(QDialog):
         self._active_edit: Optional[_PickLineEdit] = None
 
         self._build_ui()
-        self._pre_fill()
+
+        # Restore saved state if available, otherwise pre-fill from
+        # the current selection.
+        saved = getattr(sheet, '_solver_config', {})
+        if saved:
+            self._load_state(saved)
+        else:
+            self._pre_fill()
 
         # Listen to sheet selection changes
         self._sheet.table.itemSelectionChanged.connect(
@@ -342,6 +349,12 @@ class SolverDialog(QDialog):
         self._var_edit.setPlaceholderText(
             "Click a cell or drag a range, e.g. $A$1:$A$5")
         var_row.addWidget(self._var_edit, 1)
+        self._var_clear_btn = QToolButton()
+        self._var_clear_btn.setText("\u00d7")  # ×
+        self._var_clear_btn.setToolTip("Clear variable cells")
+        self._var_clear_btn.setFixedSize(24, 24)
+        self._var_clear_btn.clicked.connect(self._var_edit.clear)
+        var_row.addWidget(self._var_clear_btn)
         layout.addLayout(var_row)
 
         # --- Constraints ---
@@ -500,6 +513,45 @@ class SolverDialog(QDialog):
         except (ValueError, TypeError):
             return None
 
+    # ── State persistence ─────────────────────────────────────────
+
+    def _get_state(self) -> dict:
+        """Return all dialog fields as a JSON-serialisable dict."""
+        return {
+            "objective": self._obj_edit.text(),
+            "to_mode": self._btn_group.checkedId(),  # 0=max,1=min,2=val
+            "target_value": self._target_edit.text(),
+            "var_cells": self._var_edit.text(),
+            "constraints": [
+                {"ref": c.cell_ref, "op": c.op, "rhs": c.rhs}
+                for c in self._constraints
+            ],
+            "nonneg": self._nonneg_chk.isChecked(),
+            "method": self._method_combo.currentIndex(),
+        }
+
+    def _load_state(self, state: dict):
+        """Populate dialog fields from a previously saved state dict."""
+        self._obj_edit.setText(state.get("objective", ""))
+        to_mode = state.get("to_mode", 1)
+        btn = self._btn_group.button(to_mode)
+        if btn:
+            btn.setChecked(True)
+        self._target_edit.setText(state.get("target_value", ""))
+        self._var_edit.setText(state.get("var_cells", ""))
+        self._constraints.clear()
+        self._constr_list.clear()
+        for cd in state.get("constraints", []):
+            c = Constraint(cd["ref"], cd["op"], cd["rhs"])
+            self._constraints.append(c)
+            self._constr_list.addItem(str(c))
+        self._nonneg_chk.setChecked(state.get("nonneg", True))
+        self._method_combo.setCurrentIndex(state.get("method", 0))
+
+    def _save_to_sheet(self):
+        """Persist current dialog state onto the sheet object."""
+        self._sheet._solver_config = self._get_state()
+
     # ── Cleanup ─────────────────────────────────────────────────────
 
     def _disconnect_sheet(self):
@@ -510,10 +562,12 @@ class SolverDialog(QDialog):
             pass
 
     def closeEvent(self, ev):
+        self._save_to_sheet()
         self._disconnect_sheet()
         super().closeEvent(ev)
 
     def reject(self):
+        self._save_to_sheet()
         self._disconnect_sheet()
         super().reject()
 

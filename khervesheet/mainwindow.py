@@ -1467,6 +1467,11 @@ class MainWindow(QMainWindow):
                         eqg = sg.create_group(f"equation_{ei2}")
                         eqg.attrs['data'] = json.dumps(eqn.to_dict())
 
+                    # Solver configuration.
+                    solver_cfg = getattr(sheet, '_solver_config', {})
+                    if solver_cfg:
+                        sg.attrs['solver_config'] = json.dumps(solver_cfg)
+
             self._status_msg(f"Saved to {path}", 5000)
             # Auto-commit for version history.
             self._auto_commit(path)
@@ -1822,6 +1827,13 @@ class MainWindow(QMainWindow):
                             deferred_equations.append(json.loads(edat))
                     if deferred_equations:
                         sheet._deferred_equations = deferred_equations
+
+                    # Solver configuration.
+                    scfg = sg.attrs.get('solver_config', '')
+                    if isinstance(scfg, bytes):
+                        scfg = scfg.decode('utf-8')
+                    if scfg:
+                        sheet._solver_config = json.loads(scfg)
 
                 wb.tabs.setCurrentIndex(0)
                 self.setCentralWidget(wb)

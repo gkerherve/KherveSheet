@@ -770,6 +770,7 @@ class SheetWidget(QWidget):
         self._cell_dropdowns: dict = {}
         self._cell_sparklines: dict = {}
         self._cell_links: dict = {}
+        self._solver_config: dict = {}
         self._fmt_delegate._notes = self._cell_notes
         self._fmt_delegate._dropdowns = self._cell_dropdowns
         self._note_popup = None  # floating note widget
