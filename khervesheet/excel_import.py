@@ -15,8 +15,191 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 import numpy as np
+from PyQt5.QtCore import Qt
 
+from .cellformat import BorderSpec, CellFormat
 from .sheet import col_index_to_letter
+
+
+# ── Cell formatting (fill, font, borders, alignment) ───────────────────
+
+# Default Office theme palette, ordered by the *style* theme index
+# (0=background1/lt1, 1=text1/dk1, 2=lt2, 3=dk2, 4..9=accent1..6,
+# 10=hlink, 11=folHlink).  Used as a fallback when the workbook theme
+# can't be parsed.
+_DEFAULT_THEME = [
+    "#FFFFFF", "#000000", "#E7E6E6", "#44546A",
+    "#4472C4", "#ED7D31", "#A5A5A5", "#FFC000",
+    "#5B9BD5", "#70AD47", "#0563C1", "#954F72",
+]
+
+_BORDER_MAP = {
+    "thin": (Qt.SolidLine, 1.0),
+    "medium": (Qt.SolidLine, 2.0),
+    "thick": (Qt.SolidLine, 3.0),
+    "dashed": (Qt.DashLine, 1.0),
+    "mediumDashed": (Qt.DashLine, 2.0),
+    "dotted": (Qt.DotLine, 1.0),
+    "double": (Qt.SolidLine, 2.5),
+    "hair": (Qt.SolidLine, 0.5),
+    "dashDot": (Qt.DashDotLine, 1.0),
+    "dashDotDot": (Qt.DashDotDotLine, 1.0),
+}
+
+_ALIGN_MAP = {
+    "left": Qt.AlignLeft,
+    "center": Qt.AlignHCenter,
+    "centerContinuous": Qt.AlignHCenter,
+    "right": Qt.AlignRight,
+    "justify": Qt.AlignJustify,
+}
+
+
+def _argb_to_hex(s):
+    """'00FFFF99'/'FFFF0000'/'000000' -> '#RRGGBB' (alpha dropped)."""
+    if not isinstance(s, str):
+        return None
+    if len(s) == 8:
+        s = s[2:]
+    if len(s) == 6:
+        return "#" + s.upper()
+    return None
+
+
+def _apply_tint(hex_color, tint):
+    """Lighten/darken a #RRGGBB color by an OpenXML tint factor."""
+    if not tint:
+        return hex_color
+    try:
+        r = int(hex_color[1:3], 16)
+        g = int(hex_color[3:5], 16)
+        b = int(hex_color[5:7], 16)
+    except (ValueError, IndexError):
+        return hex_color
+
+    def adj(c):
+        c = c * (1 + tint) if tint < 0 else c * (1 - tint) + 255 * tint
+        return max(0, min(255, int(round(c))))
+
+    return f"#{adj(r):02X}{adj(g):02X}{adj(b):02X}"
+
+
+def build_theme_palette(wb):
+    """Parse the workbook's theme colour scheme into the indexed list
+    used by style theme references.  Falls back to the Office default."""
+    raw = getattr(wb, "loaded_theme", None)
+    if not raw:
+        return list(_DEFAULT_THEME)
+    try:
+        ns = {"a": "http://schemas.openxmlformats.org/drawingml/2006/main"}
+        root = ET.fromstring(raw)
+        scheme = root.find(".//a:clrScheme", ns)
+        by_name = {}
+        for child in scheme:
+            name = child.tag.split("}")[-1]
+            srgb = child.find("a:srgbClr", ns)
+            sysc = child.find("a:sysClr", ns)
+            if srgb is not None:
+                by_name[name] = "#" + srgb.get("val").upper()
+            elif sysc is not None:
+                by_name[name] = "#" + (
+                    sysc.get("lastClr") or "000000").upper()
+        order = ["lt1", "dk1", "lt2", "dk2", "accent1", "accent2",
+                 "accent3", "accent4", "accent5", "accent6",
+                 "hlink", "folHlink"]
+        pal = [by_name.get(n) or _DEFAULT_THEME[i]
+               for i, n in enumerate(order)]
+        return pal
+    except Exception:
+        return list(_DEFAULT_THEME)
+
+
+def _color_hex(color, palette):
+    """Resolve an openpyxl Color (rgb/theme/indexed) to '#RRGGBB'."""
+    if color is None:
+        return None
+    ctype = getattr(color, "type", None)
+    if ctype == "rgb":
+        return _argb_to_hex(getattr(color, "rgb", None))
+    if ctype == "theme":
+        try:
+            idx = int(color.theme)
+        except (TypeError, ValueError):
+            return None
+        if 0 <= idx < len(palette):
+            return _apply_tint(palette[idx], float(getattr(color, "tint", 0)
+                                                  or 0))
+        return None
+    if ctype == "indexed":
+        from openpyxl.styles.colors import COLOR_INDEX
+        try:
+            idx = int(color.indexed)
+        except (TypeError, ValueError):
+            return None
+        if 0 <= idx < len(COLOR_INDEX):
+            return _argb_to_hex(COLOR_INDEX[idx])
+    return None
+
+
+def _border_spec(side, palette):
+    style = getattr(side, "style", None) if side is not None else None
+    if not style:
+        return None
+    qstyle, width = _BORDER_MAP.get(style, (Qt.SolidLine, 1.0))
+    col = _color_hex(getattr(side, "color", None), palette) or "#000000"
+    return BorderSpec(style=int(qstyle), color=col, width=width)
+
+
+def cell_format_from_xl(cell, palette):
+    """Build a CellFormat from an openpyxl cell's style, or None when
+    the cell carries no non-default visual formatting."""
+    cf = CellFormat()
+    used = False
+
+    f = getattr(cell, "font", None)
+    if f is not None:
+        if f.bold:
+            cf.bold = True
+            used = True
+        if f.italic:
+            cf.italic = True
+            used = True
+        if f.underline:
+            cf.underline = True
+            used = True
+        fc = _color_hex(f.color, palette)
+        if fc and fc != "#000000":
+            cf.font_color = fc
+            used = True
+
+    fill = getattr(cell, "fill", None)
+    if fill is not None and getattr(fill, "patternType", None) == "solid":
+        bg = _color_hex(fill.fgColor, palette)
+        if bg:
+            cf.bg_color = bg
+            used = True
+
+    al = getattr(cell, "alignment", None)
+    if al is not None:
+        if al.horizontal in _ALIGN_MAP:
+            cf.alignment = int(_ALIGN_MAP[al.horizontal] | Qt.AlignVCenter)
+            used = True
+        if al.wrap_text:
+            cf.wrap_text = True
+            used = True
+
+    b = getattr(cell, "border", None)
+    if b is not None:
+        for side, attr in (("top", "border_top"),
+                           ("bottom", "border_bottom"),
+                           ("left", "border_left"),
+                           ("right", "border_right")):
+            spec = _border_spec(getattr(b, side, None), palette)
+            if spec is not None:
+                setattr(cf, attr, spec)
+                used = True
+
+    return cf if used else None
 
 
 # ── Chart import (via openpyxl chart objects) ──────────────────────────

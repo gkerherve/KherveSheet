@@ -1023,6 +1023,9 @@ class MainWindow(QMainWindow):
                     wb.tabs.removeTab(idx)
                     s.deleteLater()
 
+            from . import excel_import
+            theme_palette = excel_import.build_theme_palette(wb_f)
+
             titles = wb_f.sheetnames
             total = sum((wb_f[t].max_row or 0) for t in titles) or 1
             done = 0
@@ -1036,7 +1039,7 @@ class MainWindow(QMainWindow):
                 if first is None:
                     first = sheet
                 done = self._fill_sheet_from_excel(
-                    sheet, ws_f, ws_v, done, total)
+                    sheet, ws_f, ws_v, done, total, theme_palette)
 
             wb.ensure_layout_tabs()
             self._wire_undo_to_sheets()
@@ -1069,10 +1072,12 @@ class MainWindow(QMainWindow):
             return str(int(v))
         return str(v)
 
-    def _fill_sheet_from_excel(self, sheet, ws_f, ws_v, done, total):
+    def _fill_sheet_from_excel(self, sheet, ws_f, ws_v, done, total,
+                               theme_palette=None):
         """Populate one SheetWidget from a worksheet, preserving
         formulas.  Returns the running progress counter."""
         from PyQt5.QtWidgets import QTableWidgetItem
+        from . import excel_import
         n_rows = ws_f.max_row or 0
         n_cols = ws_f.max_column or 0
         sheet.table.blockSignals(True)
@@ -1116,6 +1121,13 @@ class MainWindow(QMainWindow):
                     val = self._excel_value_str(fv) if fv is not None else ""
                     sheet.table.setItem(r, c, QTableWidgetItem(val))
                     sheet._shadow[(r, c)] = val
+                # Import visual formatting (fill, font, borders, align).
+                cf = excel_import.cell_format_from_xl(xl_cell, theme_palette)
+                if cf is not None:
+                    sheet._cell_formats[(r, c)] = cf
+                    it = sheet.table.item(r, c)
+                    if it is not None:
+                        sheet._apply_format_to_item(it, cf)
         # If Excel never cached values, our engine must compute them; a
         # second pass resolves simple forward references.
         for _ in range(2 if uncached else 0):
