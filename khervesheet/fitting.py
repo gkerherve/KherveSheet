@@ -175,9 +175,17 @@ class FittingDialog(QDialog):
         # changes (typed or picked from the sheet).
         self._x_edit.textChanged.connect(self._preview_data)
         self._y_edit.textChanged.connect(self._preview_data)
-        sel = _selection_ref_str(self._sheet)
-        if sel:
-            self._y_edit.setText(sel)
+        # Restore the previous session if this sheet was fitted before;
+        # otherwise pre-fill the Y range from the current selection.
+        saved = getattr(sheet, "_fit_config", None)
+        if saved:
+            self._restore_state(saved)
+        else:
+            sel = _selection_ref_str(self._sheet)
+            if sel:
+                self._y_edit.setText(sel)
+        if self._peaks:
+            self._show_peak_params(0)
         self._preview_data()
 
     # ── Cell-pick machinery ─────────────────────────────────────────
@@ -758,6 +766,7 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
         self._draw(x_full, y_full)
         self._write_report(result, x_full, y_full)
         self._apply_btn.setEnabled(True)
+        self._save_to_sheet()  # remember settings/params in the file
 
     def _build_fit_arrays(self, x_full, bg_key, result):
         finite = np.isfinite(x_full)
@@ -958,17 +967,34 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
         if self._sheet.table.columnCount() < need_cols:
             self._sheet.table.setColumnCount(need_cols)
 
-        write_header = r0 > 0
+        # Decide where the column headers go. If the first row of the Y
+        # selection is a text header (non-numeric), the fit headers sit on
+        # that same row; if it's numeric data, put them in the row above
+        # (when there is one).
+        def _is_number(t):
+            try:
+                float(t)
+                return True
+            except (TypeError, ValueError):
+                return False
+
+        if not _is_number(self._sheet.cell_text(r0, ycol)):
+            header_row = r0          # selection includes a text header
+        elif r0 > 0:
+            header_row = r0 - 1      # header sits just above the data
+        else:
+            header_row = None        # data starts at the very top row
+
         changes = []
         for j, (header, arr) in enumerate(out_cols):
             c = start_col + j
-            if write_header:
-                old = self._sheet.cell_text(r0 - 1, c)
-                changes.append((r0 - 1, c, old, header))
+            if header_row is not None:
+                old = self._sheet.cell_text(header_row, c)
+                changes.append((header_row, c, old, header))
             for k, v in enumerate(arr):
-                if not np.isfinite(v):
-                    continue
                 r = r0 + k
+                if r == header_row or not np.isfinite(v):
+                    continue
                 old = self._sheet.cell_text(r, c)
                 changes.append((r, c, old, f"{v:.6g}"))
 
@@ -1029,6 +1055,58 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
                 chart.add_series(cx, cy, header, "Line", x_col=xcol,
                                  y_col=c, row_start=r0, row_end=r1)
 
+    # ── State persistence (remembered in the .ksheet file) ──────────
+
+    def _get_state(self) -> dict:
+        """Capture everything the dialog needs to be restored later."""
+        return {
+            "x": self._x_edit.text(),
+            "y": self._y_edit.text(),
+            "background": self._bg_combo.currentData(),
+            "range_lo": self._range_lo,
+            "range_hi": self._range_hi,
+            "create_chart": self._chart_chk.isChecked(),
+            "custom": dict(self._custom_store),
+            "peaks": [
+                {"key": pk["func"].key, "params": pk["params"]}
+                for pk in self._peaks
+            ],
+        }
+
+    def _restore_state(self, state: dict):
+        """Rebuild the dialog from a saved state dict."""
+        self._custom_store.update(state.get("custom", {}) or {})
+        self._refresh_function_combo()
+        by_key = {f.key: f for f in self._functions}
+
+        self._x_edit.setText(state.get("x", ""))
+        self._y_edit.setText(state.get("y", ""))
+        bg = state.get("background")
+        if bg is not None:
+            i = self._bg_combo.findData(bg)
+            if i >= 0:
+                self._bg_combo.setCurrentIndex(i)
+        self._range_lo = state.get("range_lo")
+        self._range_hi = state.get("range_hi")
+        self._chart_chk.setChecked(bool(state.get("create_chart", True)))
+
+        self._peaks = []
+        self._peak_list.clear()
+        for i, pkd in enumerate(state.get("peaks", [])):
+            func = by_key.get(pkd.get("key"))
+            if func is None:
+                continue
+            prefix = f"p{len(self._peaks)}_"
+            self._peaks.append({"func": func, "prefix": prefix,
+                                "params": pkd.get("params", {})})
+            self._peak_list.addItem(
+                f"{len(self._peaks)}: {func.label}  [{prefix.rstrip('_')}]")
+        if self._peaks:
+            self._peak_list.setCurrentRow(0)
+
+    def _save_to_sheet(self):
+        self._sheet._fit_config = self._get_state()
+
     # ── Cleanup ─────────────────────────────────────────────────────
 
     def _disconnect(self):
@@ -1039,9 +1117,11 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
             pass
 
     def closeEvent(self, ev):
+        self._save_to_sheet()
         self._disconnect()
         super().closeEvent(ev)
 
     def reject(self):
+        self._save_to_sheet()
         self._disconnect()
         super().reject()

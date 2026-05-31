@@ -1540,6 +1540,11 @@ class MainWindow(QMainWindow):
                     if solver_cfg:
                         sg.attrs['solver_config'] = json.dumps(solver_cfg)
 
+                    # Curve Fitting configuration (peaks, ranges, etc.).
+                    fit_cfg = getattr(sheet, '_fit_config', {})
+                    if fit_cfg:
+                        sg.attrs['fit_config'] = json.dumps(fit_cfg)
+
             self._status_msg(f"Saved to {path}", 5000)
             # Auto-commit for version history.
             self._auto_commit(path)
@@ -1902,6 +1907,18 @@ class MainWindow(QMainWindow):
                         scfg = scfg.decode('utf-8')
                     if scfg:
                         sheet._solver_config = json.loads(scfg)
+
+                    # Curve Fitting configuration.
+                    fcfg = sg.attrs.get('fit_config', '')
+                    if isinstance(fcfg, bytes):
+                        fcfg = fcfg.decode('utf-8')
+                    if fcfg:
+                        cfg = json.loads(fcfg)
+                        sheet._fit_config = cfg
+                        # Restore custom functions so they're available
+                        # the moment the dialog reopens.
+                        if cfg.get("custom"):
+                            sheet._fit_custom = dict(cfg["custom"])
 
                 wb.tabs.setCurrentIndex(0)
                 self.setCentralWidget(wb)
