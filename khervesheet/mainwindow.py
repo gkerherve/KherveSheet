@@ -1971,6 +1971,10 @@ class MainWindow(QMainWindow):
         s = self._active_sheet()
         if not s:
             return
+        shp = self._selected_shape()
+        if shp is not None:
+            shp._delete()
+            return
         sel = getattr(s, '_selected_chart', None)
         if sel:
             sel._close_chart()
