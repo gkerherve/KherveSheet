@@ -38,6 +38,10 @@ def _is_closed(shape_type) -> bool:
     return not shape_defs.is_line(shape_type)
 
 
+# Cross-sheet clipboard for copy/paste of a shape (a to_dict() payload).
+_shape_clipboard = None
+
+
 # Backward-compatible export: the full gallery now lives in shape_defs.
 SHAPE_LABELS = [(k, v["label"]) for k, v in shape_defs.SHAPES.items()]
 

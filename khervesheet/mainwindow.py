@@ -1851,6 +1851,15 @@ class MainWindow(QMainWindow):
         s = self._active_sheet()
         if not s:
             return
+        from . import shapes as _sh
+        shp = self._selected_shape()
+        if shp is not None:
+            _sh._shape_clipboard = shp.to_dict()
+            from . import graph as _g
+            _g._chart_clipboard = None
+            shp._delete()
+            self._status_msg("Shape cut", 2000)
+            return
         sel = getattr(s, '_selected_chart', None)
         if sel:
             from . import graph as _g
@@ -1870,6 +1879,14 @@ class MainWindow(QMainWindow):
         s = self._active_sheet()
         if not s:
             return
+        from . import shapes as _sh
+        shp = self._selected_shape()
+        if shp is not None:
+            _sh._shape_clipboard = shp.to_dict()
+            from . import graph as _g
+            _g._chart_clipboard = None
+            self._status_msg("Shape copied", 2000)
+            return
         sel = getattr(s, '_selected_chart', None)
         if sel:
             from . import graph as _g
@@ -1880,8 +1897,10 @@ class MainWindow(QMainWindow):
                     for sr in sel._series
                 ],
             }
+            _sh._shape_clipboard = None
             self._status_msg("Chart copied", 2000)
         else:
+            _sh._shape_clipboard = None
             s._copy_selection()
 
     def _paste(self):
@@ -1911,6 +1930,25 @@ class MainWindow(QMainWindow):
                     first_chart.add_series(x, y, sr["label"], sr["plot_type"])
             _g._chart_clipboard = None
             self._status_msg("Chart pasted", 2000)
+            return
+        # Check for a copied shape.
+        from . import shapes as _sh
+        sc = getattr(_sh, '_shape_clipboard', None)
+        if sc:
+            from .shapes import EmbeddedShape, InsertShapeCmd
+            if not hasattr(s, '_shapes'):
+                s._shapes = []
+            viewport = s.table.viewport()
+            shape = EmbeddedShape.from_dict(sc, viewport)
+            shape.move(int(sc.get("pos_x", 60)) + 20,
+                       int(sc.get("pos_y", 60)) + 20)
+            shape.show()
+            shape.raise_()
+            s._shapes.append(shape)
+            if self._undo_stack is not None:
+                self._undo_stack.push(
+                    InsertShapeCmd(s, shape, "Paste Shape"))
+            self._status_msg("Shape pasted", 2000)
             return
         # Check for image in system clipboard.
         clipboard = QApplication.clipboard()
@@ -2626,6 +2664,16 @@ class MainWindow(QMainWindow):
             sheet._ensure_columns_fill_viewport()
 
     # ── Bring forward / send backward ────────────────────────────────
+    def _selected_shape(self):
+        """Return the currently selected EmbeddedShape, if any."""
+        s = self._active_sheet()
+        if not s:
+            return None
+        for shp in getattr(s, '_shapes', []):
+            if getattr(shp, '_selected', False):
+                return shp
+        return None
+
     def _selected_overlay(self):
         """Return the currently selected chart or image widget, if any."""
         s = self._active_sheet()

@@ -3253,6 +3253,12 @@ class SheetWidget(QWidget):
                 prev._set_selected(False)
                 self._selected_chart = None
 
+            # Deselect any selected shape when clicking on the grid.
+            for shp in getattr(self, '_shapes', []):
+                if getattr(shp, '_selected', False):
+                    shp._selected = False
+                    shp.update()
+
             # Capture inline editor state NOW, before Qt closes it.
             _live_editor = self._find_inline_editor()
             if (_live_editor and _live_editor.text().startswith("=")
