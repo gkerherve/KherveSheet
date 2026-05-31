@@ -151,6 +151,7 @@ class FittingDialog(QDialog):
         self._result = None          # last lmfit ModelResult
         self._fit_arrays = None      # (x_full, labels, comps, bg, total)
         self._fit_ctx = None         # ranges used for the last fit
+        self._data_bg_full = None    # computed data background (x_full)
         self._peaks = []             # list of peak dicts
         self._cur_peak = -1          # index into _peaks shown in editor
         # Custom functions persist on the sheet for the session.
@@ -589,9 +590,9 @@ class FittingDialog(QDialog):
         x, y = x_full[mask], y_full[mask]
 
         bg_key = self._bg_combo.currentData()
-        y_target = y
-        if fm.is_data_background(bg_key):
-            y_target = y - fm.data_background(bg_key, x, y)
+        is_data = fm.is_data_background(bg_key)
+        is_active = fm.is_active_background(bg_key)
+        reverse = bg_key.endswith("_rev")
 
         # Build composite model and parameter set.
         comp = None
@@ -618,12 +619,33 @@ class FittingDialog(QDialog):
                         value=spec["value"], min=spec["min"],
                         max=spec["max"], vary=spec["vary"], expr="")
         if deg is not None and deg >= 0:
-            params["bg_c0"].set(value=float(np.nanmin(y_target)))
+            params["bg_c0"].set(value=float(np.nanmin(y)))
             for d in range(1, deg + 1):
                 params[f"bg_c{d}"].set(value=0.0)
 
+        self._data_bg_full = None
         try:
-            result = comp.fit(y_target, params, x=x)
+            if is_data:
+                bg = fm.data_background(bg_key, x, y)
+                if is_active:
+                    # Refine the Shirley from the fitted peak model until
+                    # the background stops changing (or 12 passes).
+                    tol = 1e-4 * (float(np.ptp(y)) + 1e-9)
+                    for _ in range(12):
+                        result = comp.fit(y - bg, params, x=x)
+                        params = result.params
+                        new_bg = fm.active_shirley_background(
+                            x, y, result.best_fit, reverse=reverse)
+                        done = np.max(np.abs(new_bg - bg)) <= tol
+                        bg = new_bg
+                        if done:
+                            break
+                result = comp.fit(y - bg, params, x=x)
+                bg_full = np.full(len(x_full), np.nan)
+                bg_full[mask] = bg
+                self._data_bg_full = bg_full
+            else:
+                result = comp.fit(y, params, x=x)
         except Exception as exc:
             QMessageBox.critical(self, "Curve Fitting",
                                  f"Fit failed:\n{exc}")
@@ -660,9 +682,11 @@ class FittingDialog(QDialog):
             arr[~finite] = np.nan
             labels.append(f"{pk['func'].label} {i + 1}")
             arrays.append(arr)
-        if fm.is_data_background(bg_key):
-            yf = np.nan_to_num(self._read_xy(silent=True)[1])
-            bg = fm.data_background(bg_key, xf, yf)
+        if self._data_bg_full is not None:
+            # Use the background actually computed during the fit (the
+            # active variants depend on the peak model, so they can't be
+            # recomputed from the data alone).
+            bg = self._data_bg_full.copy()
             bg[~finite] = np.nan
         elif "bg_" in comps:
             bg = _as_array(comps["bg_"]).copy()

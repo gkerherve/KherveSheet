@@ -411,11 +411,15 @@ BACKGROUNDS = [
     ("poly3", "Polynomial (3)", 3),
     ("shirley", "Shirley (XPS)", None),
     ("shirley_rev", "Shirley (reversed)", None),
+    ("active_shirley", "Active Shirley (XPS)", None),
+    ("active_shirley_rev", "Active Shirley (reversed)", None),
     ("als", "Asymmetric Least Squares", None),
 ]
 
 _BG_DEGREE = {k: deg for k, _, deg in BACKGROUNDS}
-_DATA_BG = {"shirley", "shirley_rev", "als"}
+_DATA_BG = {"shirley", "shirley_rev", "active_shirley",
+            "active_shirley_rev", "als"}
+_ACTIVE_BG = {"active_shirley", "active_shirley_rev"}
 
 
 def background_degree(key: str):
@@ -428,16 +432,53 @@ def is_data_background(key: str) -> bool:
     return key in _DATA_BG
 
 
+def is_active_background(key: str) -> bool:
+    """Active backgrounds are recomputed from the fitted peak model each
+    iteration (handled by the fitting dialog's outer loop)."""
+    return key in _ACTIVE_BG
+
+
 def data_background(key: str, x, y):
     """Compute a data-derived background array, or None if *key* is not
-    one (Shirley in either direction, or asymmetric least squares)."""
-    if key == "shirley":
+    one.  Active Shirley is seeded here from the data; the dialog then
+    refines it from the peak model."""
+    if key in ("shirley", "active_shirley"):
         return shirley_background(x, y, reverse=False)
-    if key == "shirley_rev":
+    if key in ("shirley_rev", "active_shirley_rev"):
         return shirley_background(x, y, reverse=True)
     if key == "als":
         return als_background(x, y)
     return None
+
+
+def active_shirley_background(x, y, peaks, reverse: bool = False):
+    """Active Shirley: the step is proportional to the integrated area of
+    the *fitted peak model* (smooth, noise-free) rather than the raw
+    data, anchored at the data endpoints.  Recomputed each fit iteration
+    as the peaks change."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    p = np.asarray(peaks, dtype=float)
+    n = len(y)
+    if n < 2:
+        return np.zeros_like(y)
+    order = np.argsort(x)
+    ys, ps = y[order], p[order]
+    if reverse:
+        ys, ps = ys[::-1], ps[::-1]
+    y_lo, y_hi = ys[0], ys[-1]
+    above = np.clip(ps, 0.0, None)
+    cum = np.concatenate(([0.0], np.cumsum((above[:-1] + above[1:]) / 2.0)))
+    total = cum[-1]
+    if total <= 0:
+        bg = np.linspace(y_lo, y_hi, n)
+    else:
+        bg = y_lo + (y_hi - y_lo) * (cum / total)
+    if reverse:
+        bg = bg[::-1]
+    out = np.empty(n)
+    out[order] = bg
+    return out
 
 
 def shirley_background(x, y, max_iter: int = 50, tol: float = 1e-6,
