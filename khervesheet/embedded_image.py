@@ -308,7 +308,6 @@ class EmbeddedImage(QWidget):
                 self._drag_origin = ev.globalPos()
                 self._drag_widget_pos = self.pos()
                 self._group_drag = overlay.begin_group_drag(self)
-            self.raise_()
 
     def mouseMoveEvent(self, ev):
         if self._cropping and self._crop_origin:

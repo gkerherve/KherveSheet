@@ -413,7 +413,6 @@ class EmbeddedShape(QWidget):
             self._rot_before = self._style_dict()
             self._rot_start_angle = self._angle_to(ev.pos())
             self._rot_start_value = self._rotation
-            self.raise_()
             return
         edge = self._edge_at(ev.pos())
         if edge:
@@ -425,7 +424,6 @@ class EmbeddedShape(QWidget):
             self._drag_origin = ev.globalPos()
             self._drag_widget_pos = self.pos()
             self._group_drag = overlay.begin_group_drag(self)
-        self.raise_()
 
     def mouseMoveEvent(self, ev):
         if self._rotating:
