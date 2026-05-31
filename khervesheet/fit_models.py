@@ -62,7 +62,8 @@ class FitFunction:
 _LMFIT_SPECS = [
     ("GaussianModel", "Gaussian", "Common"),
     ("LorentzianModel", "Lorentzian", "Common"),
-    ("VoigtModel", "Voigt", "Common / XRD"),
+    # Voigt is added separately so its Gaussian (sigma) and Lorentzian
+    # (gamma) widths are both freely fittable (lmfit ties gamma=sigma).
     ("PseudoVoigtModel", "Pseudo-Voigt", "XRD / XPS"),
     ("Pearson7Model", "Pearson VII", "XRD"),
     ("Pearson4Model", "Pearson IV", "XRD"),
@@ -98,6 +99,31 @@ def _builtin_factory(class_name):
         import lmfit.models as M
         return getattr(M, class_name)(prefix=prefix)
     return factory
+
+
+def _voigt_factory(prefix):
+    """Voigt with an independently-fittable Lorentzian width gamma
+    (lmfit ties gamma to sigma by default, hiding it)."""
+    import lmfit.models as M
+    m = M.VoigtModel(prefix=prefix)
+    m.set_param_hint("gamma", vary=True, expr="", min=0)
+    return m
+
+
+def _voigt_guess(x, y):
+    """Seed a free-gamma Voigt from lmfit's own guess, starting the
+    Lorentzian width at the Gaussian width (otherwise the freed gamma
+    has no sensible starting value and can run away)."""
+    import lmfit.models as M
+    try:
+        g = M.VoigtModel().guess(np.asarray(y, dtype=float),
+                                 x=np.asarray(x, dtype=float))
+        sig = float(g["sigma"].value)
+        return {"amplitude": float(g["amplitude"].value),
+                "center": float(g["center"].value),
+                "sigma": sig, "gamma": sig}
+    except Exception:
+        return {}
 
 
 # ── Stable exponentially-modified Gaussian ──────────────────────────
@@ -155,6 +181,10 @@ def builtin_functions() -> List[FitFunction]:
             continue
         funcs.append(FitFunction("lmfit:" + cls_name, label, group,
                                  _builtin_factory(cls_name)))
+    # Voigt with both widths free (sigma = Gaussian, gamma = Lorentzian).
+    funcs.insert(2, FitFunction(
+        "voigt_sg", "Voigt", "Common / XRD", _voigt_factory,
+        guesser=_voigt_guess))
     # Stable EMG (replaces lmfit's NaN-prone ExponentialGaussianModel).
     funcs.append(FitFunction(
         "emg_stable", "Exp.-modified Gaussian", "TGA / chromatography",

@@ -26,6 +26,7 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox,
     QMessageBox, QSplitter, QWidget, QTextEdit, QListWidget, QLineEdit,
+    QCheckBox,
 )
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as \
@@ -256,9 +257,15 @@ class FittingDialog(QDialog):
         self._fit_btn = QPushButton("Fit")
         self._apply_btn = QPushButton("Apply to Sheet")
         self._apply_btn.setEnabled(False)
+        self._chart_chk = QCheckBox("Create chart")
+        self._chart_chk.setChecked(True)
+        self._chart_chk.setToolTip(
+            "On apply, also drop a chart on the sheet with the data as "
+            "points and every fitted curve as a line")
         self._close_btn = QPushButton("Close")
         arow.addWidget(self._fit_btn)
         arow.addWidget(self._apply_btn)
+        arow.addWidget(self._chart_chk)
         arow.addStretch()
         arow.addWidget(self._close_btn)
         col.addLayout(arow)
@@ -597,6 +604,15 @@ class FittingDialog(QDialog):
             self._ax.plot(x_full, arr, lw=1, alpha=0.8, label=lbl)
         self._ax.plot(x_full, total, "-", color="#c0392b", lw=1.6,
                       label="total fit", zorder=3)
+        # Residual, drawn below the data so it doesn't overlap the peaks.
+        resid = y_full - total
+        finite = np.isfinite(resid)
+        if finite.any():
+            span = np.nanmax(y_full) - np.nanmin(y_full)
+            offset = np.nanmin(y_full) - 0.12 * (span or 1.0)
+            self._ax.plot(x_full, resid + offset, "-", color="#7f8c8d",
+                          lw=0.8, label="residual", zorder=2)
+            self._ax.axhline(offset, color="#cccccc", lw=0.6, zorder=1)
         self._ax.legend(loc="best", fontsize=7, framealpha=0.8)
         self._ax.relim()
         self._ax.autoscale_view()
@@ -626,7 +642,7 @@ class FittingDialog(QDialog):
         yinfo = _range_to_col_rows(self._y_edit.text())
         if yinfo is None:
             return
-        ycol, r0, _r1 = yinfo
+        ycol, r0, r1 = yinfo
         x_full, labels, arrays, bg, total = self._fit_arrays
         _x2, y_full = self._read_xy(silent=True)
         resid = y_full - total
@@ -666,10 +682,56 @@ class FittingDialog(QDialog):
                 BulkCellEditCmd(self._sheet, changes, "Curve Fitting"))
         for j in range(len(out_cols)):
             self._sheet.data_changed.emit(start_col + j)
+
+        if self._chart_chk.isChecked():
+            xinfo = _range_to_col_rows(self._x_edit.text())
+            xcol = xinfo[0] if xinfo else None
+            self._make_result_chart(ycol, xcol, r0, r1, start_col,
+                                    out_cols)
+
         QMessageBox.information(
             self, "Curve Fitting",
             f"Wrote {len(out_cols)} columns starting at "
             f"{col_index_to_letter(start_col)}.")
+
+    def _make_result_chart(self, ycol, xcol, r0, r1, start_col, out_cols):
+        """Drop an embedded chart on the sheet: the raw data as points
+        and every fitted curve (background, components, total, residual)
+        as a line.  Series reference the sheet columns, so they update
+        live if the data or a re-fit changes."""
+        from .graph import EmbeddedChart
+        sheet = self._sheet
+
+        def _xy(col):
+            y = sheet.numeric_column(col)[r0:r1 + 1]
+            if xcol is not None:
+                xx = sheet.numeric_column(xcol)[r0:r1 + 1]
+            else:
+                xx = np.arange(len(y), dtype=float)
+            n = min(len(xx), len(y))
+            xx, y = xx[:n], y[:n]
+            m = ~(np.isnan(xx) | np.isnan(y))
+            return xx[m], y[m]
+
+        dx, dy = _xy(ycol)
+        if len(dx) == 0:
+            return
+        data_label = (sheet.cell_text(r0 - 1, ycol).strip() if r0 > 0
+                      else "") or "data"
+        viewport = sheet.table.viewport()
+        chart = EmbeddedChart(
+            dx, dy, data_label, "Scatter", sheet, viewport,
+            x_col=xcol, y_col=ycol, row_start=r0, row_end=r1)
+        offset = len(sheet._charts) * 30
+        chart.move(60 + offset, 60 + offset)
+        sheet._charts.append(chart)
+        sheet.data_changed.connect(chart._on_data_changed)
+        for j, (header, _arr) in enumerate(out_cols):
+            c = start_col + j
+            cx, cy = _xy(c)
+            if len(cx):
+                chart.add_series(cx, cy, header, "Line", x_col=xcol,
+                                 y_col=c, row_start=r0, row_end=r1)
 
     # ── Cleanup ─────────────────────────────────────────────────────
 
