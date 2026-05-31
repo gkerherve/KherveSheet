@@ -392,6 +392,16 @@ class SolverDialog(QDialog):
         self._nonneg_chk.setChecked(True)
         layout.addWidget(self._nonneg_chk)
 
+        # --- Keep searching ---
+        self._keep_chk = QCheckBox(
+            "Keep searching with random restarts until I press Stop")
+        self._keep_chk.setToolTip(
+            "Useful when the model has a narrow feature far from the data: "
+            "a single pass can converge immediately on a flat region. This "
+            "keeps trying new starting points, keeping the best result, "
+            "until you click Stop.")
+        layout.addWidget(self._keep_chk)
+
         # --- Method ---
         method_row = QHBoxLayout()
         method_row.addWidget(QLabel("Select a Solving Method:"))
@@ -531,6 +541,7 @@ class SolverDialog(QDialog):
             ],
             "nonneg": self._nonneg_chk.isChecked(),
             "method": self._method_combo.currentIndex(),
+            "keep_searching": self._keep_chk.isChecked(),
         }
 
     def _load_state(self, state: dict):
@@ -550,6 +561,7 @@ class SolverDialog(QDialog):
             self._constr_list.addItem(str(c))
         self._nonneg_chk.setChecked(state.get("nonneg", True))
         self._method_combo.setCurrentIndex(state.get("method", 0))
+        self._keep_chk.setChecked(state.get("keep_searching", False))
 
     def _save_to_sheet(self):
         """Persist current dialog state onto the sheet object."""
@@ -809,7 +821,7 @@ class SolverDialog(QDialog):
                           np.inf if hi is None else hi)
                          for (lo, hi) in bounds]
 
-        def _solve_nonlinear():
+        def _solve_nonlinear(start):
             # Spreadsheet models are routinely badly scaled — a peak
             # amplitude of ~500 sitting next to a background coefficient
             # of ~0.1 whose term is multiplied by a large x².  Gradient
@@ -823,16 +835,67 @@ class SolverDialog(QDialog):
             # so the constraints are respected even if SLSQP drifts.
             if scipy_constraints:
                 return opt.minimize(
-                    _obj, x0, method='SLSQP', bounds=bounds,
+                    _obj, start, method='SLSQP', bounds=bounds,
                     constraints=scipy_constraints, callback=_pump,
                     options={'maxiter': 1000, 'ftol': 1e-9})
             return opt.minimize(
-                _obj, x0, method='Powell', bounds=powell_bounds,
+                _obj, start, method='Powell', bounds=powell_bounds,
                 callback=_pump,
                 options={'maxiter': 20000, 'xtol': 1e-8, 'ftol': 1e-8})
 
-        # Run solver
+        # Evolutionary needs finite bounds and a penalty for constraints.
+        de_bounds = []
+        for i, (lo, hi) in enumerate(bounds):
+            lo2 = lo if lo is not None else x0[i] - 1000
+            hi2 = hi if hi is not None else x0[i] + 1000
+            if lo2 >= hi2:
+                hi2 = lo2 + 1000
+            de_bounds.append((lo2, hi2))
+
+        def _penalised(x):
+            v = _obj(x)
+            for cd in scipy_constraints:
+                cv = cd["fun"](x)
+                if cd["type"] == "ineq" and cv < 0:
+                    v += 1e6 * cv ** 2
+                elif cd["type"] == "eq":
+                    v += 1e6 * cv ** 2
+            return v
+
         method_name = self._method_combo.currentText()
+
+        def _run_once(start):
+            if method_name == "Evolutionary":
+                return opt.differential_evolution(
+                    _penalised, de_bounds, maxiter=1000, tol=1e-12,
+                    callback=_pump)
+            return _solve_nonlinear(start)
+
+        # Random-restart point for multistart mode: sample bounded
+        # (constrained) variables uniformly across their range, jitter the
+        # rest around the current best.
+        rng = np.random.default_rng()
+
+        def _restart(base):
+            nx = list(base)
+            for i in range(len(var_cells)):
+                lo, hi = clip_lo[i], clip_hi[i]
+                if lo is not None and hi is not None:
+                    nx[i] = float(rng.uniform(lo, hi))
+                elif lo is not None:
+                    nx[i] = lo + abs(rng.normal(
+                        0.0, max(1.0, abs(base[i]))))
+                elif hi is not None:
+                    nx[i] = hi - abs(rng.normal(
+                        0.0, max(1.0, abs(base[i]))))
+                else:
+                    nx[i] = base[i] + rng.normal(
+                        0.0, max(1.0, abs(base[i])))
+            return nx
+
+        # Run solver, looping with random restarts when "keep searching"
+        # is on, keeping the best result, until the user presses Stop.
+        keep_searching = self._keep_chk.isChecked()
         self._sheet._suppress_recalc_signals = True
         self._cancelled = False
         self._solving = True
@@ -840,45 +903,27 @@ class SolverDialog(QDialog):
         self._close_btn.setEnabled(False)
         QApplication.setOverrideCursor(Qt.WaitCursor)
         cancelled = False
+        best = None
+        start = list(x0)
         try:
-            if method_name == "GRG Nonlinear":
-                result = _solve_nonlinear()
-            elif method_name == "LP Simplex":
-                # For LP, fall back to the nonlinear solver since linprog
-                # needs explicit matrix form which is hard to extract
-                # from a general spreadsheet model.
-                result = _solve_nonlinear()
-            elif method_name == "Evolutionary":
-                # differential_evolution needs finite bounds
-                de_bounds = []
-                for i, (lo, hi) in enumerate(bounds):
-                    lo2 = lo if lo is not None else x0[i] - 1000
-                    hi2 = hi if hi is not None else x0[i] + 1000
-                    if lo2 >= hi2:
-                        hi2 = lo2 + 1000
-                    de_bounds.append((lo2, hi2))
-                # differential_evolution doesn't accept constraints
-                # directly — wrap as penalty
-                base_obj = _obj
-
-                def _penalised(x):
-                    v = base_obj(x)
-                    for cd in scipy_constraints:
-                        cv = cd["fun"](x)
-                        if cd["type"] == "ineq" and cv < 0:
-                            v += 1e6 * cv ** 2
-                        elif cd["type"] == "eq":
-                            v += 1e6 * cv ** 2
-                    return v
-                result = opt.differential_evolution(
-                    _penalised, de_bounds, maxiter=1000, tol=1e-12,
-                    callback=_pump)
-            else:
-                result = _solve_nonlinear()
-        except _SolverCancelled:
-            cancelled = True
+            while True:
+                try:
+                    res = _run_once(start)
+                except _SolverCancelled:
+                    cancelled = True
+                    break
+                if (getattr(res, "x", None) is not None
+                        and np.isfinite(res.fun)
+                        and (best is None or res.fun < best.fun)):
+                    best = res
+                    _set_vars(best.x)  # reflect the best so far live
+                if not keep_searching:
+                    break
+                if self._cancelled:
+                    cancelled = True
+                    break
+                start = _restart(best.x if best is not None else x0)
         except Exception as exc:
-            # Restore on failure
             for (r, c), txt in original.items():
                 self._sheet._set_cell_quiet(r, c, txt)
             QMessageBox.critical(
@@ -892,14 +937,19 @@ class SolverDialog(QDialog):
             self._close_btn.setEnabled(True)
             QApplication.restoreOverrideCursor()
 
-        if cancelled:
+        if best is None:
+            # Cancelled before any run produced a usable result.
             for (r, c), txt in original.items():
                 self._sheet._set_cell_quiet(r, c, txt)
             for r, c in var_cells:
                 self._sheet._recalc_dependents(r, c)
             QMessageBox.information(
-                self, "Solver", "Solver cancelled by user.")
+                self, "Solver",
+                "Solver stopped before finding a solution."
+                if cancelled else "Solver could not find a solution.")
             return
+
+        result = best
 
         # Make the constraints bind: clip every variable that carries a
         # <= / >= / = limit into range.  The search itself was free, so
@@ -913,7 +963,10 @@ class SolverDialog(QDialog):
                 if hi is not None and result.x[i] > hi:
                     result.x[i] = hi
 
-        if not result.success:
+        if cancelled:
+            # User stopped a (multistart) search — keep the best found.
+            _set_vars(result.x, full_prec=False)
+        elif not result.success:
             # Still write the best result found, but warn user.
             # Use normal precision for final display formatting.
             _set_vars(result.x, full_prec=False)
@@ -954,5 +1007,6 @@ class SolverDialog(QDialog):
             obj_display = obj_val
         QMessageBox.information(
             self, "Solver",
-            f"Solver found a solution.\n"
-            f"Objective cell value: {obj_display}")
+            (f"Search stopped — keeping the best result found.\n"
+             if cancelled else "Solver found a solution.\n")
+            + f"Objective cell value: {obj_display}")
