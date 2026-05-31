@@ -1414,6 +1414,8 @@ class MainWindow(QMainWindow):
                             ig.attrs['brightness'] = d['brightness']
                         if not d.get('keep_aspect_ratio', True):
                             ig.attrs['keep_aspect_ratio'] = False
+                        if d.get('group_id') is not None:
+                            ig.attrs['group_id'] = int(d['group_id'])
                         # Store PNG data as raw bytes (uint8 array
                         # to avoid VLEN string null-byte issues).
                         import base64
@@ -1756,6 +1758,8 @@ class MainWindow(QMainWindow):
                         if 'keep_aspect_ratio' in ig.attrs:
                             imd["keep_aspect_ratio"] = bool(
                                 ig.attrs['keep_aspect_ratio'])
+                        if 'group_id' in ig.attrs:
+                            imd["group_id"] = int(ig.attrs['group_id'])
                         deferred_images.append(imd)
                     if deferred_images:
                         sheet._deferred_images = deferred_images

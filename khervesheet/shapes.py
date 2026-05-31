@@ -28,6 +28,7 @@ from PyQt5.QtWidgets import (
 )
 
 from . import shape_defs
+from . import overlay
 
 _HANDLE = 6
 _PAD = 3        # inset so outline + handles stay inside the widget
@@ -193,6 +194,8 @@ class EmbeddedShape(QWidget):
         self._text_align = int(Qt.AlignLeft)   # default horizontal flag
         self._rotation = 0.0
         self._selected = False
+        self._group_id = None
+        self._group_drag = None
         self._inline_editor = None
 
         # Dragging / resizing / rotating state.
@@ -402,8 +405,8 @@ class EmbeddedShape(QWidget):
     def mousePressEvent(self, ev):
         if ev.button() != Qt.LeftButton:
             return
-        self._deselect_siblings()
-        self._selected = True
+        overlay.handle_select_on_press(
+            self, bool(ev.modifiers() & Qt.ControlModifier))
         self.update()
         if self._on_rot_handle(ev.pos()):
             self._rotating = True
@@ -421,6 +424,7 @@ class EmbeddedShape(QWidget):
         else:
             self._drag_origin = ev.globalPos()
             self._drag_widget_pos = self.pos()
+            self._group_drag = overlay.begin_group_drag(self)
         self.raise_()
 
     def mouseMoveEvent(self, ev):
@@ -448,7 +452,10 @@ class EmbeddedShape(QWidget):
                 self.setGeometry(geo)
         elif self._drag_origin:
             delta = ev.globalPos() - self._drag_origin
-            self.move(self._drag_widget_pos + delta)
+            if self._group_drag and len(self._group_drag) > 1:
+                overlay.drag_group(self._group_drag, delta)
+            else:
+                self.move(self._drag_widget_pos + delta)
         else:
             if self._selected and self._on_rot_handle(ev.pos()):
                 self.setCursor(Qt.CrossCursor)
@@ -464,6 +471,7 @@ class EmbeddedShape(QWidget):
                                       self._style_dict()), "Rotate Shape")
         self._drag_origin = None
         self._drag_widget_pos = None
+        self._group_drag = None
         self._resizing = False
         self._resize_edge = None
 
@@ -484,8 +492,7 @@ class EmbeddedShape(QWidget):
         menu.addAction("Properties…", self._open_properties)
         menu.addAction("Edit Text", self._begin_inline_edit)
         menu.addSeparator()
-        menu.addAction("Bring to Front", self.raise_)
-        menu.addAction("Send to Back", self.lower)
+        overlay.add_arrange_actions(menu, self)
         menu.addSeparator()
         menu.addAction("Delete", self._delete)
         menu.exec_(ev.globalPos())
@@ -635,6 +642,7 @@ class EmbeddedShape(QWidget):
         d.update({
             "pos_x": self.pos().x(), "pos_y": self.pos().y(),
             "width": self.width(), "height": self.height(),
+            "group_id": self._group_id,
         })
         return d
 
@@ -644,6 +652,7 @@ class EmbeddedShape(QWidget):
         sh._apply_style(d)
         sh.move(int(d.get("pos_x", 40)), int(d.get("pos_y", 40)))
         sh.resize(int(d.get("width", 160)), int(d.get("height", 90)))
+        sh._group_id = d.get("group_id")
         return sh
 
 

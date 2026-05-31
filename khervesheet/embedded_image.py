@@ -27,6 +27,8 @@ from PyQt5.QtWidgets import (
     QRubberBand, QPushButton, QSpinBox, QUndoCommand,
 )
 
+from . import overlay
+
 # Resize handle size in pixels.
 _HANDLE = 6
 
@@ -191,6 +193,8 @@ class EmbeddedImage(QWidget):
         self._original_pixmap = pixmap   # unmodified source
         self._pixmap = pixmap            # displayed (after filters)
         self._selected = False
+        self._group_id = None
+        self._group_drag = None
         self._cropping = False
 
         # Crop state: normalized rect (0..1) relative to original.
@@ -291,7 +295,8 @@ class EmbeddedImage(QWidget):
                     QRect(self._crop_origin, self._crop_origin))
                 self._rubber_band.show()
                 return
-            self._selected = True
+            overlay.handle_select_on_press(
+                self, bool(ev.modifiers() & Qt.ControlModifier))
             self.update()
             edge = self._edge_at(ev.pos()) if self._selected else ""
             if edge:
@@ -302,6 +307,7 @@ class EmbeddedImage(QWidget):
             else:
                 self._drag_origin = ev.globalPos()
                 self._drag_widget_pos = self.pos()
+                self._group_drag = overlay.begin_group_drag(self)
             self.raise_()
 
     def mouseMoveEvent(self, ev):
@@ -341,7 +347,10 @@ class EmbeddedImage(QWidget):
                 self.setGeometry(geo)
         elif self._drag_origin:
             delta = ev.globalPos() - self._drag_origin
-            self.move(self._drag_widget_pos + delta)
+            if self._group_drag and len(self._group_drag) > 1:
+                overlay.drag_group(self._group_drag, delta)
+            else:
+                self.move(self._drag_widget_pos + delta)
         else:
             if self._cropping:
                 self.setCursor(Qt.CrossCursor)
@@ -386,6 +395,7 @@ class EmbeddedImage(QWidget):
             return
         self._drag_origin = None
         self._drag_widget_pos = None
+        self._group_drag = None
         self._resizing = False
         self._resize_edge = None
 
@@ -409,6 +419,8 @@ class EmbeddedImage(QWidget):
         menu.addAction("Adjustments…", self._open_adjustments)
         menu.addSeparator()
         menu.addAction("Replace Image…", self._replace_image)
+        menu.addSeparator()
+        overlay.add_arrange_actions(menu, self)
         menu.addSeparator()
         menu.addAction("Delete", self._delete)
         menu.exec_(ev.globalPos())
@@ -633,6 +645,8 @@ class EmbeddedImage(QWidget):
             d["brightness"] = self._brightness
         if not self._keep_aspect_ratio:
             d["keep_aspect_ratio"] = False
+        if self._group_id is not None:
+            d["group_id"] = self._group_id
         return d
 
     @classmethod
@@ -653,6 +667,7 @@ class EmbeddedImage(QWidget):
         img._saturation = d.get("saturation", 0)
         img._brightness = d.get("brightness", 0)
         img._keep_aspect_ratio = d.get("keep_aspect_ratio", True)
+        img._group_id = d.get("group_id")
         img._aspect_ratio = img.width() / max(img.height(), 1)
         # Re-apply if anything changed.
         if img._crop_rect != QRectF(0, 0, 1, 1) or \

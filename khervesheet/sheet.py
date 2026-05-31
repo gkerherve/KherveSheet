@@ -3259,17 +3259,10 @@ class SheetWidget(QWidget):
                 prev._set_selected(False)
                 self._selected_chart = None
 
-            # Deselect any selected shape when clicking on the grid.
-            for shp in getattr(self, '_shapes', []):
-                if getattr(shp, '_selected', False):
-                    shp._selected = False
-                    shp.update()
-
-            # Deselect any selected equation when clicking on the grid.
-            for eq in getattr(self, '_equations', []):
-                if getattr(eq, '_selected', False):
-                    eq._selected = False
-                    eq.update()
+            # Deselect any selected overlay (shape / equation / image)
+            # when clicking on the grid.
+            from . import overlay as _ov
+            _ov.deselect_all(self)
 
             # Capture inline editor state NOW, before Qt closes it.
             _live_editor = self._find_inline_editor()

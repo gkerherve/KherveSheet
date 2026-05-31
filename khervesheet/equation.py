@@ -34,6 +34,8 @@ from PyQt5.QtWidgets import (
     QToolButton, QWidgetAction, QSizePolicy,
 )
 
+from . import overlay
+
 # Resize handle size in pixels.
 _HANDLE = 6
 # Supersampling DPI for crisp rendering.
@@ -223,6 +225,8 @@ class EmbeddedEquation(QWidget):
         self._fontsize = fontsize
         self._color = color
         self._selected = False
+        self._group_id = None
+        self._group_drag = None
         self._pixmap = QPixmap()
 
         self._drag_origin = None
@@ -315,7 +319,8 @@ class EmbeddedEquation(QWidget):
 
     def mousePressEvent(self, ev):
         if ev.button() == Qt.LeftButton:
-            self._selected = True
+            overlay.handle_select_on_press(
+                self, bool(ev.modifiers() & Qt.ControlModifier))
             self.update()
             edge = self._edge_at(ev.pos())
             if edge:
@@ -326,6 +331,7 @@ class EmbeddedEquation(QWidget):
             else:
                 self._drag_origin = ev.globalPos()
                 self._drag_widget_pos = self.pos()
+                self._group_drag = overlay.begin_group_drag(self)
             self.raise_()
 
     def mouseMoveEvent(self, ev):
@@ -361,7 +367,10 @@ class EmbeddedEquation(QWidget):
                 self.setGeometry(geo)
         elif self._drag_origin:
             delta = ev.globalPos() - self._drag_origin
-            self.move(self._drag_widget_pos + delta)
+            if self._group_drag and len(self._group_drag) > 1:
+                overlay.drag_group(self._group_drag, delta)
+            else:
+                self.move(self._drag_widget_pos + delta)
         else:
             edge = self._edge_at(ev.pos()) if self._selected else ""
             if edge:
@@ -372,6 +381,7 @@ class EmbeddedEquation(QWidget):
     def mouseReleaseEvent(self, ev):
         self._drag_origin = None
         self._drag_widget_pos = None
+        self._group_drag = None
         self._resizing = False
         self._resize_edge = None
 
@@ -382,6 +392,8 @@ class EmbeddedEquation(QWidget):
         menu = QMenu(self)
         menu.addAction("Edit Equation…", self._open_editor)
         menu.addAction("Copy LaTeX", self._copy_latex)
+        menu.addSeparator()
+        overlay.add_arrange_actions(menu, self)
         menu.addSeparator()
         menu.addAction("Delete", self._delete)
         menu.exec_(ev.globalPos())
@@ -437,6 +449,7 @@ class EmbeddedEquation(QWidget):
             "pos_y": self.pos().y(),
             "width": self.width(),
             "height": self.height(),
+            "group_id": self._group_id,
         }
 
     @classmethod
@@ -446,6 +459,7 @@ class EmbeddedEquation(QWidget):
         eq.move(d.get("pos_x", 0), d.get("pos_y", 0))
         eq.resize(d.get("width", eq.width()),
                   d.get("height", eq.height()))
+        eq._group_id = d.get("group_id")
         return eq
 
 
