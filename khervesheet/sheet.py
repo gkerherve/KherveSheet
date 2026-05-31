@@ -1652,13 +1652,67 @@ class SheetWidget(QWidget):
 
             import datetime as _dt
 
+            def _flatten(args):
+                # Flatten nested ranges/lists; strings stay atomic.
+                out = []
+                for a in args:
+                    if (isinstance(a, (list, tuple))
+                            or (hasattr(a, '__iter__')
+                                and not isinstance(a, str))):
+                        out.extend(_flatten(a))
+                    else:
+                        out.append(a)
+                return out
+
+            def _nums(args):
+                # Flatten then keep only numeric-convertible values.
+                out = []
+                for v in _flatten(args):
+                    try:
+                        out.append(float(v))
+                    except (TypeError, ValueError):
+                        pass
+                return out
+
             def _mean(*args):
-                # Accept either _mean([1,2,3]) or _mean(1,2,3)
-                if len(args) == 1 and hasattr(args[0], '__iter__'):
-                    v = list(args[0])
-                else:
-                    v = list(args)
+                # Accept _mean([1,2,3]), _mean(1,2,3) or mixed ranges.
+                v = _nums(args)
                 return sum(v) / len(v) if v else 0
+
+            def _SUM(*args):
+                return sum(_nums(args))
+
+            def _MINF(*args):
+                v = _nums(args)
+                return min(v) if v else 0
+
+            def _MAXF(*args):
+                v = _nums(args)
+                return max(v) if v else 0
+
+            def _PRODUCT(*args):
+                v = _nums(args)
+                p = 1.0
+                for x in v:
+                    p *= x
+                return p if v else 0
+
+            def _COUNT(*args):
+                return len(_nums(args))
+
+            def _COUNTA(*args):
+                return len([a for a in _flatten(args)
+                            if a not in ("", None)])
+
+            def _STDEV(*args):
+                v = _nums(args)
+                if len(v) < 2:
+                    return 0
+                mn = sum(v) / len(v)
+                return (sum((x - mn) ** 2 for x in v) / (len(v) - 1)) ** 0.5
+
+            def _SUMSQ(*args):
+                return sum(x * x for x in _nums(args))
 
             # ── Date & Time helpers ──────────────────────────────
             def _DATE(y, m, d):
@@ -1861,11 +1915,13 @@ class SheetWidget(QWidget):
 
             ns = {"__builtins__": {}, "math": math, "np": np,
                   "abs": abs, "round": round, "int": int, "float": float,
-                  "sum": sum, "min": min, "max": max, "len": len,
+                  "sum": _SUM, "min": _MINF, "max": _MAXF, "len": len,
                   "mean": _mean, "avg": _mean,
                   "ABS": abs, "ROUND": round, "INT": int, "FLOAT": float,
-                  "SUM": sum, "MIN": min, "MAX": max,
+                  "SUM": _SUM, "MIN": _MINF, "MAX": _MAXF,
                   "MEAN": _mean, "AVG": _mean, "AVERAGE": _mean,
+                  "COUNT": _COUNT, "COUNTA": _COUNTA,
+                  "STDEV": _STDEV, "SUMSQ": _SUMSQ,
                   "PI": math.pi, "pi": math.pi,
                   "sqrt": math.sqrt, "SQRT": math.sqrt,
                   "log": math.log, "LOG": math.log,
@@ -1910,11 +1966,12 @@ class SheetWidget(QWidget):
                   "ROUNDDOWN": _ROUNDDOWN, "ROUNDUP": _ROUNDUP,
                   "TRUNC": _TRUNC, "COMBIN": _COMBIN,
                   "DEGREES": _DEGREES, "RADIANS": _RADIANS,
-                  "LN": math.log, "PRODUCT": math.prod,
+                  "LN": math.log, "PRODUCT": _PRODUCT,
                   # Compiled-formula runtime helpers (read live values).
                   "_C": self._cell_val,
                   "_AGG": self._agg_range,
                   "_COL": self._agg_col,
+                  "_RANGE": self._range_values,
                   }
         self._eval_ns = ns
         _lower = {}
@@ -1938,7 +1995,7 @@ class SheetWidget(QWidget):
         "false", "mod", "power", "quotient", "sign", "even", "odd",
         "fact", "gcd", "lcm", "rand", "randbetween", "rounddown",
         "roundup", "trunc", "combin", "degrees", "radians", "ln",
-        "product"})
+        "product", "counta", "sumsq"})
 
     def _compile_formula(self, formula):
         """Parse a formula and compile it to a reusable code object.
@@ -1982,28 +2039,21 @@ class SheetWidget(QWidget):
 
     def _compile_range_functions(self, expr: str) -> str:
         import re
-        # Strip one redundant paren pair wrapping a range directly
-        # inside an aggregate, e.g. SUM((A1:A10)) → SUM(A1:A10).
-        expr = re.sub(
-            r'(\b(?:SUMSQ|SUM|AVERAGE|AVG|MEAN|MIN|MAX|COUNTA|COUNT|STDEV)'
-            r'\s*\()\s*\(\s*'
-            r'(\$?[A-Z]+\$?\d+\s*:\s*\$?[A-Z]+\$?\d+)'
-            r'\s*\)',
-            r'\1\2', expr, flags=re.IGNORECASE,
-        )
 
+        # Rewrite any A1:B10 range into a _RANGE(...) call that yields a
+        # list of values.  Works regardless of surrounding context, so
+        # ranges can be mixed with commas/expressions inside aggregates,
+        # e.g. SUM(A1:A10, B1) or AVERAGE(A1:A3).
         def _expand(m):
-            func = m.group(1).lower()
-            c1 = letter_to_col_index(m.group(2))
-            r1 = int(m.group(3)) - 1
-            c2 = letter_to_col_index(m.group(4))
-            r2 = int(m.group(5)) - 1
-            return f"_AGG('{func}',{c1},{r1},{c2},{r2})"
+            c1 = letter_to_col_index(m.group(1).upper())
+            r1 = int(m.group(2)) - 1
+            c2 = letter_to_col_index(m.group(3).upper())
+            r2 = int(m.group(4)) - 1
+            return f"_RANGE({c1},{r1},{c2},{r2})"
 
-        pattern = (r'(SUMSQ|SUM|AVERAGE|AVG|MEAN|MIN|MAX|COUNTA|COUNT|STDEV)'
-                   r'\s*\(\s*\$?([A-Z]+)\$?(\d+)\s*:\s*'
-                   r'\$?([A-Z]+)\$?(\d+)\s*\)')
-        return re.sub(pattern, _expand, expr, flags=re.IGNORECASE)
+        pattern = (r'\$?([A-Za-z]+)\$?(\d+)\s*:\s*'
+                   r'\$?([A-Za-z]+)\$?(\d+)')
+        return re.sub(pattern, _expand, expr)
 
     def _compile_column_functions(self, expr: str) -> str:
         import re
@@ -2047,6 +2097,20 @@ class SheetWidget(QWidget):
             return (sum((v - mn) ** 2 for v in vals)
                     / (len(vals) - 1)) ** 0.5
         return 0
+
+    def _range_values(self, c1, r1, c2, r2):
+        """Return the list of numeric values within a cell range."""
+        vals = []
+        tbl = self.table
+        for c in range(c1, c2 + 1):
+            for r in range(r1, r2 + 1):
+                it = tbl.item(r, c)
+                if it and it.text():
+                    try:
+                        vals.append(float(it.text()))
+                    except ValueError:
+                        pass
+        return vals
 
     def _agg_range(self, func, c1, r1, c2, r2):
         vals = []
