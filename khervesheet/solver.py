@@ -642,11 +642,16 @@ class SolverDialog(QDialog):
                                     "Invalid target value.")
                 return
 
-        # Bounds
-        if self._nonneg_chk.isChecked():
-            bounds = [(0, None)] * len(var_cells)
-        else:
-            bounds = [(None, None)] * len(var_cells)
+        # Bounds — start from the "non-negative" option.  Constraints
+        # that act directly on a variable cell are folded into these
+        # bounds further below (Excel treats them as simple bounds, and
+        # the optimiser can enforce bounds *exactly* — far more reliable
+        # than nonlinear constraints on a badly-scaled spreadsheet model,
+        # which is why values used to drift outside the limits).
+        var_index = {rc: i for i, rc in enumerate(var_cells)}
+        lo0 = 0.0 if self._nonneg_chk.isChecked() else None
+        lows = [lo0] * len(var_cells)
+        highs = [None] * len(var_cells)
 
         # Build objective function
         _SOLVE_DEC = 15  # full precision during optimisation
@@ -720,6 +725,21 @@ class SolverDialog(QDialog):
                     self._sheet._set_cell_quiet(r, c, txt)
                 return
 
+            # If the constraint cell *is* a variable cell, fold it into
+            # the variable's bounds — these are honoured exactly by the
+            # optimiser, so the value can never leave the range.
+            idx = var_index.get(con_rc)
+            if idx is not None:
+                if con.op == "<=":
+                    highs[idx] = (rhs_val if highs[idx] is None
+                                  else min(highs[idx], rhs_val))
+                elif con.op == ">=":
+                    lows[idx] = (rhs_val if lows[idx] is None
+                                 else max(lows[idx], rhs_val))
+                else:  # "="
+                    lows[idx] = highs[idx] = rhs_val
+                continue
+
             def _read_cell_full(rc):
                 """Read a cell value at full precision."""
                 f = self._sheet._cell_formulas.get(rc)
@@ -759,16 +779,31 @@ class SolverDialog(QDialog):
                     return v - _rhs  # == 0
                 scipy_constraints.append({"type": "eq", "fun": _cfn})
 
+        # Assemble final bounds and clamp the starting guess inside them
+        # (Powell/SLSQP require x0 to lie within the bounds).
+        bounds = list(zip(lows, highs))
+        for i, (lo, hi) in enumerate(bounds):
+            if lo is not None and x0[i] < lo:
+                x0[i] = lo
+            if hi is not None and x0[i] > hi:
+                x0[i] = hi
+
         # Keep the GUI responsive: scipy runs synchronously on the GUI
-        # thread, so pump the event loop periodically. Charts are not
-        # redrawn during the search (signals suppressed) — they refresh
-        # once at the end.  If the user clicks Stop or presses Esc,
-        # raise StopIteration to abort the optimizer.
+        # thread, so pump the event loop on every iteration.  We also
+        # refresh embedded charts here so the plot tracks the solve live
+        # (per-objective redraws would be far too frequent, but scipy's
+        # iteration callback fires at a sensible cadence).  If the user
+        # clicks Stop or presses Esc, raise to abort the optimizer.
         class _SolverCancelled(Exception):
             pass
 
         def _pump(*_args, **_kwargs):
             QApplication.processEvents()
+            for chart in getattr(self._sheet, "_charts", []):
+                try:
+                    chart._refresh_data()
+                except Exception:
+                    pass
             if self._cancelled:
                 raise _SolverCancelled
 
