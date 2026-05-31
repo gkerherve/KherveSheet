@@ -2166,8 +2166,74 @@ class SheetWidget(QWidget):
         if self._note_popup is not None:
             self._note_popup.hide()
 
+    def _spell_word_at(self, pos):
+        """Return (row, col, word, start, end) for the misspelled word
+        under viewport point *pos*, or None."""
+        from . import spellcheck
+        if not (getattr(self._fmt_delegate, "_spell_enabled", False)
+                and spellcheck.available()):
+            return None
+        idx = self.table.indexAt(pos)
+        if not idx.isValid():
+            return None
+        row, col = idx.row(), idx.column()
+        it = self.table.item(row, col)
+        if it is None:
+            return None
+        text = it.text()
+        if not spellcheck.should_check(text):
+            return None
+        cf = self._cell_formats.get((row, col))
+        if cf and cf.wrap_text:
+            return None
+        from PyQt5.QtGui import QFontMetrics
+        from PyQt5.QtCore import Qt
+        rect = self.table.visualRect(idx).adjusted(3, 0, -3, 0)
+        fm = QFontMetrics(it.font())
+        align = int(it.textAlignment() or (Qt.AlignLeft | Qt.AlignVCenter))
+        x = pos.x()
+        for s, e, word, x0, x1 in spellcheck.iter_word_spans(
+                text, fm, rect.left(), rect.width(), align):
+            if x0 <= x <= x1 and spellcheck.is_misspelled(word):
+                return row, col, word, s, e
+        return None
+
+    def _replace_word(self, row, col, start, end, new_word):
+        """Replace text[start:end] in a cell with *new_word*."""
+        it = self.table.item(row, col)
+        if it is None:
+            return
+        old = it.text()
+        it.setText(old[:start] + new_word + old[end:])
+        self._shadow[(row, col)] = it.text()
+
     def _cell_menu(self, pos):
         menu = QMenu(self)
+
+        # Spelling suggestions for the word under the cursor (top).
+        spell = self._spell_word_at(pos)
+        if spell is not None:
+            from . import spellcheck
+            row, col, word, start, end = spell
+            sugs = spellcheck.suggestions(word)
+            if sugs:
+                for sug in sugs:
+                    act = menu.addAction(sug)
+                    act.triggered.connect(
+                        lambda _=False, s=sug: self._replace_word(
+                            row, col, start, end, s))
+                from PyQt5.QtGui import QFont
+                bf = QFont()
+                bf.setBold(True)
+                for a in menu.actions():
+                    a.setFont(bf)
+            else:
+                menu.addAction("(no suggestions)").setEnabled(False)
+            menu.addAction(
+                "Ignore All",
+                lambda: (spellcheck.ignore_word(word),
+                         self.table.viewport().update()))
+            menu.addSeparator()
 
         # Plot submenu first (like KhervePlot)
         sel = self.selected_columns()

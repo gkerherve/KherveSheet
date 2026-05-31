@@ -71,10 +71,14 @@ class MainWindow(QMainWindow):
         self._build_toolbars()
         self._build_status_bar()
         self._update_title()
+        # Apply the default live spell-check state now menus + sheets exist.
+        if hasattr(self, "_spell_live_act"):
+            self._toggle_live_spell(self._spell_live_act.isChecked())
 
     def _wire_undo_to_sheets(self):
         for s in self._workbook.all_sheets():
             s._undo_stack = self._undo_stack
+            self._apply_live_spell_to(s)
             # Connect cell selection to format toolbar sync (guard
             # against duplicate connections with a flag).
             if not getattr(s, '_fmt_connected', False):
@@ -363,6 +367,13 @@ class MainWindow(QMainWindow):
         tools_menu = mb.addMenu("&Tools")
         tools_menu.addAction("Spelling\u2026\tF7", self._spell_check)
         QShortcut(QKeySequence("F7"), self, self._spell_check)
+        from . import spellcheck
+        self._spell_live_act = tools_menu.addAction(
+            "Check Spelling as You Type")
+        self._spell_live_act.setCheckable(True)
+        self._spell_live_act.setChecked(spellcheck.available())
+        self._spell_live_act.setEnabled(spellcheck.available())
+        self._spell_live_act.toggled.connect(self._toggle_live_spell)
         tools_menu.addSeparator()
         tools_menu.addAction("Statistics on Selection",
                              self._show_statistics)
@@ -2750,6 +2761,20 @@ class MainWindow(QMainWindow):
         from .insert_ops import SpellCheckDialog
         dlg = SpellCheckDialog(s, self)
         dlg.exec_()
+
+    def _toggle_live_spell(self, enabled):
+        """Enable/disable live red-underline spell-checking on all sheets."""
+        for s in self._workbook.all_sheets():
+            d = getattr(s, "_fmt_delegate", None)
+            if d is not None:
+                d._spell_enabled = enabled
+                s.table.viewport().update()
+
+    def _apply_live_spell_to(self, sheet):
+        """Push the current live-spell setting onto one sheet."""
+        d = getattr(sheet, "_fmt_delegate", None)
+        if d is not None and hasattr(self, "_spell_live_act"):
+            d._spell_enabled = self._spell_live_act.isChecked()
 
     def _toggle_merge(self):
         """Toggle merge/unmerge on the active sheet selection."""

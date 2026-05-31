@@ -186,6 +186,9 @@ class CellFormatDelegate(QStyledItemDelegate):
         self._notes: Dict[Tuple[int, int], str] = {}
         # Dropdowns: {(row, col): list[str]} — pointer set by SheetWidget
         self._dropdowns: Dict[Tuple[int, int], list] = {}
+        # Live spell-check: when True, misspelled words get a red wavy
+        # underline.  Toggled from the Tools menu.
+        self._spell_enabled: bool = False
 
     def paint(self, painter: QPainter,
               option: QStyleOptionViewItem,
@@ -220,6 +223,10 @@ class CellFormatDelegate(QStyledItemDelegate):
 
         # ── Text overflow into empty right-hand neighbours ────────
         self._paint_overflow(painter, option, index)
+
+        # ── Live spell-check underlines ───────────────────────────
+        if self._spell_enabled:
+            self._paint_spell(painter, option, index)
 
         # Draw cell format borders.
         cf = self._formats.get(key)
@@ -380,6 +387,56 @@ class CellFormatDelegate(QStyledItemDelegate):
                 painter.drawEllipse(int(px) - 2, int(py) - 2, 4, 4)
 
         painter.restore()
+
+    def _paint_spell(self, painter, option, index):
+        """Underline misspelled words in the cell with a red wavy line."""
+        from . import spellcheck
+        text = index.data(Qt.DisplayRole)
+        if not spellcheck.should_check(text) or not spellcheck.available():
+            return
+        # Wrapped multi-line text isn't laid out single-line here; skip
+        # so underlines never land in the wrong place.
+        cf = self._formats.get((index.row(), index.column()))
+        if cf and cf.wrap_text:
+            return
+        font = index.data(Qt.FontRole) or option.font
+        fm = QFontMetrics(font)
+        text_rect = option.rect.adjusted(3, 0, -3, 0)
+        align = int(index.data(Qt.TextAlignmentRole) or
+                    (Qt.AlignLeft | Qt.AlignVCenter))
+        # Underline sits just below the text baseline, clamped in cell.
+        y = min(text_rect.center().y() + fm.ascent() // 2 + 2,
+                text_rect.bottom() - 1)
+        painter.save()
+        painter.setClipRect(option.rect)
+        pen = QPen(QColor("#e53935"), 1.0)
+        painter.setPen(pen)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        for _s, _e, word, x0, x1 in spellcheck.iter_word_spans(
+                text, fm, text_rect.left(), text_rect.width(), align):
+            if x1 <= text_rect.left() or x0 >= text_rect.right():
+                continue
+            if spellcheck.is_misspelled(word):
+                self._draw_wavy(painter, x0, x1, y)
+        painter.restore()
+
+    @staticmethod
+    def _draw_wavy(painter, x0, x1, y):
+        """Draw a small red zig-zag between x0 and x1 at height y."""
+        from PyQt5.QtCore import QPointF
+        from PyQt5.QtGui import QPainterPath
+        step = 2.0          # half-wavelength in px
+        amp = 1.2           # amplitude
+        path = QPainterPath()
+        path.moveTo(x0, y)
+        x = float(x0)
+        up = True
+        while x < x1:
+            x_next = min(x + step, x1)
+            path.lineTo(x_next, y - amp if up else y + amp)
+            up = not up
+            x = x_next
+        painter.drawPath(path)
 
     def _paint_overflow(self, painter, option, index):
         """If this cell's text is wider than the column, paint the

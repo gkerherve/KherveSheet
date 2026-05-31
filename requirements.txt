@@ -4,3 +4,4 @@ numpy>=1.21
 openpyxl>=3.0
 h5py>=3.7
 pygit2>=1.12
+pyspellchecker>=0.7
