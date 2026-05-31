@@ -746,7 +746,7 @@ class MainWindow(QMainWindow):
         zm.setCursor(Qt.PointingHandCursor)
         zm.mousePressEvent = lambda _: self._zoom_out()
         self._zoom_slider = QSlider(Qt.Horizontal)
-        self._zoom_slider.setRange(50, 200)
+        self._zoom_slider.setRange(1, 200)
         self._zoom_slider.setValue(100)
         self._zoom_slider.setMaximumWidth(120)
         self._zoom_slider.valueChanged.connect(self._apply_zoom)
@@ -766,7 +766,29 @@ class MainWindow(QMainWindow):
         return self._workbook.current_sheet()
 
     # ── File operations ──────────────────────────────────────────────
+    def _maybe_save_changes(self) -> bool:
+        """If there are unsaved changes, ask the user to save/discard.
+
+        Returns True if the caller may proceed (saved or discarded),
+        False if the user cancelled.
+        """
+        if self._undo_stack.isClean():
+            return True
+        reply = QMessageBox.question(
+            self, "Save Changes?",
+            "You have unsaved changes.\n"
+            "Do you want to save them first?",
+            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
+            QMessageBox.Save)
+        if reply == QMessageBox.Save:
+            return self._save_file()
+        if reply == QMessageBox.Discard:
+            return True
+        return False
+
     def _new_workbook(self):
+        if not self._maybe_save_changes():
+            return
         self._current_file = None
         # Reset workbook
         wb = WorkbookWidget()
@@ -823,6 +845,8 @@ class MainWindow(QMainWindow):
         self._status_msg("Example loaded", 3000)
 
     def _open_file(self):
+        if not self._maybe_save_changes():
+            return
         path, _ = QFileDialog.getOpenFileName(
             self, "Open File", "",
             "KherveSheet (*.ksheet);;"
@@ -868,21 +892,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Prompt to save unsaved changes before closing."""
-        if self._undo_stack.isClean():
-            event.accept()
-            return
-        reply = QMessageBox.question(
-            self, "Save Changes?",
-            "You have unsaved changes.\n"
-            "Do you want to save before closing?",
-            QMessageBox.Save | QMessageBox.Discard | QMessageBox.Cancel,
-            QMessageBox.Save)
-        if reply == QMessageBox.Save:
-            event.accept() if self._save_file() else event.ignore()
-        elif reply == QMessageBox.Discard:
-            event.accept()
-        else:
-            event.ignore()
+        event.accept() if self._maybe_save_changes() else event.ignore()
 
     def _import_text(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -2559,7 +2569,7 @@ class MainWindow(QMainWindow):
         self._zoom_slider.setValue(v)
 
     def _zoom_out(self):
-        v = max(50, self._zoom_slider.value() - 10)
+        v = max(1, self._zoom_slider.value() - 10)
         self._zoom_slider.setValue(v)
 
     def _zoom_reset(self):
@@ -2573,15 +2583,24 @@ class MainWindow(QMainWindow):
         factor = value / 100.0
         old_factor = getattr(sheet, '_zoom_factor', 1.0)
 
-        # Scale row/column sizes proportionally.
+        # Scale row/column sizes proportionally.  Clamp to >=1px so
+        # extreme zoom-out (down to 1%) never collapses rows/cols to
+        # zero height and leaves the grid invisible.
         base_row = 20
         base_col = 80
-        sheet.table.verticalHeader().setDefaultSectionSize(
-            int(base_row * factor))
-        sheet.table.horizontalHeader().setDefaultSectionSize(
-            int(base_col * factor))
+        row_sz = max(1, int(round(base_row * factor)))
+        col_sz = max(1, int(round(base_col * factor)))
+        vh = sheet.table.verticalHeader()
+        hh = sheet.table.horizontalHeader()
+        # The minimum section size would otherwise clamp the default and
+        # stop the grid shrinking below 16/40px; lower it when zoomed out
+        # so 1% really zooms out, but keep the normal floor at 100%+.
+        vh.setMinimumSectionSize(min(16, row_sz))
+        hh.setMinimumSectionSize(min(40, col_sz))
+        vh.setDefaultSectionSize(row_sz)
+        hh.setDefaultSectionSize(col_sz)
         font = sheet.table.font()
-        font.setPointSizeF(9 * factor)
+        font.setPointSizeF(max(1.0, 9 * factor))
         sheet.table.setFont(font)
 
         # Scale charts and images proportionally.
@@ -2607,6 +2626,10 @@ class MainWindow(QMainWindow):
                            int(shp.height() * ratio))
 
         sheet._zoom_factor = factor
+
+        # Zooming out shrinks columns; top up so the grid stays filled.
+        if hasattr(sheet, "_ensure_columns_fill_viewport"):
+            sheet._ensure_columns_fill_viewport()
 
     # ── Bring forward / send backward ────────────────────────────────
     def _selected_overlay(self):

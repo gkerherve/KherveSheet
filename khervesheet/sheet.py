@@ -833,6 +833,9 @@ class SheetWidget(QWidget):
             lambda _=0: self._ants_overlay.update())
         self.table.verticalScrollBar().valueChanged.connect(
             lambda _=0: self._ants_overlay.update())
+        # Grow columns to keep the viewport filled when scrolling right.
+        self.table.horizontalScrollBar().valueChanged.connect(
+            self._on_hscroll)
 
         self.table.setMouseTracking(True)
         self.table.viewport().setMouseTracking(True)
@@ -1073,6 +1076,42 @@ class SheetWidget(QWidget):
         # Row headers: 1, 2, 3...
         row_labels = [str(i + 1) for i in range(self.table.rowCount())]
         self.table.setVerticalHeaderLabels(row_labels)
+
+    # Excel's hard limit on columns; never grow past this.
+    MAX_COLS = 16384
+
+    def _ensure_columns_fill_viewport(self):
+        """Grow the column count so columns always fill the viewport,
+        even when zoomed far out.  Keeps a small buffer past the edge so
+        the grid never shows empty space to the right.  Never shrinks."""
+        header = self.table.horizontalHeader()
+        vp_w = self.table.viewport().width()
+        if vp_w <= 0:
+            return
+        # Width of the columns currently laid out, plus the default size
+        # for any beyond (interactive resizes are honoured via length()).
+        used = header.length()
+        col_w = max(1, header.defaultSectionSize())
+        cur = self.table.columnCount()
+        if used >= vp_w:
+            # Already wider than the viewport; only top up the buffer.
+            extra_needed = 0
+        else:
+            extra_needed = (vp_w - used) // col_w + 5
+        target = min(self.MAX_COLS, cur + extra_needed)
+        if target > cur:
+            self.table.setColumnCount(target)
+            self._refresh_headers()
+
+    def _on_hscroll(self, value):
+        """Add more columns when the user scrolls near the right edge."""
+        sb = self.table.horizontalScrollBar()
+        if sb.maximum() > 0 and value >= sb.maximum() - 1:
+            cur = self.table.columnCount()
+            target = min(self.MAX_COLS, cur + 20)
+            if target > cur:
+                self.table.setColumnCount(target)
+                self._refresh_headers()
 
     # ── Cell ref display ─────────────────────────────────────────────
     def _on_current_cell_changed(self, row, col, prev_row, prev_col):
@@ -3064,6 +3103,11 @@ class SheetWidget(QWidget):
             self._clear_ref_highlights()
 
     def eventFilter(self, obj, event):
+        # ── Keep columns filling the viewport on resize ───────────
+        if (obj is self.table.viewport()
+                and event.type() == QEvent.Resize):
+            self._ensure_columns_fill_viewport()
+
         # ── Detect inline editor creation on viewport ────────────
         if (obj is self.table.viewport()
                 and event.type() == QEvent.ChildAdded):
