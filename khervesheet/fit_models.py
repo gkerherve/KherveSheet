@@ -401,7 +401,8 @@ def all_functions(custom_store: Dict[str, dict]) -> List[FitFunction]:
 
 # ── Background models ───────────────────────────────────────────────
 
-# Analytic backgrounds expose a polynomial degree (-1 = none).
+# Analytic backgrounds expose a polynomial degree (-1 = none); the
+# data-derived ones use None.
 BACKGROUNDS = [
     ("none", "None", -1),
     ("constant", "Constant", 0),
@@ -409,33 +410,57 @@ BACKGROUNDS = [
     ("poly2", "Polynomial (2)", 2),
     ("poly3", "Polynomial (3)", 3),
     ("shirley", "Shirley (XPS)", None),
-    ("tougaard", "Tougaard (XPS)", None),
+    ("shirley_rev", "Shirley (reversed)", None),
+    ("als", "Asymmetric Least Squares", None),
 ]
 
 _BG_DEGREE = {k: deg for k, _, deg in BACKGROUNDS}
+_DATA_BG = {"shirley", "shirley_rev", "als"}
 
 
 def background_degree(key: str):
     """Polynomial degree for an analytic background, or None if the
-    background is data-derived (Shirley/Tougaard) or absent."""
+    background is data-derived (Shirley/ALS) or absent."""
     return _BG_DEGREE.get(key, -1)
 
 
 def is_data_background(key: str) -> bool:
-    return key in ("shirley", "tougaard")
+    return key in _DATA_BG
 
 
-def shirley_background(x, y, max_iter: int = 50, tol: float = 1e-6):
+def data_background(key: str, x, y):
+    """Compute a data-derived background array, or None if *key* is not
+    one (Shirley in either direction, or asymmetric least squares)."""
+    if key == "shirley":
+        return shirley_background(x, y, reverse=False)
+    if key == "shirley_rev":
+        return shirley_background(x, y, reverse=True)
+    if key == "als":
+        return als_background(x, y)
+    return None
+
+
+def shirley_background(x, y, max_iter: int = 50, tol: float = 1e-6,
+                       reverse: bool = False):
     """Iterative Shirley background between the two range endpoints.
 
-    Returns an array the same length as *y*. Robust to ascending or
-    descending x (XPS binding-energy axes run high→low)."""
+    The background equals the data at both endpoints and steps up under
+    each peak in proportion to the integrated peak area, so it sits low
+    on the low-intensity side and high on the elevated (inelastic) side.
+
+    By convention the step accumulates from the low-x endpoint; for data
+    whose inelastic tail is on the *low-x* side (binding energy plotted
+    high→low), pass ``reverse=True``.  Output matches the input order.
+    """
+    x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     n = len(y)
     if n < 2:
         return np.zeros_like(y)
     order = np.argsort(x)
     ys = y[order]
+    if reverse:
+        ys = ys[::-1]
     y_lo, y_hi = ys[0], ys[-1]
     bg = np.linspace(y_lo, y_hi, n)
     for _ in range(max_iter):
@@ -445,36 +470,41 @@ def shirley_background(x, y, max_iter: int = 50, tol: float = 1e-6):
         total = cum[-1]
         if total <= 0:
             break
-        new_bg = y_hi + (y_lo - y_hi) * (cum / total) \
-            if y_lo < y_hi else y_lo + (y_hi - y_lo) * (1.0 - cum / total)
+        # Background rises from the first endpoint to the last as the
+        # cumulative peak area accumulates.
+        new_bg = y_lo + (y_hi - y_lo) * (cum / total)
         if np.max(np.abs(new_bg - bg)) < tol * (abs(total) + 1e-12):
             bg = new_bg
             break
         bg = new_bg
-    out = np.empty_like(bg)
-    out[order] = bg
-    return out
-
-
-def tougaard_background(x, y, b: float = 2866.0, c: float = 1643.0):
-    """Two-parameter universal Tougaard background (XPS).
-
-    Uses the universal cross-section K(T) = B·T / (C + T²)² convolved
-    with the spectrum above the high-kinetic-energy endpoint."""
-    order = np.argsort(x)
-    xs = np.asarray(x, dtype=float)[order]
-    ys = np.asarray(y, dtype=float)[order]
-    n = len(ys)
-    if n < 2:
-        return np.zeros_like(y)
-    base = ys[-1]
-    f = ys - base
-    bg = np.zeros(n)
-    for i in range(n):
-        t = xs[i:] - xs[i]
-        k = b * t / (c + t ** 2) ** 2
-        bg[i] = np.trapz(k * f[i:], xs[i:])
-    bg = bg + base
+    if reverse:
+        bg = bg[::-1]
     out = np.empty(n)
     out[order] = bg
     return out
+
+
+def als_background(x, y, lam: float = 1e5, p: float = 0.01,
+                   n_iter: int = 10):
+    """Asymmetric Least Squares baseline (Eilers & Boelens 2005).
+
+    A smooth baseline that hugs the troughs of the data — popular for
+    Raman / FTIR / XRD.  *lam* controls smoothness (larger = stiffer),
+    *p* the asymmetry (small = baseline stays below peaks).  Independent
+    of x spacing (assumes roughly uniform sampling)."""
+    from scipy import sparse
+    from scipy.sparse.linalg import spsolve
+    y = np.asarray(y, dtype=float)
+    n = len(y)
+    if n < 3:
+        return np.zeros_like(y)
+    # Second-difference penalty matrix.
+    D = sparse.diags([1.0, -2.0, 1.0], [0, 1, 2], shape=(n - 2, n))
+    DtD = lam * (D.transpose() @ D)
+    w = np.ones(n)
+    z = y.copy()
+    for _ in range(n_iter):
+        W = sparse.spdiags(w, 0, n, n)
+        z = spsolve((W + DtD).tocsc(), w * y)
+        w = p * (y > z) + (1.0 - p) * (y < z)
+    return z

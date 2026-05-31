@@ -139,7 +139,7 @@ class FittingDialog(QDialog):
     """Interactive lmfit-based peak fitting dialog (non-modal)."""
 
     # Parameter-editor columns.
-    _COLS = ["Parameter", "Value", "Min", "Max", "Vary"]
+    _COLS = ["Parameter", "Value", "Min", "Max", "Vary", "Expr"]
 
     def __init__(self, sheet: SheetWidget, parent=None):
         super().__init__(parent)
@@ -340,6 +340,11 @@ class FittingDialog(QDialog):
                 "parameters in the fit report; the editor exposes the "
                 "free parameters below. The Young (1993) pseudo-Voigt "
                 "convention is pV = η·L + (1-η)·G.</p>",
+                "<p><b>Per-peak limits:</b> each added function has its "
+                "own Min/Max/Vary. <b>Tie peaks together</b> with the "
+                "<i>Expr</i> column, referencing other peaks by the "
+                "prefix shown in the list — e.g. <code>p0_center+1.5</code>"
+                " or <code>0.5*p0_amplitude</code>.</p>",
                 "<table cellspacing='0' cellpadding='4' border='1' "
                 "style='border-collapse:collapse;'>",
                 "<tr style='background:#eef4fb;'><th>Function</th>"
@@ -395,7 +400,8 @@ class FittingDialog(QDialog):
         params = self._initial_params(func, prefix)
         self._peaks.append({"func": func, "prefix": prefix,
                             "params": params})
-        self._peak_list.addItem(f"{len(self._peaks)}: {func.label}")
+        self._peak_list.addItem(
+            f"{len(self._peaks)}: {func.label}  [{prefix.rstrip('_')}]")
         self._peak_list.setCurrentRow(self._peak_list.count() - 1)
 
     def _initial_params(self, func, prefix):
@@ -439,7 +445,8 @@ class FittingDialog(QDialog):
             if val is None or not np.isfinite(val):
                 val = 1.0
             out[name] = {"value": float(val), "min": par.min,
-                         "max": par.max, "vary": bool(par.vary)}
+                         "max": par.max, "vary": bool(par.vary),
+                         "expr": ""}
         return out
 
     def _delete_peak(self):
@@ -451,7 +458,8 @@ class FittingDialog(QDialog):
         # Re-key prefixes so they stay p0_, p1_, … and relabel the list.
         for i, pk in enumerate(self._peaks):
             pk["prefix"] = f"p{i}_"
-            self._peak_list.item(i).setText(f"{i + 1}: {pk['func'].label}")
+            self._peak_list.item(i).setText(
+                f"{i + 1}: {pk['func'].label}  [p{i}]")
         self._show_peak_params(self._peak_list.currentRow())
 
     # ── Parameter editor ────────────────────────────────────────────
@@ -480,6 +488,12 @@ class FittingDialog(QDialog):
                 vary_it.setCheckState(
                     Qt.Checked if spec["vary"] else Qt.Unchecked)
                 self._table.setItem(r, 4, vary_it)
+                expr_it = QTableWidgetItem(spec.get("expr", ""))
+                expr_it.setToolTip(
+                    "Tie this parameter to others, e.g. "
+                    "p0_center+1.5 or 0.5*p0_amplitude (peak prefixes "
+                    "are shown in the list above)")
+                self._table.setItem(r, 5, expr_it)
         self._table.blockSignals(False)
 
     def _on_param_edited(self, item):
@@ -506,6 +520,8 @@ class FittingDialog(QDialog):
                 txt, np.inf)
         elif c == 4:
             spec["vary"] = item.checkState() == Qt.Checked
+        elif c == 5:
+            spec["expr"] = item.text().strip()
 
     @staticmethod
     def _to_float(txt, default):
@@ -574,10 +590,8 @@ class FittingDialog(QDialog):
 
         bg_key = self._bg_combo.currentData()
         y_target = y
-        if bg_key == "shirley":
-            y_target = y - fm.shirley_background(x, y)
-        elif bg_key == "tougaard":
-            y_target = y - fm.tougaard_background(x, y)
+        if fm.is_data_background(bg_key):
+            y_target = y - fm.data_background(bg_key, x, y)
 
         # Build composite model and parameter set.
         comp = None
@@ -593,10 +607,16 @@ class FittingDialog(QDialog):
         for pk in self._peaks:
             for name, spec in pk["params"].items():
                 full = pk["prefix"] + name
-                if full in params:
+                if full not in params:
+                    continue
+                expr = spec.get("expr", "").strip()
+                if expr:
+                    # Tie this parameter to others (inter-peak constraint).
+                    params[full].set(value=spec["value"], expr=expr)
+                else:
                     params[full].set(
                         value=spec["value"], min=spec["min"],
-                        max=spec["max"], vary=spec["vary"])
+                        max=spec["max"], vary=spec["vary"], expr="")
         if deg is not None and deg >= 0:
             params["bg_c0"].set(value=float(np.nanmin(y_target)))
             for d in range(1, deg + 1):
@@ -640,11 +660,9 @@ class FittingDialog(QDialog):
             arr[~finite] = np.nan
             labels.append(f"{pk['func'].label} {i + 1}")
             arrays.append(arr)
-        if bg_key in ("shirley", "tougaard"):
-            yf = self._read_xy(silent=True)[1]
-            yf = np.nan_to_num(yf)
-            bg = (fm.shirley_background(xf, yf) if bg_key == "shirley"
-                  else fm.tougaard_background(xf, yf))
+        if fm.is_data_background(bg_key):
+            yf = np.nan_to_num(self._read_xy(silent=True)[1])
+            bg = fm.data_background(bg_key, xf, yf)
             bg[~finite] = np.nan
         elif "bg_" in comps:
             bg = _as_array(comps["bg_"]).copy()
