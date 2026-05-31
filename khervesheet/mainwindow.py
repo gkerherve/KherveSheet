@@ -497,6 +497,16 @@ class MainWindow(QMainWindow):
         self._align_right_act.setToolTip("Align Right")
         self._align_right_act.setCheckable(True)
 
+        # Keep these buttons from stealing keyboard focus, so clicking
+        # them while editing a shape's text formats the current selection
+        # instead of closing the in-place editor.
+        for _a in (self._bold_act, self._italic_act, self._underline_act,
+                   self._align_left_act, self._align_center_act,
+                   self._align_right_act):
+            _w = fmt.widgetForAction(_a)
+            if _w is not None:
+                _w.setFocusPolicy(Qt.NoFocus)
+
         fmt.addSeparator()
 
         # ── Fill colour button with dropdown ──────────────────────

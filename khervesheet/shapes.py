@@ -17,7 +17,9 @@ from __future__ import annotations
 
 from PyQt5.QtCore import Qt, QRect, QRectF, QPoint, QPointF, QTimer
 from PyQt5.QtGui import (
-    QPainter, QPen, QColor, QBrush, QFont,
+    QPainter, QPen, QColor, QBrush, QFont, QPalette,
+    QTextDocument, QTextOption, QTextCursor, QTextCharFormat,
+    QTextBlockFormat, QAbstractTextDocumentLayout,
 )
 from PyQt5.QtWidgets import (
     QWidget, QMenu, QDialog, QHBoxLayout, QFormLayout,
@@ -181,13 +183,14 @@ class EmbeddedShape(QWidget):
         self._fill_color = "#FFFFCC" if _is_closed(shape_type) else None
         self._outline_color = "#000000"
         self._outline_width = 1.0
-        self._text = ""
+        self._text = ""        # plain-text fallback / for empty checks
+        self._html = ""        # rich text (per-run bold/italic/align)
         self._text_color = "#000000"
         self._font_size = 9
         self._bold = False
         self._italic = False
         self._underline = False
-        self._text_align = int(Qt.AlignLeft)   # horizontal flag
+        self._text_align = int(Qt.AlignLeft)   # default horizontal flag
         self._rotation = 0.0
         self._selected = False
         self._inline_editor = None
@@ -214,6 +217,7 @@ class EmbeddedShape(QWidget):
             "outline_color": self._outline_color,
             "outline_width": self._outline_width,
             "text": self._text,
+            "html": self._html,
             "text_color": self._text_color,
             "font_size": self._font_size,
             "bold": self._bold,
@@ -229,6 +233,7 @@ class EmbeddedShape(QWidget):
         self._outline_color = d.get("outline_color", self._outline_color)
         self._outline_width = d.get("outline_width", self._outline_width)
         self._text = d.get("text", self._text)
+        self._html = d.get("html", self._html)
         self._text_color = d.get("text_color", self._text_color)
         self._font_size = d.get("font_size", self._font_size)
         self._bold = bool(d.get("bold", self._bold))
@@ -287,14 +292,8 @@ class EmbeddedShape(QWidget):
         shape_defs.draw_shape(p, inner, st)
 
         # Text (all shapes), hidden while the inline editor is open.
-        if self._text and self._inline_editor is None:
-            p.setPen(QPen(QColor(self._text_color)))
-            p.setFont(self._text_font())
-            valign = Qt.AlignTop if closed else Qt.AlignVCenter
-            align = (int(self._text_align) & int(Qt.AlignHorizontal_Mask)) \
-                | int(valign)
-            flags = int(Qt.TextWordWrap) | align
-            p.drawText(inner.adjusted(4, 4, -4, -4), flags, self._text)
+        if (self._html or self._text) and self._inline_editor is None:
+            self._draw_text(p, inner.adjusted(4, 4, -4, -4), closed)
         p.restore()
 
         # Selection border + handles (axis-aligned, never rotated).
@@ -325,6 +324,38 @@ class EmbeddedShape(QWidget):
         f.setItalic(self._italic)
         f.setUnderline(self._underline)
         return f
+
+    def _build_document(self, width):
+        """A QTextDocument holding the shape's (rich) text, used for both
+        painting and as the model the inline editor edits."""
+        doc = QTextDocument()
+        doc.setDocumentMargin(0)
+        doc.setDefaultFont(self._text_font())
+        opt = QTextOption(Qt.Alignment(
+            int(self._text_align) & int(Qt.AlignHorizontal_Mask)))
+        opt.setWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
+        doc.setDefaultTextOption(opt)
+        if width > 0:
+            doc.setTextWidth(width)
+        if self._html:
+            doc.setHtml(self._html)
+        else:
+            doc.setPlainText(self._text)
+        return doc
+
+    def _draw_text(self, p, rect, closed):
+        doc = self._build_document(rect.width())
+        # Vertical placement: closed shapes anchor text at the top,
+        # open shapes (lines/arrows) centre it.
+        th = doc.size().height()
+        ty = rect.top() if closed else rect.center().y() - th / 2
+        p.save()
+        p.translate(rect.left(), ty)
+        ctx = QAbstractTextDocumentLayout.PaintContext()
+        ctx.palette.setColor(QPalette.Text, QColor(self._text_color))
+        ctx.clip = QRectF(0, 0, rect.width(), max(rect.height(), th))
+        doc.documentLayout().draw(p, ctx)
+        p.restore()
 
     def _handle_positions(self):
         r = self.rect()
@@ -468,15 +499,18 @@ class EmbeddedShape(QWidget):
             return
         self._edit_before = self._style_dict()
         ed = _InlineTextEdit(self)
-        ed.setPlainText(self._text)
+        ed.setAcceptRichText(True)
         ed.setStyleSheet(
             "QTextEdit { background: rgba(255,255,255,210);"
             " border: 1px solid #3078c6; }")
         ed.setFont(self._text_font())
-        ed.setTextColor(QColor(self._text_color))
-        ed.setAlignment(Qt.Alignment(
-            (int(self._text_align) & int(Qt.AlignHorizontal_Mask))
-            | int(Qt.AlignTop)))
+        if self._html:
+            ed.setHtml(self._html)
+        else:
+            ed.setPlainText(self._text)
+            ed.setTextColor(QColor(self._text_color))
+            ed.setAlignment(Qt.Alignment(
+                int(self._text_align) & int(Qt.AlignHorizontal_Mask)))
         m = _PAD + 2
         ed.setGeometry(m, m, max(20, self.width() - 2 * m),
                        max(16, self.height() - 2 * m))
@@ -485,10 +519,44 @@ class EmbeddedShape(QWidget):
         ed.show()
         ed.setFocus()
 
+    @staticmethod
+    def _char_format(bold, italic, underline):
+        fmt = QTextCharFormat()
+        if bold is not None:
+            fmt.setFontWeight(QFont.Bold if bold else QFont.Normal)
+        if italic is not None:
+            fmt.setFontItalic(bool(italic))
+        if underline is not None:
+            fmt.setFontUnderline(bool(underline))
+        return fmt
+
     def set_text_format(self, *, bold=None, italic=None, underline=None,
                         align=None, label="Format Shape"):
-        """Apply text formatting (used by the toolbar) — undoable."""
+        """Apply text formatting from the toolbar — undoable.
+
+        While the inline editor is open the change applies to the current
+        selection (or to subsequent typing), so different runs of text can
+        be bold/italic/underlined and different paragraphs aligned
+        independently.  When not editing it applies to the whole shape."""
         before = self._style_dict()
+        ed = self._inline_editor
+        if ed is not None:
+            if bold is not None or italic is not None or underline is not None:
+                fmt = self._char_format(bold, italic, underline)
+                cur = ed.textCursor()
+                if cur.hasSelection():
+                    cur.mergeCharFormat(fmt)
+                ed.mergeCurrentCharFormat(fmt)
+            if align is not None:
+                ed.setAlignment(Qt.Alignment(
+                    int(align) & int(Qt.AlignHorizontal_Mask)))
+            ed.setFocus()
+            self._html = ed.toHtml()
+            self.update()
+            self._push_change(before, label)
+            return
+
+        # Not editing — apply to the whole shape.
         if bold is not None:
             self._bold = bool(bold)
         if italic is not None:
@@ -497,17 +565,18 @@ class EmbeddedShape(QWidget):
             self._underline = bool(underline)
         if align is not None:
             self._text_align = int(align) & int(Qt.AlignHorizontal_Mask)
-        # Live-update an open editor so the change is visible immediately.
-        ed = self._inline_editor
-        if ed is not None:
-            cur = ed.textCursor()
-            ed.selectAll()
-            ed.setFont(self._text_font())
+        if self._html:
+            doc = self._build_document(0)
+            cur = QTextCursor(doc)
+            cur.select(QTextCursor.Document)
+            if bold is not None or italic is not None or underline is not None:
+                cur.mergeCharFormat(
+                    self._char_format(bold, italic, underline))
             if align is not None:
-                ed.setAlignment(Qt.Alignment(
-                    (int(self._text_align) & int(Qt.AlignHorizontal_Mask))
-                    | int(Qt.AlignTop)))
-            ed.setTextCursor(cur)
+                bf = QTextBlockFormat()
+                bf.setAlignment(Qt.Alignment(self._text_align))
+                cur.mergeBlockFormat(bf)
+            self._html = doc.toHtml()
         self.update()
         self._push_change(before, label)
 
@@ -515,11 +584,14 @@ class EmbeddedShape(QWidget):
         """Tear down the inline editor (called deferred, never mid-event)."""
         if self._inline_editor is editor:
             self._inline_editor = None
+        if commit:
+            plain = editor.toPlainText()
+            self._text = plain
+            self._html = editor.toHtml() if plain.strip() else ""
         editor.hide()
         editor.setParent(None)
         editor.deleteLater()
         if commit:
-            self._text = text
             self.update()
             self._push_change(getattr(self, "_edit_before",
                                       self._style_dict()), "Edit Text")
