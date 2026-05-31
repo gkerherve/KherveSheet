@@ -84,22 +84,17 @@ def render_latex(latex: str, fontsize: int = 20,
     expr = body if body.startswith("$") else "$" + body + "$"
     prop = FontProperties(size=fontsize)
     try:
-        from matplotlib.mathtext import MathTextParser
-        parser = MathTextParser("path")
-        vp = parser.parse(expr, dpi=72, prop=prop)
-        w, h, depth = vp.width, vp.height, vp.depth
-        w = max(w, 1.0)
-        h = max(h, 1.0)
-        pad = 2.0
-        fig = Figure(figsize=((w + 2 * pad) / 72.0,
-                              (h + 2 * pad) / 72.0))
+        # Draw the expression onto a figure and let matplotlib crop to
+        # the real ink extent with bbox_inches="tight".  This avoids the
+        # edge clipping that happens when the mathtext-reported width
+        # underestimates italic overhang or large delimiters.
+        fig = Figure(figsize=(0.05, 0.05))
         FigureCanvasAgg(fig)
         fig.patch.set_alpha(0.0)
-        fig.text(pad / (w + 2 * pad),
-                 (depth + pad) / (h + 2 * pad),
-                 expr, fontproperties=prop, color=color)
+        fig.text(0.0, 0.0, expr, fontproperties=prop, color=color)
         buf = io.BytesIO()
-        fig.savefig(buf, dpi=_RENDER_DPI, format="png", transparent=True)
+        fig.savefig(buf, dpi=_RENDER_DPI, format="png", transparent=True,
+                    bbox_inches="tight", pad_inches=0.05)
         pm = QPixmap()
         pm.loadFromData(buf.getvalue(), "PNG")
         return pm
