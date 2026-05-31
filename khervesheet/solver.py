@@ -284,10 +284,20 @@ class SolverDialog(QDialog):
         if self._active_edit is None or not self.isVisible():
             return
         ref = _selection_ref_str(self._sheet)
-        if ref:
+        if not ref:
+            return
+        # Variable-cells field accumulates comma-separated ranges;
+        # all other fields (objective, constraint refs) replace.
+        if self._active_edit is self._var_edit:
+            cur = self._active_edit.text().strip()
+            if cur and ref not in cur.split(","):
+                self._active_edit.setText(f"{cur},{ref}")
+            else:
+                self._active_edit.setText(ref)
+        else:
             self._active_edit.setText(ref)
-            # Re-activate the dialog so the user can keep working
-            self.activateWindow()
+        # Re-activate the dialog so the user can keep working
+        self.activateWindow()
 
     # ── UI construction ─────────────────────────────────────────────
 
