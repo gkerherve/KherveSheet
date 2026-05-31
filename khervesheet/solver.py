@@ -779,14 +779,20 @@ class SolverDialog(QDialog):
                     return v - _rhs  # == 0
                 scipy_constraints.append({"type": "eq", "fun": _cfn})
 
-        # Assemble final bounds and clamp the starting guess inside them
-        # (Powell/SLSQP require x0 to lie within the bounds).
+        # Assemble final bounds and move the starting guess *just inside*
+        # them.  Powell stalls if a variable begins exactly on a bound
+        # (its line search in the blocked direction finds no improvement
+        # and it gives up), so we nudge a hair into the feasible region
+        # rather than clamping onto the edge.
         bounds = list(zip(lows, highs))
         for i, (lo, hi) in enumerate(bounds):
-            if lo is not None and x0[i] < lo:
-                x0[i] = lo
-            if hi is not None and x0[i] > hi:
-                x0[i] = hi
+            if lo is not None and hi is not None:
+                margin = (hi - lo) * 1e-3
+                x0[i] = min(max(x0[i], lo + margin), hi - margin)
+            elif lo is not None and x0[i] <= lo:
+                x0[i] = lo + (abs(lo) * 1e-3 or 1e-3)
+            elif hi is not None and x0[i] >= hi:
+                x0[i] = hi - (abs(hi) * 1e-3 or 1e-3)
 
         # Keep the GUI responsive: scipy runs synchronously on the GUI
         # thread, so pump the event loop on every iteration.  We also
@@ -814,28 +820,37 @@ class SolverDialog(QDialog):
                           np.inf if hi is None else hi)
                          for (lo, hi) in bounds]
 
+        # Penalty wrapper for constraints that could *not* be folded into
+        # box bounds (i.e. constraints on non-variable cells).  Powell
+        # can't take constraints directly, so we add a steep quadratic
+        # penalty for any violation, scaled to the objective magnitude so
+        # it bites regardless of how the model is scaled.
+        f0 = abs(_obj(list(x0)))
+        _pen_scale = (f0 if f0 > 1.0 else 1.0) * 1e6
+
+        def _penalised(x):
+            v = _obj(x)
+            for cd in scipy_constraints:
+                cv = cd["fun"](x)
+                if cd["type"] == "ineq" and cv < 0:
+                    v += _pen_scale * cv * cv
+                elif cd["type"] == "eq":
+                    v += _pen_scale * cv * cv
+            return v
+
         def _solve_nonlinear():
             # Spreadsheet models are routinely badly scaled — a peak
             # amplitude of ~500 sitting next to a background coefficient
-            # of ~0.1 whose term is multiplied by a large x².  Powell is
-            # a derivative-free direction-set method that is immune to
-            # this and reliably matches Excel's GRG, so it is the engine
-            # of choice for an unconstrained problem.
-            #
-            # As soon as the user adds *any* constraint, however, we use
-            # SLSQP: it honours both the box bounds (into which
-            # variable-cell constraints have been folded) and any
-            # remaining nonlinear constraints, and it actually iterates
-            # on these models.  Powell cannot be trusted here — with a
-            # variable pinned to a tight bound it tends to quit after a
-            # single pass without improving the objective.
-            if self._constraints:
-                return opt.minimize(
-                    _obj, x0, method='SLSQP', bounds=bounds,
-                    constraints=scipy_constraints, callback=_pump,
-                    options={'maxiter': 1000, 'ftol': 1e-9})
+            # of ~0.1 whose term is multiplied by a large x².  Gradient
+            # methods (SLSQP) take a finite-difference Jacobian and
+            # diverge on such conditioning, so we always use Powell, a
+            # derivative-free direction-set method that is immune to it
+            # and reliably matches Excel's GRG.  Variable-cell limits are
+            # enforced as exact box bounds; any remaining constraint is
+            # enforced through the penalty above.
+            objective = _penalised if scipy_constraints else _obj
             return opt.minimize(
-                _obj, x0, method='Powell', bounds=powell_bounds,
+                objective, x0, method='Powell', bounds=powell_bounds,
                 callback=_pump,
                 options={'maxiter': 20000, 'xtol': 1e-8, 'ftol': 1e-8})
 
