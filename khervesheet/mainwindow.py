@@ -596,24 +596,6 @@ class MainWindow(QMainWindow):
         self._symbol_btn.setMenu(sym_menu)
         plot_bar.addWidget(self._symbol_btn)
 
-        # ── f(x) Function insertion button ──────────────────────────
-        self._fx_toolbar_btn = QToolButton()
-        self._fx_toolbar_btn.setIcon(icons.fx_icon(28))
-        self._fx_toolbar_btn.setToolTip("Insert Function")
-        self._fx_toolbar_btn.setPopupMode(QToolButton.MenuButtonPopup)
-        self._fx_toolbar_btn.clicked.connect(
-            self._open_insert_function_dialog)
-        fx_menu = QMenu(self._fx_toolbar_btn)
-        from .formulas import FUNCTION_CATEGORIES, CATEGORY_ORDER
-        for cat in CATEGORY_ORDER:
-            funcs = FUNCTION_CATEGORIES.get(cat, [])
-            sub = fx_menu.addMenu(cat)
-            for fn in funcs:
-                sub.addAction(
-                    fn, lambda f=fn: self._insert_function(f))
-        self._fx_toolbar_btn.setMenu(fx_menu)
-        plot_bar.addWidget(self._fx_toolbar_btn)
-
         # ── Solver button ───────────────────────────────────────────
         self._solver_btn = QToolButton()
         self._solver_btn.setIcon(icons.solver_icon(28))
@@ -659,7 +641,8 @@ class MainWindow(QMainWindow):
         ins_menu.addAction(
             icons.note_icon(20), "Note\tShift+F2", self._insert_note)
         self._insert_btn.setMenu(ins_menu)
-        plot_bar.addWidget(self._insert_btn)
+        # Lives on the Standard toolbar, just after Undo/Redo and f(x).
+        std.addWidget(self._insert_btn)
 
         # ── Merge/Unmerge button (in formatting toolbar) ─────────
         self._merge_btn = QToolButton()
