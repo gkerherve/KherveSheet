@@ -263,6 +263,9 @@ class SolverDialog(QDialog):
         self._constraints: List[Constraint] = []
         self._active_edit: Optional[_PickLineEdit] = None
 
+        self._cancelled = False
+        self._solving = False
+
         self._build_ui()
 
         # Restore saved state if available, otherwise pre-fill from
@@ -418,7 +421,7 @@ class SolverDialog(QDialog):
         bottom.addWidget(self._close_btn)
         layout.addLayout(bottom)
 
-        self._solve_btn.clicked.connect(self._solve)
+        self._solve_btn.clicked.connect(self._on_solve_btn)
         self._close_btn.clicked.connect(self.reject)
 
         # Default: objective field is active for picking
@@ -572,6 +575,20 @@ class SolverDialog(QDialog):
         super().reject()
 
     # ── Solve ───────────────────────────────────────────────────────
+
+    def _on_solve_btn(self):
+        """Toggle between Solve and Stop."""
+        if self._solving:
+            self._cancelled = True
+        else:
+            self._solve()
+
+    def keyPressEvent(self, ev):
+        """Allow Esc to cancel a running solve without closing."""
+        if ev.key() == Qt.Key_Escape and self._solving:
+            self._cancelled = True
+            return
+        super().keyPressEvent(ev)
 
     def _solve(self):
         try:
@@ -745,9 +762,15 @@ class SolverDialog(QDialog):
         # Keep the GUI responsive: scipy runs synchronously on the GUI
         # thread, so pump the event loop periodically. Charts are not
         # redrawn during the search (signals suppressed) — they refresh
-        # once at the end.
+        # once at the end.  If the user clicks Stop or presses Esc,
+        # raise StopIteration to abort the optimizer.
+        class _SolverCancelled(Exception):
+            pass
+
         def _pump(*_args, **_kwargs):
             QApplication.processEvents()
+            if self._cancelled:
+                raise _SolverCancelled
 
         import numpy as np
 
@@ -779,7 +802,12 @@ class SolverDialog(QDialog):
         # Run solver
         method_name = self._method_combo.currentText()
         self._sheet._suppress_recalc_signals = True
+        self._cancelled = False
+        self._solving = True
+        self._solve_btn.setText("Stop")
+        self._close_btn.setEnabled(False)
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        cancelled = False
         try:
             if method_name == "GRG Nonlinear":
                 result = _solve_nonlinear()
@@ -815,6 +843,8 @@ class SolverDialog(QDialog):
                     callback=_pump)
             else:
                 result = _solve_nonlinear()
+        except _SolverCancelled:
+            cancelled = True
         except Exception as exc:
             # Restore on failure
             for (r, c), txt in original.items():
@@ -824,7 +854,20 @@ class SolverDialog(QDialog):
             return
         finally:
             self._sheet._suppress_recalc_signals = False
+            self._solving = False
+            self._cancelled = False
+            self._solve_btn.setText("Solve")
+            self._close_btn.setEnabled(True)
             QApplication.restoreOverrideCursor()
+
+        if cancelled:
+            for (r, c), txt in original.items():
+                self._sheet._set_cell_quiet(r, c, txt)
+            for r, c in var_cells:
+                self._sheet._recalc_dependents(r, c)
+            QMessageBox.information(
+                self, "Solver", "Solver cancelled by user.")
+            return
 
         if not result.success:
             # Still write the best result found, but warn user.
