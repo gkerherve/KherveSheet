@@ -234,6 +234,14 @@ class MainWindow(QMainWindow):
         # Image.
         insert_menu.addAction("Image\u2026", self._insert_image)
 
+        # Shapes submenu.
+        shapes_menu = insert_menu.addMenu("Shapes")
+        from .shapes import SHAPE_LABELS
+        for stype, slabel in SHAPE_LABELS:
+            act = shapes_menu.addAction(
+                icons.shape_icon(stype, 24), slabel,
+                lambda _=False, t=stype: self._insert_shape(t))
+
         # Sparkline.
         insert_menu.addAction("Sparkline\u2026", self._insert_sparkline)
         insert_menu.addSeparator()
@@ -250,16 +258,18 @@ class MainWindow(QMainWindow):
 
         # Link.
         insert_menu.addAction(
-            "Link\tCtrl+K", self._insert_link)
+            icons.link_icon(20), "Link\tCtrl+K", self._insert_link)
         QShortcut(QKeySequence("Ctrl+K"), self, self._insert_link)
         insert_menu.addSeparator()
 
         # Checkbox, Dropdown, Emoji.
-        insert_menu.addAction("Checkbox", self._insert_checkbox)
-        insert_menu.addAction("Dropdown\u2026", self._insert_dropdown)
+        insert_menu.addAction(
+            icons.checkbox_icon(20), "Checkbox", self._insert_checkbox)
+        insert_menu.addAction(
+            icons.dropdown_icon(20), "Dropdown\u2026", self._insert_dropdown)
 
         # Emoji submenu.
-        emoji_menu = insert_menu.addMenu("Emoji")
+        emoji_menu = insert_menu.addMenu(icons.emoji_icon(20), "Emoji")
         from . import insert_ops
         emoji_wa = QWidgetAction(emoji_menu)
         emoji_wa.setDefaultWidget(
@@ -271,9 +281,10 @@ class MainWindow(QMainWindow):
 
         # Comment / Note.
         insert_menu.addAction(
-            "Comment\tCtrl+Alt+M", self._insert_comment)
+            icons.comment_icon(20), "Comment\tCtrl+Alt+M",
+            self._insert_comment)
         insert_menu.addAction(
-            "Note\tShift+F2", self._insert_note)
+            icons.note_icon(20), "Note\tShift+F2", self._insert_note)
         QShortcut(QKeySequence("Shift+F2"), self, self._insert_note)
         insert_menu.addSeparator()
 
@@ -559,6 +570,20 @@ class MainWindow(QMainWindow):
         img_btn.clicked.connect(self._insert_image)
         plot_bar.addWidget(img_btn)
 
+        # ── Shapes button ───────────────────────────────────────
+        self._shapes_btn = QToolButton()
+        self._shapes_btn.setIcon(icons.shapes_button_icon(28))
+        self._shapes_btn.setToolTip("Insert Shape")
+        self._shapes_btn.setPopupMode(QToolButton.InstantPopup)
+        shapes_tb_menu = QMenu(self._shapes_btn)
+        from .shapes import SHAPE_LABELS
+        for stype, slabel in SHAPE_LABELS:
+            shapes_tb_menu.addAction(
+                icons.shape_icon(stype, 24), slabel,
+                lambda _=False, t=stype: self._insert_shape(t))
+        self._shapes_btn.setMenu(shapes_tb_menu)
+        plot_bar.addWidget(self._shapes_btn)
+
         # ── Symbol insertion button ──────────────────────────────
         self._symbol_btn = QToolButton()
         self._symbol_btn.setIcon(icons.symbol_icon(28))
@@ -602,10 +627,12 @@ class MainWindow(QMainWindow):
         self._insert_btn.setToolTip("Insert")
         self._insert_btn.setPopupMode(QToolButton.InstantPopup)
         ins_menu = QMenu(self._insert_btn)
-        ins_menu.addAction("Checkbox", self._insert_checkbox)
-        ins_menu.addAction("Dropdown\u2026", self._insert_dropdown)
+        ins_menu.addAction(
+            icons.checkbox_icon(20), "Checkbox", self._insert_checkbox)
+        ins_menu.addAction(
+            icons.dropdown_icon(20), "Dropdown\u2026", self._insert_dropdown)
         # Emoji submenu
-        emoji_sub2 = ins_menu.addMenu("Emoji")
+        emoji_sub2 = ins_menu.addMenu(icons.emoji_icon(20), "Emoji")
         from .insert_ops import build_emoji_grid
         def _tb_emoji_cb(ch):
             s = self._active_sheet()
@@ -626,8 +653,11 @@ class MainWindow(QMainWindow):
         _tb_ewa.setDefaultWidget(build_emoji_grid(emoji_sub2, _tb_emoji_cb))
         emoji_sub2.addAction(_tb_ewa)
         ins_menu.addSeparator()
-        ins_menu.addAction("Comment\tCtrl+Alt+M", self._insert_comment)
-        ins_menu.addAction("Note\tShift+F2", self._insert_note)
+        ins_menu.addAction(
+            icons.comment_icon(20), "Comment\tCtrl+Alt+M",
+            self._insert_comment)
+        ins_menu.addAction(
+            icons.note_icon(20), "Note\tShift+F2", self._insert_note)
         self._insert_btn.setMenu(ins_menu)
         plot_bar.addWidget(self._insert_btn)
 
@@ -1370,6 +1400,13 @@ class MainWindow(QMainWindow):
                             "png_data",
                             data=np.frombuffer(raw, dtype=np.uint8))
 
+                    # Shapes.
+                    shapes = getattr(sheet, '_shapes', [])
+                    sg.attrs['shape_count'] = len(shapes)
+                    for si2, shp in enumerate(shapes):
+                        shg = sg.create_group(f"shape_{si2}")
+                        shg.attrs['data'] = json.dumps(shp.to_dict())
+
             self._status_msg(f"Saved to {path}", 5000)
             # Auto-commit for version history.
             self._auto_commit(path)
@@ -1694,6 +1731,21 @@ class MainWindow(QMainWindow):
                     if deferred_images:
                         sheet._deferred_images = deferred_images
 
+                    # Collect shape data.
+                    shp_count = int(sg.attrs.get('shape_count', 0))
+                    deferred_shapes = []
+                    for si2 in range(shp_count):
+                        shg_key = f"shape_{si2}"
+                        if shg_key not in sg:
+                            continue
+                        sdat = sg[shg_key].attrs.get('data', '')
+                        if isinstance(sdat, bytes):
+                            sdat = sdat.decode('utf-8')
+                        if sdat:
+                            deferred_shapes.append(json.loads(sdat))
+                    if deferred_shapes:
+                        sheet._deferred_shapes = deferred_shapes
+
                 wb.tabs.setCurrentIndex(0)
                 self.setCentralWidget(wb)
                 self._workbook = wb
@@ -1733,6 +1785,21 @@ class MainWindow(QMainWindow):
                     img = EmbeddedImage.from_dict(imd, viewport)
                     sheet._images.append(img)
                 del sheet._deferred_images
+
+            # Create shapes.
+            from .shapes import EmbeddedShape
+            for si in range(wb.tabs.count()):
+                sheet = wb.tabs.widget(si)
+                shp_dicts = getattr(sheet, '_deferred_shapes', [])
+                if not shp_dicts:
+                    continue
+                if not hasattr(sheet, '_shapes'):
+                    sheet._shapes = []
+                viewport = sheet.table.viewport()
+                for sd in shp_dicts:
+                    shp = EmbeddedShape.from_dict(sd, viewport)
+                    sheet._shapes.append(shp)
+                del sheet._deferred_shapes
 
             wb._combined_tab = None
             wb.ensure_layout_tabs()
@@ -2522,6 +2589,12 @@ class MainWindow(QMainWindow):
                          int(pos.y() * ratio))
                 img.resize(int(img.width() * ratio),
                            int(img.height() * ratio))
+            for shp in getattr(sheet, '_shapes', []):
+                pos = shp.pos()
+                shp.move(int(pos.x() * ratio),
+                         int(pos.y() * ratio))
+                shp.resize(int(shp.width() * ratio),
+                           int(shp.height() * ratio))
 
         sheet._zoom_factor = factor
 
@@ -2537,6 +2610,9 @@ class MainWindow(QMainWindow):
         for img in getattr(s, '_images', []):
             if getattr(img, '_selected', False):
                 return img
+        for shp in getattr(s, '_shapes', []):
+            if getattr(shp, '_selected', False):
+                return shp
         return None
 
     def _bring_forward(self):
@@ -2867,6 +2943,24 @@ class MainWindow(QMainWindow):
         if self._undo_stack is not None:
             self._undo_stack.push(InsertImageCmd(sheet, img, label))
         self._status_msg(label, 3000)
+
+    def _insert_shape(self, shape_type="rectangle"):
+        """Create an EmbeddedShape on the active sheet (undoable)."""
+        sheet = self._active_sheet()
+        if not sheet:
+            return
+        from .shapes import EmbeddedShape, InsertShapeCmd
+        viewport = sheet.table.viewport()
+        shape = EmbeddedShape(shape_type, viewport)
+        if not hasattr(sheet, '_shapes'):
+            sheet._shapes = []
+        offset = len(sheet._shapes) * 24
+        shape.move(60 + offset, 60 + offset)
+        sheet._shapes.append(shape)
+        if self._undo_stack is not None:
+            self._undo_stack.push(
+                InsertShapeCmd(sheet, shape, "Insert Shape"))
+        self._status_msg("Insert Shape", 3000)
 
     # ── Format operations ────────────────────────────────────────────
     def _set_number_format(self, fmt: str):

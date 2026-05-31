@@ -1398,13 +1398,21 @@ def table_design_icon(size: int = 28) -> QIcon:
 
 
 def symbol_icon(size: int = 28) -> QIcon:
-    """Greek omega for the symbol insertion button."""
+    """Plus-in-grid glyph for the Insert toolbar button."""
     def _draw(p, s):
-        f = QFont("Segoe UI", int(s * 0.6))
-        f.setBold(True)
-        p.setFont(f)
-        p.setPen(QPen(_toolbar_fg()))
-        p.drawText(QRectF(0, 0, s, s), Qt.AlignCenter, "\u03a9")
+        fg = _toolbar_fg()
+        pen = QPen(fg, max(1.2, s / 16))
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        # Grid square
+        m = s * 0.12
+        p.drawRect(QRectF(m, m, s - 2 * m, s - 2 * m))
+        # Plus sign
+        cx, cy = s / 2, s / 2
+        arm = s * 0.22
+        p.setPen(QPen(fg, max(1.6, s / 12)))
+        p.drawLine(QPointF(cx - arm, cy), QPointF(cx + arm, cy))
+        p.drawLine(QPointF(cx, cy - arm), QPointF(cx, cy + arm))
     return _fmt_icon(size, _draw)
 
 
@@ -1500,4 +1508,177 @@ def solver_icon(size: int = 28) -> QIcon:
         p.setPen(Qt.NoPen)
         p.setBrush(QColor("#d04040"))
         p.drawEllipse(QPointF(mid, mid), s * 0.05, s * 0.05)
+    return _fmt_icon(size, _draw)
+
+
+def shape_icon(shape_type: str, size: int = 24) -> QIcon:
+    """Glyph for an individual shape type (menu / dropdown entries)."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        m = s * 0.18
+        r = s - m
+        p.setPen(QPen(fg, max(1.2, s / 14)))
+        p.setBrush(Qt.NoBrush)
+        if shape_type == "rectangle":
+            p.drawRect(QRectF(m, m + s * 0.08, r - m, r - m - s * 0.16))
+        elif shape_type == "rounded_rect":
+            p.drawRoundedRect(
+                QRectF(m, m + s * 0.08, r - m, r - m - s * 0.16),
+                s * 0.12, s * 0.12)
+        elif shape_type == "oval":
+            p.drawEllipse(QRectF(m, m + s * 0.08, r - m, r - m - s * 0.16))
+        elif shape_type == "triangle":
+            p.drawPolygon(QPolygonF([
+                QPointF(s / 2, m), QPointF(m, r), QPointF(r, r)]))
+        elif shape_type == "line":
+            p.drawLine(QPointF(m, r), QPointF(r, m))
+        elif shape_type == "arrow":
+            a, b = QPointF(m, r), QPointF(r, m)
+            p.drawLine(a, b)
+            import math
+            ang = math.atan2(b.y() - a.y(), b.x() - a.x())
+            hs = s * 0.28
+            p.setBrush(fg)
+            left = QPointF(b.x() - hs * math.cos(ang - math.pi / 7),
+                           b.y() - hs * math.sin(ang - math.pi / 7))
+            right = QPointF(b.x() - hs * math.cos(ang + math.pi / 7),
+                            b.y() - hs * math.sin(ang + math.pi / 7))
+            p.drawPolygon(QPolygonF([b, left, right]))
+    return _fmt_icon(size, _draw)
+
+
+def shapes_button_icon(size: int = 28) -> QIcon:
+    """Toolbar button glyph: overlapping rectangle + oval."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        p.setPen(QPen(fg, max(1.2, s / 16)))
+        p.setBrush(QColor("#dce8f5"))
+        p.drawRect(QRectF(s * 0.12, s * 0.34, s * 0.46, s * 0.42))
+        p.setBrush(QColor("#f5e3c0"))
+        p.drawEllipse(QRectF(s * 0.42, s * 0.16, s * 0.44, s * 0.44))
+    return _fmt_icon(size, _draw)
+
+
+def checkbox_icon(size: int = 20) -> QIcon:
+    """Tick-box with a check mark."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        m = s * 0.15
+        # Box
+        p.setPen(QPen(fg, max(1.0, s / 16)))
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(QRectF(m, m, s - 2 * m, s - 2 * m))
+        # Check mark
+        p.setPen(QPen(QColor("#217346"), max(1.6, s / 10)))
+        p.drawLine(QPointF(s * 0.28, s * 0.52),
+                   QPointF(s * 0.44, s * 0.68))
+        p.drawLine(QPointF(s * 0.44, s * 0.68),
+                   QPointF(s * 0.74, s * 0.32))
+    return _fmt_icon(size, _draw)
+
+
+def dropdown_icon(size: int = 20) -> QIcon:
+    """Rounded rect with a downward chevron (combo box)."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        m = s * 0.12
+        # Box
+        p.setPen(QPen(fg, max(1.0, s / 16)))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(QRectF(m, s * 0.22, s - 2 * m, s * 0.56), 2, 2)
+        # Down chevron
+        p.setPen(QPen(fg, max(1.4, s / 12)))
+        p.drawLine(QPointF(s * 0.55, s * 0.40),
+                   QPointF(s * 0.70, s * 0.56))
+        p.drawLine(QPointF(s * 0.70, s * 0.56),
+                   QPointF(s * 0.85, s * 0.40))
+    return _fmt_icon(size, _draw)
+
+
+def emoji_icon(size: int = 20) -> QIcon:
+    """Simple smiley face."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        m = s * 0.14
+        # Circle
+        p.setPen(QPen(fg, max(1.0, s / 16)))
+        p.setBrush(Qt.NoBrush)
+        p.drawEllipse(QRectF(m, m, s - 2 * m, s - 2 * m))
+        # Eyes
+        dot = s * 0.06
+        p.setPen(Qt.NoPen)
+        p.setBrush(fg)
+        p.drawEllipse(QPointF(s * 0.37, s * 0.40), dot, dot)
+        p.drawEllipse(QPointF(s * 0.63, s * 0.40), dot, dot)
+        # Smile arc
+        from PyQt5.QtCore import QRect
+        p.setPen(QPen(fg, max(1.0, s / 18)))
+        p.setBrush(Qt.NoBrush)
+        arc_rect = QRect(int(s * 0.28), int(s * 0.28),
+                         int(s * 0.44), int(s * 0.44))
+        p.drawArc(arc_rect, -30 * 16, -120 * 16)
+    return _fmt_icon(size, _draw)
+
+
+def comment_icon(size: int = 20) -> QIcon:
+    """Speech bubble with lines."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        p.setPen(QPen(fg, max(1.0, s / 16)))
+        p.setBrush(Qt.NoBrush)
+        # Bubble body
+        bx, by, bw, bh = s * 0.10, s * 0.12, s * 0.80, s * 0.54
+        p.drawRoundedRect(QRectF(bx, by, bw, bh), 3, 3)
+        # Tail
+        p.drawLine(QPointF(s * 0.24, by + bh),
+                   QPointF(s * 0.18, s * 0.84))
+        p.drawLine(QPointF(s * 0.18, s * 0.84),
+                   QPointF(s * 0.40, by + bh))
+        # Text lines
+        p.setPen(QPen(fg, max(0.8, s / 22)))
+        for yy in (0.30, 0.42, 0.52):
+            p.drawLine(QPointF(s * 0.22, s * yy),
+                       QPointF(s * 0.78, s * yy))
+    return _fmt_icon(size, _draw)
+
+
+def note_icon(size: int = 20) -> QIcon:
+    """Sticky-note with folded corner."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        m = s * 0.12
+        w = s - 2 * m
+        fold = s * 0.20
+        # Note body (rectangle minus folded corner)
+        path = [QPointF(m, m), QPointF(m + w - fold, m),
+                QPointF(m + w, m + fold), QPointF(m + w, m + w),
+                QPointF(m, m + w)]
+        p.setPen(QPen(fg, max(1.0, s / 16)))
+        p.setBrush(QColor("#fff9c4"))
+        p.drawPolygon(QPolygonF(path))
+        # Fold line
+        p.drawLine(QPointF(m + w - fold, m),
+                   QPointF(m + w - fold, m + fold))
+        p.drawLine(QPointF(m + w - fold, m + fold),
+                   QPointF(m + w, m + fold))
+        # Text lines
+        p.setPen(QPen(fg, max(0.8, s / 22)))
+        for yy in (0.38, 0.50, 0.62):
+            p.drawLine(QPointF(s * 0.22, s * yy),
+                       QPointF(s * 0.68, s * yy))
+    return _fmt_icon(size, _draw)
+
+
+def link_icon(size: int = 20) -> QIcon:
+    """Two interlocking chain links."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        p.setPen(QPen(fg, max(1.2, s / 12)))
+        p.setBrush(Qt.NoBrush)
+        # Left link
+        p.drawRoundedRect(QRectF(s * 0.10, s * 0.32, s * 0.42, s * 0.36),
+                          s * 0.18, s * 0.18)
+        # Right link
+        p.drawRoundedRect(QRectF(s * 0.48, s * 0.32, s * 0.42, s * 0.36),
+                          s * 0.18, s * 0.18)
     return _fmt_icon(size, _draw)
