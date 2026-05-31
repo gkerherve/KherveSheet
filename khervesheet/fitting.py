@@ -386,9 +386,13 @@ class FittingDialog(QDialog):
                 "convention is pV = η·L + (1-η)·G.</p>",
                 "<p><b>Per-peak limits:</b> each added function has its "
                 "own Min/Max/Vary. <b>Tie peaks together</b> with the "
-                "<i>Expr</i> column, referencing other peaks by the "
-                "prefix shown in the list — e.g. <code>p0_center+1.5</code>"
-                " or <code>0.5*p0_amplitude</code>.</p>",
+                "<i>Expr</i> column, referencing peaks by the prefix shown "
+                "in the list. A bare peak name means the same parameter on "
+                "that peak — on the centre row <code>p0</code> means "
+                "<code>p0_center</code>, e.g. <code>p0+1.5</code> or "
+                "<code>0.5*p0</code>; use <code>p0_sigma</code> to "
+                "reference a different parameter. See the <b>?</b> next to "
+                "<i>Fit</i> for details.</p>",
                 "<table cellspacing='0' cellpadding='4' border='1' "
                 "style='border-collapse:collapse;'>",
                 "<tr style='background:#eef4fb;'><th>Function</th>"
