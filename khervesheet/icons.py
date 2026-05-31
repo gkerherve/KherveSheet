@@ -1416,6 +1416,19 @@ def symbol_icon(size: int = 28) -> QIcon:
     return _fmt_icon(size, _draw)
 
 
+def omega_icon(size: int = 28) -> QIcon:
+    """Greek capital omega (Ω) glyph for the Insert Symbol button."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        f = QFont()
+        f.setPointSizeF(max(8.0, s * 0.62))
+        f.setBold(True)
+        p.setFont(f)
+        p.setPen(QPen(fg))
+        p.drawText(QRectF(0, 0, s, s), int(Qt.AlignCenter), "Ω")
+    return _fmt_icon(size, _draw)
+
+
 def merge_cells_icon(size: int = 28) -> QIcon:
     """Four cells merging into one with inward arrows."""
     def _draw(p, s):

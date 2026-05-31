@@ -15,7 +15,7 @@ the Free Software Foundation, either version 3 of the License, or
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt, QRect, QPoint, QPointF
+from PyQt5.QtCore import Qt, QRect, QPoint, QPointF, QTimer
 from PyQt5.QtGui import (
     QPainter, QPen, QColor, QBrush, QPolygonF, QFont,
 )
@@ -127,6 +127,44 @@ class ShapeChangeCmd(QUndoCommand):
         self._shape._apply_style(self._after)
 
 
+# ── Inline text editor ─────────────────────────────────────────────────
+
+class _InlineTextEdit(QTextEdit):
+    """In-place editor shown over a shape.  Commits on focus-out or
+    Enter, cancels on Esc.  Teardown is always deferred via a timer so
+    the editor is never deleted while Qt is mid event-dispatch (which
+    can crash)."""
+
+    def __init__(self, shape):
+        super().__init__(shape)
+        self._shape = shape
+        self._done = False
+
+    def focusOutEvent(self, ev):
+        super().focusOutEvent(ev)
+        self._finish(commit=True)
+
+    def keyPressEvent(self, ev):
+        if ev.key() == Qt.Key_Escape:
+            self._finish(commit=False)
+            return
+        if ev.key() in (Qt.Key_Return, Qt.Key_Enter) and not (
+                ev.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier)):
+            self._finish(commit=True)
+            return
+        super().keyPressEvent(ev)
+
+    def _finish(self, commit):
+        if self._done:
+            return
+        self._done = True
+        shape = self._shape
+        text = self.toPlainText()
+        self.clearFocus()
+        QTimer.singleShot(
+            0, lambda: shape._end_inline_edit(self, text, commit))
+
+
 # ── The shape widget ───────────────────────────────────────────────────
 
 class EmbeddedShape(QWidget):
@@ -143,6 +181,10 @@ class EmbeddedShape(QWidget):
         self._text = ""
         self._text_color = "#000000"
         self._font_size = 9
+        self._bold = False
+        self._italic = False
+        self._underline = False
+        self._text_align = int(Qt.AlignLeft)   # horizontal flag
         self._rotation = 0.0
         self._selected = False
         self._inline_editor = None
@@ -171,6 +213,10 @@ class EmbeddedShape(QWidget):
             "text": self._text,
             "text_color": self._text_color,
             "font_size": self._font_size,
+            "bold": self._bold,
+            "italic": self._italic,
+            "underline": self._underline,
+            "text_align": self._text_align,
             "rotation": self._rotation,
         }
 
@@ -182,6 +228,10 @@ class EmbeddedShape(QWidget):
         self._text = d.get("text", self._text)
         self._text_color = d.get("text_color", self._text_color)
         self._font_size = d.get("font_size", self._font_size)
+        self._bold = bool(d.get("bold", self._bold))
+        self._italic = bool(d.get("italic", self._italic))
+        self._underline = bool(d.get("underline", self._underline))
+        self._text_align = int(d.get("text_align", self._text_align))
         self._rotation = float(d.get("rotation", self._rotation))
         self.update()
 
@@ -236,13 +286,11 @@ class EmbeddedShape(QWidget):
         # Text (all shapes), hidden while the inline editor is open.
         if self._text and self._inline_editor is None:
             p.setPen(QPen(QColor(self._text_color)))
-            f = QFont()
-            f.setPointSize(int(self._font_size))
-            p.setFont(f)
-            align = (Qt.AlignLeft | Qt.AlignTop if st in _CLOSED
-                     else Qt.AlignCenter)
+            p.setFont(self._text_font())
+            valign = Qt.AlignTop if st in _CLOSED else Qt.AlignVCenter
+            align = (self._text_align & Qt.AlignHorizontal_Mask) | valign
             p.drawText(inner.adjusted(4, 4, -4, -4),
-                       Qt.TextWordWrap | align, self._text)
+                       int(Qt.TextWordWrap | align), self._text)
         p.restore()
 
         # Selection border + handles (axis-aligned, never rotated).
@@ -265,6 +313,14 @@ class EmbeddedShape(QWidget):
 
     def _rot_handle_pos(self):
         return self.rect().width() // 2, _PAD + _ROT_R
+
+    def _text_font(self):
+        f = QFont()
+        f.setPointSize(int(self._font_size))
+        f.setBold(self._bold)
+        f.setItalic(self._italic)
+        f.setUnderline(self._underline)
+        return f
 
     def _draw_arrowhead(self, p, a, b):
         import math
@@ -418,64 +474,63 @@ class EmbeddedShape(QWidget):
             self._inline_editor.setFocus()
             return
         self._edit_before = self._style_dict()
-        ed = QTextEdit(self)
+        ed = _InlineTextEdit(self)
         ed.setPlainText(self._text)
         ed.setStyleSheet(
             "QTextEdit { background: rgba(255,255,255,210);"
             " border: 1px solid #3078c6; }")
-        f = ed.font()
-        f.setPointSize(int(self._font_size))
-        ed.setFont(f)
+        ed.setFont(self._text_font())
+        ed.setTextColor(QColor(self._text_color))
+        ed.setAlignment(
+            (self._text_align & Qt.AlignHorizontal_Mask) | Qt.AlignTop)
         m = _PAD + 2
         ed.setGeometry(m, m, max(20, self.width() - 2 * m),
                        max(16, self.height() - 2 * m))
-        ed.show()
-        ed.setFocus()
-        ed.installEventFilter(self)
         self._inline_editor = ed
         self.update()
+        ed.show()
+        ed.setFocus()
 
-    def eventFilter(self, obj, ev):
-        from PyQt5.QtCore import QEvent
-        if obj is self._inline_editor:
-            if ev.type() == QEvent.FocusOut:
-                self._commit_inline_edit()
-                return False
-            if ev.type() == QEvent.KeyPress:
-                k = ev.key()
-                if k == Qt.Key_Escape:
-                    self._cancel_inline_edit()
-                    return True
-                # Ctrl+Enter or Shift+Enter inserts newline; plain
-                # Enter commits.
-                if k in (Qt.Key_Return, Qt.Key_Enter) and \
-                        not (ev.modifiers() & (Qt.ShiftModifier
-                                               | Qt.ControlModifier)):
-                    self._commit_inline_edit()
-                    return True
-        return super().eventFilter(obj, ev)
-
-    def _commit_inline_edit(self):
+    def set_text_format(self, *, bold=None, italic=None, underline=None,
+                        align=None, label="Format Shape"):
+        """Apply text formatting (used by the toolbar) — undoable."""
+        before = self._style_dict()
+        if bold is not None:
+            self._bold = bool(bold)
+        if italic is not None:
+            self._italic = bool(italic)
+        if underline is not None:
+            self._underline = bool(underline)
+        if align is not None:
+            self._text_align = int(align) & int(Qt.AlignHorizontal_Mask)
+        # Live-update an open editor so the change is visible immediately.
         ed = self._inline_editor
-        if ed is None:
-            return
-        self._inline_editor = None
-        new_text = ed.toPlainText()
-        ed.removeEventFilter(self)
-        ed.deleteLater()
-        self._text = new_text
+        if ed is not None:
+            cur = ed.textCursor()
+            ed.selectAll()
+            ed.setFont(self._text_font())
+            if align is not None:
+                ed.setAlignment(
+                    (self._text_align & Qt.AlignHorizontal_Mask)
+                    | Qt.AlignTop)
+            ed.setTextCursor(cur)
         self.update()
-        self._push_change(getattr(self, "_edit_before",
-                                  self._style_dict()), "Edit Text")
+        self._push_change(before, label)
 
-    def _cancel_inline_edit(self):
-        ed = self._inline_editor
-        if ed is None:
-            return
-        self._inline_editor = None
-        ed.removeEventFilter(self)
-        ed.deleteLater()
-        self.update()
+    def _end_inline_edit(self, editor, text, commit):
+        """Tear down the inline editor (called deferred, never mid-event)."""
+        if self._inline_editor is editor:
+            self._inline_editor = None
+        editor.hide()
+        editor.setParent(None)
+        editor.deleteLater()
+        if commit:
+            self._text = text
+            self.update()
+            self._push_change(getattr(self, "_edit_before",
+                                      self._style_dict()), "Edit Text")
+        else:
+            self.update()
 
     def _open_properties(self):
         before = self._style_dict()

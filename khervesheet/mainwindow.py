@@ -586,7 +586,7 @@ class MainWindow(QMainWindow):
 
         # ── Symbol insertion button ──────────────────────────────
         self._symbol_btn = QToolButton()
-        self._symbol_btn.setIcon(icons.symbol_icon(28))
+        self._symbol_btn.setIcon(icons.omega_icon(28))
         self._symbol_btn.setToolTip("Insert Symbol")
         self._symbol_btn.setPopupMode(QToolButton.InstantPopup)
         sym_menu = QMenu(self._symbol_btn)
@@ -2048,6 +2048,10 @@ class MainWindow(QMainWindow):
 
     def _toggle_bold(self):
         checked = self._bold_act.isChecked()
+        ov = self._selected_overlay()
+        if ov is not None and hasattr(ov, "set_text_format"):
+            ov.set_text_format(bold=checked, label="Bold")
+            return
         s = self._active_sheet()
         keys = self._selected_cell_keys()
         old = self._push_format_undo(s, keys) if s else None
@@ -2067,6 +2071,10 @@ class MainWindow(QMainWindow):
 
     def _toggle_italic(self):
         checked = self._italic_act.isChecked()
+        ov = self._selected_overlay()
+        if ov is not None and hasattr(ov, "set_text_format"):
+            ov.set_text_format(italic=checked, label="Italic")
+            return
         s = self._active_sheet()
         keys = self._selected_cell_keys()
         old = self._push_format_undo(s, keys) if s else None
@@ -2086,6 +2094,10 @@ class MainWindow(QMainWindow):
 
     def _toggle_underline(self):
         checked = self._underline_act.isChecked()
+        ov = self._selected_overlay()
+        if ov is not None and hasattr(ov, "set_text_format"):
+            ov.set_text_format(underline=checked, label="Underline")
+            return
         s = self._active_sheet()
         keys = self._selected_cell_keys()
         old = self._push_format_undo(s, keys) if s else None
@@ -2109,6 +2121,10 @@ class MainWindow(QMainWindow):
             alignment & Qt.AlignLeft and not alignment & Qt.AlignHCenter)
         self._align_center_act.setChecked(bool(alignment & Qt.AlignHCenter))
         self._align_right_act.setChecked(bool(alignment & Qt.AlignRight))
+        ov = self._selected_overlay()
+        if ov is not None and hasattr(ov, "set_text_format"):
+            ov.set_text_format(align=int(alignment), label="Alignment")
+            return
         s = self._active_sheet()
         keys = self._selected_cell_keys()
         old = self._push_format_undo(s, keys) if s else None
