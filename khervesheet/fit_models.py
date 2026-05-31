@@ -40,7 +40,9 @@ class FitFunction:
     several copies of the same shape can be summed in one composite."""
 
     def __init__(self, key: str, label: str, group: str,
-                 factory: Callable, expr: str = "", guesser=None):
+                 factory: Callable, expr: str = "", guesser=None,
+                 source: str = "", formula: str = "",
+                 description: str = ""):
         self.key = key
         self.label = label
         self.group = group
@@ -49,6 +51,9 @@ class FitFunction:
         # Optional guesser(x, y) -> {param_name: value}; used for models
         # that don't ship an lmfit .guess() (our stable replacements).
         self.guesser = guesser
+        self.source = source            # where the model comes from
+        self.formula = formula          # human-readable equation
+        self.description = description   # one-line explanation
 
     def make_model(self, prefix: str):
         return self._factory(prefix)
@@ -92,6 +97,88 @@ _LMFIT_SPECS = [
     ("QuadraticModel", "Quadratic", "Polynomial"),
     ("ConstantModel", "Constant", "Polynomial"),
 ]
+
+
+# Concise formula + explanation per model, keyed by lmfit class name (or
+# our own key for the stable/freed variants).  Source is filled in
+# separately.  amplitude=A, center=mu, sigma=s, etc.
+_MODEL_INFO = {
+    "GaussianModel": (
+        "A/(s·√(2π)) · exp(-(x-mu)²/(2s²))",
+        "Symmetric bell curve; FWHM = 2.3548·s."),
+    "LorentzianModel": (
+        "A/π · s/((x-mu)² + s²)",
+        "Cauchy/Lorentzian peak with heavier tails than a Gaussian."),
+    "voigt_sg": (
+        "Voigt = Gaussian(s) ⊗ Lorentzian(gamma)",
+        "Convolution of Gaussian and Lorentzian; sigma and gamma are "
+        "both fitted independently."),
+    "PseudoVoigtModel": (
+        "fraction·Lorentzian + (1-fraction)·Gaussian",
+        "Linear Gaussian/Lorentzian mix; the standard XRD/XPS peak."),
+    "Pearson7Model": (
+        "A / [1 + ((x-mu)/s)²·(2^(1/m)-1)]^m",
+        "Pearson VII — Gaussian (m→∞) to Lorentzian (m=1); XRD."),
+    "Pearson4Model": (
+        "Pearson IV (skewed Pearson VII)",
+        "Asymmetric Pearson with a skew parameter; XRD."),
+    "SplitLorentzianModel": (
+        "Lorentzian with sigma left of centre, sigma_r right",
+        "Asymmetric Lorentzian with independent half-widths."),
+    "MoffatModel": (
+        "A / [1 + ((x-mu)/s)²]^beta",
+        "Moffat profile; optical point-spread functions."),
+    "DoniachModel": (
+        "A·cos[πα/2 + (1-α)·atan((x-mu)/s)] / (s²+(x-mu)²)^((1-α)/2)",
+        "Doniach–Šunjić asymmetric core-level line shape (XPS)."),
+    "SkewedGaussianModel": (
+        "Gaussian · [1 + erf(gamma·(x-mu)/(s√2))]",
+        "Gaussian skewed by gamma."),
+    "SkewedVoigtModel": (
+        "Voigt skewed by an error-function factor (skew)",
+        "Asymmetric Voigt."),
+    "emg_stable": (
+        "A·gamma/2 · exp(gamma/2·(2mu+gamma·s²-2x)) · erfc(...)",
+        "Exponentially-modified Gaussian (tailing peak); evaluated via "
+        "erfcx so it never overflows."),
+    "BreitWignerModel": (
+        "A·(q·s/2 + x-mu)² / ((s/2)² + (x-mu)²)",
+        "Breit–Wigner–Fano resonance; asymmetric Raman lines."),
+    "LognormalModel": (
+        "A/(x·s√(2π)) · exp(-(ln x-mu)²/(2s²))",
+        "Log-normal distribution; particle-size data."),
+    "StudentsTModel": (
+        "Student's t distribution",
+        "Bell curve with adjustable tail weight."),
+    "DampedOscillatorModel": (
+        "A / √((1-(x/mu)²)² + (2·s·x/mu)²)",
+        "Amplitude of a driven damped oscillator."),
+    "DampedHarmonicOscillatorModel": (
+        "Damped harmonic oscillator (DHO) response",
+        "DHO line shape used in inelastic scattering."),
+    "ThermalDistributionModel": (
+        "Bose/Maxwell/Fermi thermal distribution",
+        "Thermal occupation versus energy."),
+    "BoseModel": ("1/(exp((x-mu)/kt) - 1)",
+                  "Bose–Einstein distribution."),
+    "FermiModel": ("1/(exp((x-mu)/kt) + 1)",
+                   "Fermi–Dirac distribution."),
+    "StepModel": (
+        "A·step((x-mu)/s)  [linear/erf/atan/logistic]",
+        "Rising step; TGA mass loss / DSC transitions."),
+    "RectangleModel": (
+        "A·[step up at center1] · [step down at center2]",
+        "Top-hat / rectangle built from two steps."),
+    "ExponentialModel": ("A·exp(-x/decay)",
+                         "Exponential decay; kinetics."),
+    "PowerLawModel": ("A·x^exponent",
+                      "Power law; scaling / AFM."),
+    "SineModel": ("A·sin(frequency·x + shift)",
+                  "Sinusoid."),
+    "LinearModel": ("slope·x + intercept", "Straight line."),
+    "QuadraticModel": ("a·x² + b·x + c", "Parabola."),
+    "ConstantModel": ("c", "Constant offset."),
+}
 
 
 def _builtin_factory(class_name):
@@ -179,17 +266,44 @@ def builtin_functions() -> List[FitFunction]:
             getattr(M, cls_name)
         except (ImportError, AttributeError):
             continue
-        funcs.append(FitFunction("lmfit:" + cls_name, label, group,
-                                 _builtin_factory(cls_name)))
+        formula, desc = _MODEL_INFO.get(cls_name, ("", ""))
+        funcs.append(FitFunction(
+            "lmfit:" + cls_name, label, group,
+            _builtin_factory(cls_name), source="lmfit",
+            formula=formula, description=desc))
     # Voigt with both widths free (sigma = Gaussian, gamma = Lorentzian).
+    vf, vd = _MODEL_INFO["voigt_sg"]
     funcs.insert(2, FitFunction(
         "voigt_sg", "Voigt", "Common / XRD", _voigt_factory,
-        guesser=_voigt_guess))
+        guesser=_voigt_guess, source="lmfit (gamma freed)",
+        formula=vf, description=vd))
     # Stable EMG (replaces lmfit's NaN-prone ExponentialGaussianModel).
+    ef, ed = _MODEL_INFO["emg_stable"]
     funcs.append(FitFunction(
         "emg_stable", "Exp.-modified Gaussian", "TGA / chromatography",
-        _emg_factory, guesser=_emg_guess))
+        _emg_factory, guesser=_emg_guess,
+        source="KherveSheet (stable EMG)", formula=ef, description=ed))
     return funcs
+
+
+def function_help(custom_store: Dict[str, dict]):
+    """Return [{label, group, source, formula, description, params}] for
+    every available function, for the Curve Fitting help dialog."""
+    rows = []
+    for f in all_functions(custom_store):
+        try:
+            pars = f.make_model("p_").make_params()
+            params = [p[2:] for p in pars if not pars[p].expr]
+        except Exception:
+            params = []
+        rows.append({
+            "label": f.label, "group": f.group,
+            "source": f.source or "lmfit",
+            "formula": f.expr or f.formula,
+            "description": f.description or "",
+            "params": params,
+        })
+    return rows
 
 
 # ── User-built custom functions ─────────────────────────────────────

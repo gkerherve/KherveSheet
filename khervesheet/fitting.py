@@ -29,8 +29,10 @@ from PyQt5.QtWidgets import (
     QCheckBox,
 )
 
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as \
-    FigureCanvas
+from matplotlib.backends.backend_qt5agg import (
+    FigureCanvasQTAgg as FigureCanvas,
+    NavigationToolbar2QT as NavigationToolbar,
+)
 from matplotlib.figure import Figure
 
 from .sheet import SheetWidget, col_index_to_letter
@@ -148,6 +150,7 @@ class FittingDialog(QDialog):
         self._active_edit: Optional[_PickLineEdit] = None
         self._result = None          # last lmfit ModelResult
         self._fit_arrays = None      # (x_full, labels, comps, bg, total)
+        self._fit_ctx = None         # ranges used for the last fit
         self._peaks = []             # list of peak dicts
         self._cur_peak = -1          # index into _peaks shown in editor
         # Custom functions persist on the sheet for the session.
@@ -221,8 +224,13 @@ class FittingDialog(QDialog):
         add_row.addWidget(self._fn_combo, 1)
         self._add_btn = QPushButton("Add")
         self._custom_btn = QPushButton("Custom…")
+        self._help_btn = QPushButton("?")
+        self._help_btn.setFixedWidth(28)
+        self._help_btn.setToolTip("Show the equation, source and "
+                                  "parameters of every function")
         add_row.addWidget(self._add_btn)
         add_row.addWidget(self._custom_btn)
+        add_row.addWidget(self._help_btn)
         fv.addLayout(add_row)
 
         self._peak_list = QListWidget()
@@ -237,6 +245,7 @@ class FittingDialog(QDialog):
 
         self._add_btn.clicked.connect(self._add_selected_function)
         self._custom_btn.clicked.connect(self._build_custom_function)
+        self._help_btn.clicked.connect(self._show_help)
         self._del_btn.clicked.connect(self._delete_peak)
         self._peak_list.currentRowChanged.connect(self._show_peak_params)
 
@@ -281,6 +290,9 @@ class FittingDialog(QDialog):
         self._figure = Figure(figsize=(5, 4), dpi=100, tight_layout=True)
         self._canvas = FigureCanvas(self._figure)
         self._ax = self._figure.add_subplot(111)
+        # Pan / box-zoom / save toolbar (matplotlib's own).
+        self._nav = NavigationToolbar(self._canvas, self)
+        rcol.addWidget(self._nav)
         rcol.addWidget(self._canvas, 1)
         self._report = QTextEdit()
         self._report.setReadOnly(True)
@@ -318,6 +330,52 @@ class FittingDialog(QDialog):
         if idx is None or idx < 0 or idx >= len(self._functions):
             return
         self._add_peak(self._functions[idx])
+
+    def _show_help(self):
+        """Pop a reference of every function: equation, source, params."""
+        rows = fm.function_help(self._custom_store)
+        html = ["<html><body style='font-family:sans-serif;'>",
+                "<h3>Fitting functions</h3>",
+                "<p>Peak <b>height</b> is reported via lmfit's derived "
+                "parameters in the fit report; the editor exposes the "
+                "free parameters below. The Young (1993) pseudo-Voigt "
+                "convention is pV = η·L + (1-η)·G.</p>",
+                "<table cellspacing='0' cellpadding='4' border='1' "
+                "style='border-collapse:collapse;'>",
+                "<tr style='background:#eef4fb;'><th>Function</th>"
+                "<th>Source</th><th>Equation</th><th>Parameters</th>"
+                "<th>Notes</th></tr>"]
+        last_group = None
+        for r in rows:
+            if r["group"] != last_group:
+                last_group = r["group"]
+                html.append(
+                    f"<tr style='background:#f4f4f4;'><td colspan='5'>"
+                    f"<b>{last_group}</b></td></tr>")
+            html.append(
+                "<tr>"
+                f"<td><b>{r['label']}</b></td>"
+                f"<td>{r['source']}</td>"
+                f"<td><code>{r['formula'] or '—'}</code></td>"
+                f"<td>{', '.join(r['params'])}</td>"
+                f"<td>{r['description']}</td></tr>")
+        html.append("</table></body></html>")
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Fitting Functions — Reference")
+        dlg.resize(820, 560)
+        lay = QVBoxLayout(dlg)
+        view = QTextEdit()
+        view.setReadOnly(True)
+        view.setHtml("".join(html))
+        lay.addWidget(view)
+        btn = QPushButton("Close")
+        btn.clicked.connect(dlg.accept)
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(btn)
+        lay.addLayout(row)
+        dlg.exec_()
 
     def _build_custom_function(self):
         dlg = _CustomFunctionDialog(self)
@@ -497,6 +555,16 @@ class FittingDialog(QDialog):
             QMessageBox.warning(self, "Curve Fitting",
                                 "Add at least one function to fit.")
             return
+        # Remember the exact ranges used for this fit, so Apply/chart use
+        # them rather than re-reading the edit fields — which get
+        # overwritten the moment the user clicks in the sheet (cell-pick).
+        yinfo = _range_to_col_rows(self._y_edit.text())
+        xinfo = _range_to_col_rows(self._x_edit.text())
+        self._fit_ctx = {
+            "ycol": yinfo[0], "r0": yinfo[1], "r1": yinfo[2],
+            "xcol": xinfo[0] if xinfo else None,
+            "y_full": y_full.copy(),
+        }
         mask = np.isfinite(x_full) & np.isfinite(y_full)
         if mask.sum() < 3:
             QMessageBox.warning(self, "Curve Fitting",
@@ -637,14 +705,12 @@ class FittingDialog(QDialog):
     # ── Write results back to the sheet ─────────────────────────────
 
     def _apply_to_sheet(self):
-        if self._fit_arrays is None:
+        if self._fit_arrays is None or self._fit_ctx is None:
             return
-        yinfo = _range_to_col_rows(self._y_edit.text())
-        if yinfo is None:
-            return
-        ycol, r0, r1 = yinfo
+        ctx = self._fit_ctx
+        ycol, r0, r1 = ctx["ycol"], ctx["r0"], ctx["r1"]
         x_full, labels, arrays, bg, total = self._fit_arrays
-        _x2, y_full = self._read_xy(silent=True)
+        y_full = ctx["y_full"]
         resid = y_full - total
 
         out_cols = []
@@ -684,9 +750,7 @@ class FittingDialog(QDialog):
             self._sheet.data_changed.emit(start_col + j)
 
         if self._chart_chk.isChecked():
-            xinfo = _range_to_col_rows(self._x_edit.text())
-            xcol = xinfo[0] if xinfo else None
-            self._make_result_chart(ycol, xcol, r0, r1, start_col,
+            self._make_result_chart(ycol, ctx["xcol"], r0, r1, start_col,
                                     out_cols)
 
         QMessageBox.information(
