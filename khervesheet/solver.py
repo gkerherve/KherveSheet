@@ -817,14 +817,19 @@ class SolverDialog(QDialog):
         def _solve_nonlinear():
             # Spreadsheet models are routinely badly scaled — a peak
             # amplitude of ~500 sitting next to a background coefficient
-            # of ~0.1 whose term is multiplied by a large x².  Gradient
-            # methods (SLSQP) take a finite-difference Jacobian and
-            # diverge on such conditioning.  Powell is a derivative-free
-            # direction-set method that is immune to this and reliably
-            # matches Excel's GRG on these problems, so prefer it when
-            # there are no constraints.  Fall back to SLSQP only when
-            # constraints are present (Powell can't honour them).
-            if scipy_constraints:
+            # of ~0.1 whose term is multiplied by a large x².  Powell is
+            # a derivative-free direction-set method that is immune to
+            # this and reliably matches Excel's GRG, so it is the engine
+            # of choice for an unconstrained problem.
+            #
+            # As soon as the user adds *any* constraint, however, we use
+            # SLSQP: it honours both the box bounds (into which
+            # variable-cell constraints have been folded) and any
+            # remaining nonlinear constraints, and it actually iterates
+            # on these models.  Powell cannot be trusted here — with a
+            # variable pinned to a tight bound it tends to quit after a
+            # single pass without improving the objective.
+            if self._constraints:
                 return opt.minimize(
                     _obj, x0, method='SLSQP', bounds=bounds,
                     constraints=scipy_constraints, callback=_pump,
@@ -903,6 +908,15 @@ class SolverDialog(QDialog):
             QMessageBox.information(
                 self, "Solver", "Solver cancelled by user.")
             return
+
+        # Safety net: guarantee the reported solution honours the bounds,
+        # even if the optimiser stepped marginally outside them.
+        if getattr(result, "x", None) is not None:
+            for i, (lo, hi) in enumerate(bounds):
+                if lo is not None and result.x[i] < lo:
+                    result.x[i] = lo
+                if hi is not None and result.x[i] > hi:
+                    result.x[i] = hi
 
         if not result.success:
             # Still write the best result found, but warn user.
