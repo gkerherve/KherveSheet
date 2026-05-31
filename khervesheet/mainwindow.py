@@ -51,6 +51,8 @@ class MainWindow(QMainWindow):
         self._page_margins_mm = {"top": 25.4, "bottom": 25.4,
                                  "left": 19.05, "right": 19.05}
         self._init_ui()
+        # Open files dropped onto the window (grid included).
+        self.setAcceptDrops(True)
 
     # ── UI setup ─────────────────────────────────────────────────────
     def _init_ui(self):
@@ -899,24 +901,38 @@ class MainWindow(QMainWindow):
         wb.tabs.setCurrentIndex(0)
         self._status_msg("Example loaded", 3000)
 
+    # Extensions accepted by the open dialog and drag-and-drop.
+    _OPENABLE_EXTS = (".ksheet", ".csv", ".xlsx", ".xlsm")
+
+    def _open_path(self, path: str, add_recent: bool = True) -> bool:
+        """Load a file by its extension (.ksheet / .csv / .xlsx / .xlsm).
+        Returns True if the extension was recognised and loaded."""
+        low = path.lower()
+        if low.endswith(".ksheet"):
+            self._load_ksheet(path)
+        elif low.endswith(".csv"):
+            self._load_csv(path)
+        elif low.endswith((".xlsx", ".xlsm")):
+            self._load_excel(path)
+        else:
+            return False
+        self._current_file = path
+        if add_recent:
+            self._add_recent(path)
+        self._update_title()
+        return True
+
     def _open_file(self):
         if not self._maybe_save_changes():
             return
         path, _ = QFileDialog.getOpenFileName(
             self, "Open File", "",
             "KherveSheet (*.ksheet);;"
-            "CSV Files (*.csv);;Excel Files (*.xlsx);;All Files (*)")
+            "CSV Files (*.csv);;Excel Files (*.xlsx *.xlsm);;"
+            "All Files (*)")
         if not path:
             return
-        if path.endswith(".ksheet"):
-            self._load_ksheet(path)
-        elif path.endswith(".csv"):
-            self._load_csv(path)
-        elif path.endswith(".xlsx"):
-            self._load_excel(path)
-        self._current_file = path
-        self._add_recent(path)
-        self._update_title()
+        self._open_path(path)
 
     def _save_file(self) -> bool:
         if self._current_file:
@@ -948,6 +964,50 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         """Prompt to save unsaved changes before closing."""
         event.accept() if self._maybe_save_changes() else event.ignore()
+
+    # ── Drag-and-drop file opening ───────────────────────────────────
+    def _dropped_openable_paths(self, mime):
+        """Local file paths in a drop whose extension we can open."""
+        if not mime.hasUrls():
+            return []
+        paths = []
+        for url in mime.urls():
+            p = url.toLocalFile()
+            if p and p.lower().endswith(self._OPENABLE_EXTS):
+                paths.append(p)
+        return paths
+
+    def dragEnterEvent(self, event):
+        if self._dropped_openable_paths(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        if self._dropped_openable_paths(event.mimeData()):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        paths = self._dropped_openable_paths(event.mimeData())
+        if not paths:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        # Open the first dropped file in this window (after the usual
+        # unsaved-changes prompt); open any extras in new windows so
+        # nothing is silently discarded.
+        if not self._maybe_save_changes():
+            return
+        self._open_path(paths[0])
+        for extra in paths[1:]:
+            try:
+                win = MainWindow()
+                win.show()
+                win._open_path(extra)
+            except Exception:
+                pass
 
     def _import_text(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -1951,14 +2011,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "File Not Found",
                                 f"{path} no longer exists.")
             return
-        if path.endswith(".ksheet"):
-            self._load_ksheet(path)
-        elif path.endswith(".csv"):
-            self._load_csv(path)
-        elif path.endswith(".xlsx"):
-            self._load_excel(path)
-        self._current_file = path
-        self._update_title()
+        self._open_path(path, add_recent=False)
 
     # ── Edit operations (proxy to active sheet) ──────────────────────
     def _cut(self):
