@@ -31,7 +31,7 @@ from PyQt5.QtWidgets import (
     QWidget, QMenu, QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QLineEdit, QSpinBox, QPushButton, QDialogButtonBox,
     QColorDialog, QFormLayout, QApplication, QUndoCommand, QScrollArea,
-    QToolButton, QWidgetAction, QSizePolicy,
+    QToolButton, QWidgetAction, QSizePolicy, QCheckBox, QDoubleSpinBox,
 )
 
 from . import overlay
@@ -218,12 +218,16 @@ class EmbeddedEquation(QWidget):
     """A LaTeX equation living as a child of the grid viewport."""
 
     def __init__(self, latex="E = mc^2", fontsize=20,
-                 color="#000000", parent=None):
+                 color="#000000", parent=None, bg_color=None,
+                 border_color=None, border_width=1.0):
         super().__init__(parent)
         self.setMouseTracking(True)
         self._latex = latex
         self._fontsize = fontsize
         self._color = color
+        self._bg_color = bg_color          # None = transparent
+        self._border_color = border_color  # None = no border
+        self._border_width = border_width
         self._selected = False
         self._group_id = None
         self._group_drag = None
@@ -250,19 +254,37 @@ class EmbeddedEquation(QWidget):
         self.resize(pw + 8, ph + 8)
         self.update()
 
-    def _apply_state(self, latex, fontsize, color):
+    def _apply_state(self, latex, fontsize, color, bg_color=None,
+                     border_color=None, border_width=1.0):
         """Set content/style and re-render (used by undo)."""
         self._latex = latex
         self._fontsize = fontsize
         self._color = color
+        self._bg_color = bg_color
+        self._border_color = border_color
+        self._border_width = border_width
         self._pixmap = render_latex(latex, fontsize, color)
         self._aspect = max(self._pixmap.width(), 1) / \
             max(self._pixmap.height(), 1)
         self.update()
 
+    def _state(self):
+        """Full style snapshot tuple (for undo + dialog round-trip)."""
+        return (self._latex, self._fontsize, self._color,
+                self._bg_color, self._border_color, self._border_width)
+
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
+        # Background fill and border (drawn behind the equation).
+        br = self.rect().adjusted(1, 1, -1, -1)
+        if self._bg_color:
+            p.fillRect(br, QColor(self._bg_color))
+        if self._border_color and self._border_width > 0:
+            p.setPen(QPen(QColor(self._border_color),
+                          float(self._border_width)))
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(br)
         target = self.rect().adjusted(4, 4, -4, -4)
         if not self._pixmap.isNull():
             scaled = self._pixmap.scaled(
@@ -400,15 +422,20 @@ class EmbeddedEquation(QWidget):
     # ── Editing ───────────────────────────────────────────────────────
 
     def _open_editor(self):
-        old = (self._latex, self._fontsize, self._color)
-        dlg = EquationDialog(self._latex, self._fontsize,
-                             self._color, parent=self)
+        old = self._state()
+        dlg = EquationDialog(self._latex, self._fontsize, self._color,
+                             parent=self, bg_color=self._bg_color,
+                             border_color=self._border_color,
+                             border_width=self._border_width)
         if dlg.exec_() == QDialog.Accepted:
-            new = (dlg.latex, dlg.fontsize, dlg.color)
+            new = (dlg.latex, dlg.fontsize, dlg.color, dlg.bg_color,
+                   dlg.border_color, dlg.border_width)
             if new == old:
                 return
+            pos = self.pos()
             self._apply_state(*new)
-            self._render_keep_pos()
+            self._render()
+            self.move(pos)
             stack = _find_undo_stack(self.parent())
             if stack is not None:
                 stack.push(EditEquationCmd(self, old, new))
@@ -444,6 +471,9 @@ class EmbeddedEquation(QWidget):
             "latex": self._latex,
             "fontsize": self._fontsize,
             "color": self._color,
+            "bg_color": self._bg_color,
+            "border_color": self._border_color,
+            "border_width": self._border_width,
             "pos_x": self.pos().x(),
             "pos_y": self.pos().y(),
             "width": self.width(),
@@ -454,7 +484,10 @@ class EmbeddedEquation(QWidget):
     @classmethod
     def from_dict(cls, d: dict, parent=None) -> "EmbeddedEquation":
         eq = cls(d.get("latex", ""), d.get("fontsize", 20),
-                 d.get("color", "#000000"), parent)
+                 d.get("color", "#000000"), parent,
+                 bg_color=d.get("bg_color"),
+                 border_color=d.get("border_color"),
+                 border_width=d.get("border_width", 1.0))
         eq.move(d.get("pos_x", 0), d.get("pos_y", 0))
         eq.resize(d.get("width", eq.width()),
                   d.get("height", eq.height()))
@@ -473,11 +506,14 @@ class EquationDialog(QDialog):
     """
 
     def __init__(self, latex="E = mc^2", fontsize=20,
-                 color="#000000", parent=None):
+                 color="#000000", parent=None, bg_color=None,
+                 border_color=None, border_width=1.0):
         super().__init__(parent)
         self.setWindowTitle("Equation Editor")
-        self.resize(560, 360)
+        self.resize(560, 420)
         self._color = color
+        self._bg_color = bg_color or "#FFFFCC"
+        self._border_color = border_color or "#000000"
 
         layout = QVBoxLayout(self)
 
@@ -517,7 +553,48 @@ class EquationDialog(QDialog):
         row.addWidget(self._color_swatch)
         row.addStretch(1)
         form.addRow("Colour:", row)
+
+        # Background fill.
+        bg_row = QHBoxLayout()
+        self._bg_check = QCheckBox("Fill")
+        self._bg_check.setChecked(bg_color is not None)
+        self._bg_check.toggled.connect(self._on_bg_toggle)
+        self._bg_btn = QPushButton("Colour…")
+        self._bg_btn.clicked.connect(self._pick_bg_color)
+        self._bg_swatch = QLabel()
+        self._bg_swatch.setFixedSize(40, 20)
+        bg_row.addWidget(self._bg_check)
+        bg_row.addWidget(self._bg_btn)
+        bg_row.addWidget(self._bg_swatch)
+        bg_row.addStretch(1)
+        form.addRow("Background:", bg_row)
+
+        # Border.
+        bd_row = QHBoxLayout()
+        self._bd_check = QCheckBox("Border")
+        self._bd_check.setChecked(border_color is not None)
+        self._bd_check.toggled.connect(self._on_bd_toggle)
+        self._bd_btn = QPushButton("Colour…")
+        self._bd_btn.clicked.connect(self._pick_bd_color)
+        self._bd_swatch = QLabel()
+        self._bd_swatch.setFixedSize(40, 20)
+        self._bd_width = QDoubleSpinBox()
+        self._bd_width.setRange(0.5, 12.0)
+        self._bd_width.setSingleStep(0.5)
+        self._bd_width.setValue(border_width or 1.0)
+        self._bd_width.valueChanged.connect(self._update_preview)
+        bd_row.addWidget(self._bd_check)
+        bd_row.addWidget(self._bd_btn)
+        bd_row.addWidget(self._bd_swatch)
+        bd_row.addWidget(QLabel("Width:"))
+        bd_row.addWidget(self._bd_width)
+        bd_row.addStretch(1)
+        form.addRow("Border:", bd_row)
+
         layout.addLayout(form)
+        self._update_bg_swatch()
+        self._update_bd_swatch()
+        self._sync_enabled()
 
         bb = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -582,10 +659,59 @@ class EquationDialog(QDialog):
         self._color_swatch.setStyleSheet(
             f"background:{self._color}; border:1px solid #808080;")
 
+    def _pick_bg_color(self):
+        c = QColorDialog.getColor(QColor(self._bg_color), self,
+                                  "Background Colour")
+        if c.isValid():
+            self._bg_color = c.name()
+            self._bg_check.setChecked(True)
+            self._update_bg_swatch()
+            self._update_preview()
+
+    def _pick_bd_color(self):
+        c = QColorDialog.getColor(QColor(self._border_color), self,
+                                  "Border Colour")
+        if c.isValid():
+            self._border_color = c.name()
+            self._bd_check.setChecked(True)
+            self._update_bd_swatch()
+            self._update_preview()
+
+    def _on_bg_toggle(self, _checked):
+        self._sync_enabled()
+        self._update_preview()
+
+    def _on_bd_toggle(self, _checked):
+        self._sync_enabled()
+        self._update_preview()
+
+    def _sync_enabled(self):
+        self._bg_btn.setEnabled(self._bg_check.isChecked())
+        on = self._bd_check.isChecked()
+        self._bd_btn.setEnabled(on)
+        self._bd_width.setEnabled(on)
+
+    def _update_bg_swatch(self):
+        self._bg_swatch.setStyleSheet(
+            f"background:{self._bg_color}; border:1px solid #808080;")
+
+    def _update_bd_swatch(self):
+        self._bd_swatch.setStyleSheet(
+            f"background:{self._border_color}; border:1px solid #808080;")
+
     def _update_preview(self):
         pm = render_latex(self._input.text(), self._size_spin.value(),
                           self._color)
         self._preview.setPixmap(pm)
+        # Reflect fill + border in the preview panel itself.
+        bg = self.bg_color or "#ffffff"
+        if self.border_color:
+            border = (f"{self.border_width:g}px solid "
+                      f"{self.border_color}")
+        else:
+            border = "1px solid #c0c0c0"
+        self._preview.setStyleSheet(
+            f"background:{bg}; border:{border};")
 
     # ── Result accessors ──────────────────────────────────────────────
 
@@ -600,6 +726,19 @@ class EquationDialog(QDialog):
     @property
     def color(self):
         return self._color
+
+    @property
+    def bg_color(self):
+        return self._bg_color if self._bg_check.isChecked() else None
+
+    @property
+    def border_color(self):
+        return (self._border_color
+                if self._bd_check.isChecked() else None)
+
+    @property
+    def border_width(self):
+        return self._bd_width.value()
 
 
 # ── Equation gallery popup ────────────────────────────────────────────
