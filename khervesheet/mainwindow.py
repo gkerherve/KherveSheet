@@ -388,6 +388,8 @@ class MainWindow(QMainWindow):
         tools_menu.addSeparator()
         tools_menu.addAction("Statistics on Selection",
                              self._show_statistics)
+        tools_menu.addSeparator()
+        tools_menu.addAction("Curve Fitting…", self._open_fitting)
 
         # ── Help ─────────────────────────────────────────────────────
         help_menu = mb.addMenu("&Help")
@@ -3625,6 +3627,16 @@ class MainWindow(QMainWindow):
             return
         from .solver import SolverDialog
         dlg = SolverDialog(s, self)
+        dlg.setAttribute(Qt.WA_DeleteOnClose)
+        dlg.show()
+
+    def _open_fitting(self):
+        """Open the Curve Fitting dialog (lmfit-based, non-modal)."""
+        s = self._active_sheet()
+        if s is None:
+            return
+        from .fitting import FittingDialog
+        dlg = FittingDialog(s, self)
         dlg.setAttribute(Qt.WA_DeleteOnClose)
         dlg.show()
 
