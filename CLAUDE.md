@@ -42,8 +42,8 @@ into a new module and import.
   - `insert_ops.py`  — Insert menu ops: checkbox, dropdown, link, comment/note, emoji, transpose, spell-check.
   - `solver.py`     — `SolverDialog` (Excel-style optimisation: min/max/target via scipy).
   - `trendline.py`  — `TrendlineDialog` (curve fitting: 23+ models via scipy, goodness-of-fit report).
-  - `fit_models.py` — peak/curve + background model library for the fitting tool (Gaussian, Lorentzian, pseudo-Voigt, Voigt, Pearson VII, Doniach-Sunjic, …; linear/poly/Shirley/Tougaard).
-  - `fitting.py`    — `FittingDialog` (KherveFitting-style lmfit peak fitting: add functions, pick background, live plot, write components back to sheet).
+  - `fit_models.py` — `FitFunction` registry wrapping every built-in lmfit model plus a custom-function builder (compiles an expression in `x` into an lmfit model); linear/poly/Shirley/Tougaard backgrounds.
+  - `fitting.py`    — `FittingDialog` (KherveFitting-style lmfit peak fitting: add any lmfit/custom function, per-peak parameter editor with value/min/max/vary, pick background, live plot + fit report, write components back to sheet).
   - `icons.py`      — qtawesome icon factory (themed MDI + custom QPainter plot glyphs).
   - `git_backend.py` — per-document Git repo: auto-commit, push, pull, history, branches (pygit2).
   - `history_dialog.py` — `HistoryDialog` commit browser with DAG graph, diff view, restore.

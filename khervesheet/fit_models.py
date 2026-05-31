@@ -1,19 +1,22 @@
 """Model library for the Curve Fitting tool.
 
-Peak / curve functions and background models commonly used across XRD,
-XPS, Raman, FTIR, TGA, BET and AFM analysis.  Each peak model is
-parameterised in spreadsheet-friendly terms — peak ``height``,
-``center`` and full-width-at-half-maximum (``fwhm``) plus an optional
-shape parameter — so the Curve Fitting dialog can present an intuitive
-parameter table and assemble an lmfit composite model.
+Fittable functions are exposed as :class:`FitFunction` objects wrapping an
+lmfit model.  Three sources feed the registry:
+
+* **Every built-in lmfit model** (Gaussian, Lorentzian, Voigt,
+  Pseudo-Voigt, Pearson IV/VII, split-Lorentzian, Doniach, skewed shapes,
+  Breit–Wigner–Fano, exponential, power-law, step, …) covering
+  XRD/XPS/Raman/FTIR/TGA/AFM workflows.
+* **User-built custom functions** — an arbitrary expression in ``x`` and
+  named parameters, compiled into an lmfit model on the fly.
 
 Backgrounds come in two flavours:
 
-* *Analytic* (constant, linear, polynomial): their coefficients are
-  fitted simultaneously with the peaks as ordinary lmfit parameters.
-* *Data-derived* (Shirley, Tougaard): they depend on the spectrum
-  itself, so they are pre-computed from the data, subtracted, and the
-  peaks are fitted to the remainder.
+* *Analytic* (constant, linear, polynomial): fitted simultaneously with
+  the peaks as ordinary lmfit parameters.
+* *Data-derived* (Shirley, Tougaard): they depend on the spectrum, so
+  they are pre-computed from the data, subtracted, and the peaks are
+  fitted to the remainder.
 
 Copyright (C) 2026 Gwilherm Kerherve
 
@@ -23,202 +26,181 @@ the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 """
 
+import ast
 from typing import Callable, Dict, List
 
 import numpy as np
 
-# ── Numerical helpers ───────────────────────────────────────────────
 
-_SQRT_2PI = np.sqrt(2.0 * np.pi)
-_FWHM_SIGMA = 2.0 * np.sqrt(2.0 * np.log(2.0))  # FWHM = sigma * this
+# ── Fittable-function abstraction ───────────────────────────────────
 
+class FitFunction:
+    """One fittable shape: a label plus a factory that builds a prefixed
+    lmfit model.  ``make_model(prefix)`` returns a fresh lmfit Model so
+    several copies of the same shape can be summed in one composite."""
 
-def _safe(v, lo=1e-12):
-    """Clamp a width to a tiny positive value to avoid divide-by-zero."""
-    return np.maximum(v, lo) if isinstance(v, np.ndarray) else max(v, lo)
-
-
-# ── Peak / curve functions (height-normalised) ──────────────────────
-#
-# Every function peaks at ``height`` at ``center`` (except the step /
-# decay shapes, where ``height`` is the plateau / initial amplitude).
-# lmfit introspects the argument names, so they double as parameter
-# names in the fit.
-
-def gaussian(x, height, center, fwhm):
-    sigma = _safe(fwhm) / _FWHM_SIGMA
-    return height * np.exp(-((x - center) ** 2) / (2.0 * sigma ** 2))
-
-
-def lorentzian(x, height, center, fwhm):
-    gamma = _safe(fwhm) / 2.0
-    return height * gamma ** 2 / ((x - center) ** 2 + gamma ** 2)
-
-
-def pseudo_voigt(x, height, center, fwhm, fraction):
-    """Linear mix of Lorentzian (fraction) and Gaussian (1-fraction)."""
-    f = min(max(fraction, 0.0), 1.0)
-    return f * lorentzian(x, height, center, fwhm) \
-        + (1.0 - f) * gaussian(x, height, center, fwhm)
-
-
-def voigt(x, height, center, sigma, gamma):
-    """True Voigt (Gaussian⊗Lorentzian), normalised to *height* at peak."""
-    from scipy.special import wofz
-    sigma = _safe(sigma)
-    z0 = (1j * gamma) / (sigma * np.sqrt(2.0))
-    norm = np.real(wofz(z0))  # value at the centre, to rescale to height
-    z = ((x - center) + 1j * gamma) / (sigma * np.sqrt(2.0))
-    val = np.real(wofz(z))
-    return height * val / (norm if norm != 0 else 1.0)
-
-
-def asym_lorentzian(x, height, center, fwhm, asym):
-    """Split Lorentzian: independent half-widths either side of centre.
-
-    *asym* > 0 widens the high-x side, < 0 the low-x side."""
-    a = float(np.clip(asym, -0.95, 0.95))
-    gamma = _safe(fwhm) / 2.0
-    gl = gamma * (1.0 - a)
-    gr = gamma * (1.0 + a)
-    g = np.where(x < center, gl, gr)
-    return height * g ** 2 / ((x - center) ** 2 + g ** 2)
-
-
-def pearson7(x, height, center, fwhm, expo):
-    """Pearson VII — the workhorse XRD peak shape (m=expo)."""
-    m = max(expo, 0.5)
-    w = _safe(fwhm) / 2.0
-    denom = 1.0 + (2.0 ** (1.0 / m) - 1.0) * ((x - center) / w) ** 2
-    return height * denom ** (-m)
-
-
-def doniach_sunjic(x, height, center, fwhm, asym):
-    """Doniach–Šunjić line shape (asymmetric core-level XPS peak)."""
-    a = float(np.clip(asym, 0.0, 0.95))
-    gamma = _safe(fwhm) / 2.0
-    dx = x - center
-    num = np.cos(np.pi * a / 2.0 + (1.0 - a) * np.arctan(dx / gamma))
-    den = (dx ** 2 + gamma ** 2) ** ((1.0 - a) / 2.0)
-    raw = num / den
-    # Normalise so the maximum equals *height*.
-    peak = np.nanmax(np.abs(raw)) or 1.0
-    return height * raw / peak
-
-
-def exp_gaussian(x, height, center, fwhm, tau):
-    """Exponentially-modified Gaussian (asymmetric chromatographic /
-    thermal peak). *tau* sets the trailing-edge decay."""
-    from scipy.special import erfc
-    sigma = _safe(fwhm) / _FWHM_SIGMA
-    tau = _safe(abs(tau))
-    arg = (sigma ** 2 - tau * (x - center)) / (np.sqrt(2.0) * sigma * tau)
-    shape = np.exp(0.5 * (sigma / tau) ** 2 - (x - center) / tau) \
-        * erfc(arg)
-    peak = np.nanmax(shape) or 1.0
-    return height * shape / peak
-
-
-def logistic_step(x, height, center, width):
-    """Logistic sigmoid step — TGA mass-loss / DSC transition."""
-    w = _safe(width)
-    return height / (1.0 + np.exp(-(x - center) / w))
-
-
-def exp_decay(x, height, center, tau):
-    """Single exponential decay measured from *center* (AFM/relaxation)."""
-    tau = _safe(abs(tau))
-    return height * np.exp(-(x - center) / tau)
-
-
-# ── Parameter metadata ──────────────────────────────────────────────
-
-class PeakModel:
-    """One fittable peak/curve shape: a function plus parameter metadata.
-
-    *params* lists the editable parameter names in display order. *guess*
-    returns sensible starting values given the data and a chosen centre.
-    """
-
-    def __init__(self, key: str, label: str, func: Callable,
-                 params: List[str], guess: Callable, group: str = ""):
+    def __init__(self, key: str, label: str, group: str,
+                 factory: Callable, expr: str = ""):
         self.key = key
         self.label = label
-        self.func = func
-        self.params = params
-        self.guess = guess
         self.group = group
+        self._factory = factory
+        self.expr = expr  # populated for user-built custom functions
+
+    def make_model(self, prefix: str):
+        return self._factory(prefix)
 
 
-def _basic_guess(extra=None):
-    """Build a guess() for a height/center/fwhm peak with optional extras."""
-    extra = extra or {}
+# ── Built-in lmfit models ───────────────────────────────────────────
+#
+# (lmfit class name, friendly label, technique group).  2-D and complex
+# models are deliberately omitted.
 
-    def guess(x, y, center):
-        span = float(np.nanmax(x) - np.nanmin(x)) or 1.0
-        idx = int(np.nanargmin(np.abs(x - center)))
-        height = float(y[idx]) if np.isfinite(y[idx]) else float(
-            np.nanmax(y))
-        g = {"height": height, "center": float(center),
-             "fwhm": span / 20.0}
-        g.update(extra)
-        return g
-    return guess
+_LMFIT_SPECS = [
+    ("GaussianModel", "Gaussian", "Common"),
+    ("LorentzianModel", "Lorentzian", "Common"),
+    ("VoigtModel", "Voigt", "Common / XRD"),
+    ("PseudoVoigtModel", "Pseudo-Voigt", "XRD / XPS"),
+    ("Pearson7Model", "Pearson VII", "XRD"),
+    ("Pearson4Model", "Pearson IV", "XRD"),
+    ("SplitLorentzianModel", "Split Lorentzian", "XPS / Raman"),
+    ("MoffatModel", "Moffat", "Optics / PSF"),
+    ("DoniachModel", "Doniach-Sunjic", "XPS"),
+    ("SkewedGaussianModel", "Skewed Gaussian", "Asymmetric"),
+    ("SkewedVoigtModel", "Skewed Voigt", "Asymmetric"),
+    ("ExponentialGaussianModel", "Exp.-modified Gaussian",
+     "TGA / chromatography"),
+    ("BreitWignerModel", "Breit-Wigner-Fano", "Raman"),
+    ("LognormalModel", "Log-normal", "Particle size"),
+    ("StudentsTModel", "Student's t", "Statistics"),
+    ("DampedOscillatorModel", "Damped oscillator", "Spectroscopy"),
+    ("DampedHarmonicOscillatorModel", "Damped harmonic osc.",
+     "Spectroscopy"),
+    ("ThermalDistributionModel", "Thermal distribution", "Physics"),
+    ("BoseModel", "Bose-Einstein", "Physics"),
+    ("FermiModel", "Fermi-Dirac", "Physics"),
+    ("StepModel", "Step", "TGA / DSC"),
+    ("RectangleModel", "Rectangle", "General"),
+    ("ExponentialModel", "Exponential", "Decay / kinetics"),
+    ("PowerLawModel", "Power law", "AFM / scaling"),
+    ("SineModel", "Sine", "Oscillatory"),
+    ("LinearModel", "Linear", "Polynomial"),
+    ("QuadraticModel", "Quadratic", "Polynomial"),
+    ("ConstantModel", "Constant", "Polynomial"),
+]
 
 
-# Voigt is parameterised by sigma/gamma rather than a single FWHM.
-def _voigt_guess(x, y, center):
-    span = float(np.nanmax(x) - np.nanmin(x)) or 1.0
-    idx = int(np.nanargmin(np.abs(x - center)))
-    height = float(y[idx]) if np.isfinite(y[idx]) else float(np.nanmax(y))
-    return {"height": height, "center": float(center),
-            "sigma": span / 40.0, "gamma": span / 40.0}
+def _builtin_factory(class_name):
+    def factory(prefix):
+        import lmfit.models as M
+        return getattr(M, class_name)(prefix=prefix)
+    return factory
 
 
-def _step_guess(x, y, center):
-    return {"height": float(np.nanmax(y)), "center": float(center),
-            "width": (float(np.nanmax(x) - np.nanmin(x)) or 1.0) / 20.0}
+def builtin_functions() -> List[FitFunction]:
+    funcs = []
+    for cls_name, label, group in _LMFIT_SPECS:
+        try:
+            import lmfit.models as M  # noqa: F401
+            getattr(M, cls_name)
+        except (ImportError, AttributeError):
+            continue
+        funcs.append(FitFunction("lmfit:" + cls_name, label, group,
+                                 _builtin_factory(cls_name)))
+    return funcs
 
 
-def _decay_guess(x, y, center):
-    return {"height": float(np.nanmax(y)), "center": float(center),
-            "tau": (float(np.nanmax(x) - np.nanmin(x)) or 1.0) / 5.0}
+# ── User-built custom functions ─────────────────────────────────────
+#
+# A custom function is an expression in ``x`` plus free parameters, e.g.
+# ``a * exp(-(x - c)**2 / (2 * w**2)) + d``.  We parse the parameter
+# names, build a real Python function with that exact signature (so lmfit
+# can introspect it), and evaluate the body in a restricted namespace of
+# numpy / scipy maths — no builtins, so it can't import or call out.
+
+# Names available inside a custom expression (besides the parameters).
+def _safe_namespace():
+    import numpy as _np
+    ns = {
+        "exp": _np.exp, "log": _np.log, "ln": _np.log, "log10": _np.log10,
+        "sqrt": _np.sqrt, "abs": _np.abs, "fabs": _np.fabs,
+        "sin": _np.sin, "cos": _np.cos, "tan": _np.tan,
+        "arcsin": _np.arcsin, "arccos": _np.arccos, "arctan": _np.arctan,
+        "sinh": _np.sinh, "cosh": _np.cosh, "tanh": _np.tanh,
+        "sign": _np.sign, "where": _np.where, "heaviside": _np.heaviside,
+        "power": _np.power, "maximum": _np.maximum, "minimum": _np.minimum,
+        "clip": _np.clip, "floor": _np.floor, "ceil": _np.ceil,
+        "pi": _np.pi, "e": _np.e,
+    }
+    try:
+        from scipy.special import erf, erfc, wofz, gamma
+        ns.update({"erf": erf, "erfc": erfc, "wofz": wofz, "gamma": gamma})
+    except ImportError:
+        pass
+    return ns
 
 
-PEAK_MODELS: Dict[str, PeakModel] = {
-    m.key: m for m in [
-        PeakModel("gaussian", "Gaussian", gaussian,
-                  ["height", "center", "fwhm"], _basic_guess(),
-                  "General / TEM / FTIR"),
-        PeakModel("lorentzian", "Lorentzian", lorentzian,
-                  ["height", "center", "fwhm"], _basic_guess(),
-                  "General / Raman"),
-        PeakModel("pseudo_voigt", "Pseudo-Voigt", pseudo_voigt,
-                  ["height", "center", "fwhm", "fraction"],
-                  _basic_guess({"fraction": 0.5}), "XRD / XPS"),
-        PeakModel("voigt", "Voigt", voigt,
-                  ["height", "center", "sigma", "gamma"], _voigt_guess,
-                  "XRD / XPS"),
-        PeakModel("asym_lorentzian", "Asymmetric Lorentzian",
-                  asym_lorentzian, ["height", "center", "fwhm", "asym"],
-                  _basic_guess({"asym": 0.0}), "XPS / Raman"),
-        PeakModel("pearson7", "Pearson VII", pearson7,
-                  ["height", "center", "fwhm", "expo"],
-                  _basic_guess({"expo": 2.0}), "XRD"),
-        PeakModel("doniach_sunjic", "Doniach-Sunjic", doniach_sunjic,
-                  ["height", "center", "fwhm", "asym"],
-                  _basic_guess({"asym": 0.1}), "XPS"),
-        PeakModel("exp_gaussian", "Exp.-modified Gaussian", exp_gaussian,
-                  ["height", "center", "fwhm", "tau"],
-                  _basic_guess({"tau": 1.0}), "TGA / chromatography"),
-        PeakModel("logistic", "Logistic step", logistic_step,
-                  ["height", "center", "width"], _step_guess,
-                  "TGA / DSC"),
-        PeakModel("exp_decay", "Exponential decay", exp_decay,
-                  ["height", "center", "tau"], _decay_guess,
-                  "AFM / relaxation"),
-    ]
-}
+_RESERVED = set(_safe_namespace().keys()) | {"x"}
+
+
+def custom_param_names(expr: str) -> List[str]:
+    """Free parameters of *expr* (identifiers that aren't ``x`` or a
+    known maths function), in order of first appearance."""
+    tree = ast.parse(expr, mode="eval")
+    seen, names = set(), []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id not in _RESERVED:
+            if node.id not in seen:
+                seen.add(node.id)
+                names.append(node.id)
+    return names
+
+
+def make_custom_function(key: str, label: str, expr: str) -> FitFunction:
+    """Compile *expr* into a :class:`FitFunction`.  Raises ValueError if
+    the expression is invalid or has no free parameters."""
+    expr = expr.strip()
+    try:
+        params = custom_param_names(expr)
+    except SyntaxError as exc:
+        raise ValueError(f"Invalid expression: {exc}")
+    if not params:
+        raise ValueError("Expression has no free parameters to fit.")
+
+    ns = _safe_namespace()
+    src = f"def _custom(x, {', '.join(params)}):\n    return ({expr})\n"
+    glb = {"__builtins__": {}}
+    glb.update(ns)
+    try:
+        exec(src, glb)  # noqa: S102 — restricted namespace, user formula
+    except SyntaxError as exc:
+        raise ValueError(f"Invalid expression: {exc}")
+    fn = glb["_custom"]
+
+    # Sanity-check it evaluates on a small array.
+    try:
+        fn(np.linspace(1.0, 2.0, 5), *[1.0] * len(params))
+    except Exception as exc:
+        raise ValueError(f"Expression failed to evaluate: {exc}")
+
+    def factory(prefix):
+        import lmfit
+        return lmfit.Model(fn, prefix=prefix, name=label)
+
+    return FitFunction(key, label, "Custom", factory, expr=expr)
+
+
+def all_functions(custom_store: Dict[str, dict]) -> List[FitFunction]:
+    """Built-in functions followed by any user-built custom functions in
+    *custom_store* (``{key: {'label':.., 'expr':..}}``)."""
+    funcs = builtin_functions()
+    for key, spec in (custom_store or {}).items():
+        try:
+            funcs.append(make_custom_function(
+                key, spec["label"], spec["expr"]))
+        except ValueError:
+            continue
+    return funcs
 
 
 # ── Background models ───────────────────────────────────────────────
@@ -234,7 +216,6 @@ BACKGROUNDS = [
     ("tougaard", "Tougaard (XPS)", None),
 ]
 
-BACKGROUND_LABELS = {k: label for k, label, _ in BACKGROUNDS}
 _BG_DEGREE = {k: deg for k, _, deg in BACKGROUNDS}
 
 
@@ -257,24 +238,19 @@ def shirley_background(x, y, max_iter: int = 50, tol: float = 1e-6):
     n = len(y)
     if n < 2:
         return np.zeros_like(y)
-    # Work on an ascending-x copy so the cumulative integral is sane,
-    # then map the result back.
     order = np.argsort(x)
     ys = y[order]
     y_lo, y_hi = ys[0], ys[-1]
     bg = np.linspace(y_lo, y_hi, n)
     for _ in range(max_iter):
-        # Area above the current background, integrated from the left.
         above = np.clip(ys - bg, 0.0, None)
         cum = np.concatenate(([0.0], np.cumsum(
             (above[:-1] + above[1:]) / 2.0)))
         total = cum[-1]
         if total <= 0:
             break
-        new_bg = y_lo + (y_hi - y_lo) * (1.0 - cum / total)
-        # Shirley convention: background sits below the lower endpoint.
         new_bg = y_hi + (y_lo - y_hi) * (cum / total) \
-            if y_lo < y_hi else new_bg
+            if y_lo < y_hi else y_lo + (y_hi - y_lo) * (1.0 - cum / total)
         if np.max(np.abs(new_bg - bg)) < tol * (abs(total) + 1e-12):
             bg = new_bg
             break

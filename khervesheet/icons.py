@@ -1537,6 +1537,36 @@ def solver_icon(size: int = 28) -> QIcon:
     return _fmt_icon(size, _draw)
 
 
+def fitting_icon(size: int = 28) -> QIcon:
+    """Curve-fitting icon: a fitted peak over scattered data points."""
+    from PyQt5.QtGui import QPainterPath
+
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        # Scattered data points along a bell shape.
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor("#3a78b4"))
+        pts = [(0.16, 0.78), (0.30, 0.62), (0.42, 0.40),
+               (0.50, 0.26), (0.58, 0.40), (0.70, 0.63),
+               (0.84, 0.78)]
+        for fx, fy in pts:
+            p.drawEllipse(QPointF(fx * s, fy * s), s * 0.045, s * 0.045)
+        # Smooth fitted curve (Gaussian-like) through them.
+        path = QPainterPath()
+        path.moveTo(0.12 * s, 0.82 * s)
+        path.cubicTo(0.34 * s, 0.80 * s, 0.40 * s, 0.20 * s,
+                     0.50 * s, 0.20 * s)
+        path.cubicTo(0.60 * s, 0.20 * s, 0.66 * s, 0.80 * s,
+                     0.88 * s, 0.82 * s)
+        p.setPen(QPen(QColor("#d04040"), max(1.4, s / 14)))
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(path)
+        # Baseline axis.
+        p.setPen(QPen(fg, max(1.0, s / 20)))
+        p.drawLine(QPointF(0.1 * s, 0.86 * s), QPointF(0.9 * s, 0.86 * s))
+    return _fmt_icon(size, _draw)
+
+
 def shape_icon(shape_type: str, size: int = 24) -> QIcon:
     """Glyph for an individual shape type, rendered via the shape
     registry so every gallery entry has a matching icon."""
