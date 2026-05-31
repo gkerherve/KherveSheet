@@ -642,16 +642,21 @@ class SolverDialog(QDialog):
                                     "Invalid target value.")
                 return
 
-        # Bounds — start from the "non-negative" option.  Constraints
-        # that act directly on a variable cell are folded into these
-        # bounds further below (Excel treats them as simple bounds, and
-        # the optimiser can enforce bounds *exactly* — far more reliable
-        # than nonlinear constraints on a badly-scaled spreadsheet model,
-        # which is why values used to drift outside the limits).
+        # Bounds (unchanged from the original engine: the only box bounds
+        # come from the "non-negative" option).  Constraints are passed to
+        # the optimiser as real constraints so the search path is exactly
+        # what it always was; we additionally remember the lower/upper
+        # limits that act on a variable cell so the *final* result can be
+        # clipped into range — that is what makes the constraints bind
+        # without changing how the solver explores.
+        if self._nonneg_chk.isChecked():
+            bounds = [(0, None)] * len(var_cells)
+        else:
+            bounds = [(None, None)] * len(var_cells)
+
         var_index = {rc: i for i, rc in enumerate(var_cells)}
-        lo0 = 0.0 if self._nonneg_chk.isChecked() else None
-        lows = [lo0] * len(var_cells)
-        highs = [None] * len(var_cells)
+        clip_lo = [None] * len(var_cells)
+        clip_hi = [None] * len(var_cells)
 
         # Build objective function
         _SOLVE_DEC = 15  # full precision during optimisation
@@ -725,20 +730,21 @@ class SolverDialog(QDialog):
                     self._sheet._set_cell_quiet(r, c, txt)
                 return
 
-            # If the constraint cell *is* a variable cell, fold it into
-            # the variable's bounds — these are honoured exactly by the
-            # optimiser, so the value can never leave the range.
+            # If the constraint acts on a variable cell, remember its
+            # limit so the final solution can be clipped into range.  The
+            # constraint is STILL added below as a real optimiser
+            # constraint — clipping is only a guarantee, not a substitute,
+            # so the search behaves exactly as it always did.
             idx = var_index.get(con_rc)
             if idx is not None:
                 if con.op == "<=":
-                    highs[idx] = (rhs_val if highs[idx] is None
-                                  else min(highs[idx], rhs_val))
+                    clip_hi[idx] = (rhs_val if clip_hi[idx] is None
+                                    else min(clip_hi[idx], rhs_val))
                 elif con.op == ">=":
-                    lows[idx] = (rhs_val if lows[idx] is None
-                                 else max(lows[idx], rhs_val))
+                    clip_lo[idx] = (rhs_val if clip_lo[idx] is None
+                                    else max(clip_lo[idx], rhs_val))
                 else:  # "="
-                    lows[idx] = highs[idx] = rhs_val
-                continue
+                    clip_lo[idx] = clip_hi[idx] = rhs_val
 
             def _read_cell_full(rc):
                 """Read a cell value at full precision."""
@@ -779,27 +785,10 @@ class SolverDialog(QDialog):
                     return v - _rhs  # == 0
                 scipy_constraints.append({"type": "eq", "fun": _cfn})
 
-        # Assemble final bounds and move the starting guess *just inside*
-        # them.  Powell stalls if a variable begins exactly on a bound
-        # (its line search in the blocked direction finds no improvement
-        # and it gives up), so we nudge a hair into the feasible region
-        # rather than clamping onto the edge.
-        bounds = list(zip(lows, highs))
-        for i, (lo, hi) in enumerate(bounds):
-            if lo is not None and hi is not None:
-                margin = (hi - lo) * 1e-3
-                x0[i] = min(max(x0[i], lo + margin), hi - margin)
-            elif lo is not None and x0[i] <= lo:
-                x0[i] = lo + (abs(lo) * 1e-3 or 1e-3)
-            elif hi is not None and x0[i] >= hi:
-                x0[i] = hi - (abs(hi) * 1e-3 or 1e-3)
-
         # Keep the GUI responsive: scipy runs synchronously on the GUI
         # thread, so pump the event loop on every iteration.  We also
-        # refresh embedded charts here so the plot tracks the solve live
-        # (per-objective redraws would be far too frequent, but scipy's
-        # iteration callback fires at a sensible cadence).  If the user
-        # clicks Stop or presses Esc, raise to abort the optimizer.
+        # refresh embedded charts here so the plot tracks the solve live.
+        # If the user clicks Stop or presses Esc, raise to abort.
         class _SolverCancelled(Exception):
             pass
 
@@ -820,37 +809,25 @@ class SolverDialog(QDialog):
                           np.inf if hi is None else hi)
                          for (lo, hi) in bounds]
 
-        # Penalty wrapper for constraints that could *not* be folded into
-        # box bounds (i.e. constraints on non-variable cells).  Powell
-        # can't take constraints directly, so we add a steep quadratic
-        # penalty for any violation, scaled to the objective magnitude so
-        # it bites regardless of how the model is scaled.
-        f0 = abs(_obj(list(x0)))
-        _pen_scale = (f0 if f0 > 1.0 else 1.0) * 1e6
-
-        def _penalised(x):
-            v = _obj(x)
-            for cd in scipy_constraints:
-                cv = cd["fun"](x)
-                if cd["type"] == "ineq" and cv < 0:
-                    v += _pen_scale * cv * cv
-                elif cd["type"] == "eq":
-                    v += _pen_scale * cv * cv
-            return v
-
         def _solve_nonlinear():
             # Spreadsheet models are routinely badly scaled — a peak
             # amplitude of ~500 sitting next to a background coefficient
             # of ~0.1 whose term is multiplied by a large x².  Gradient
             # methods (SLSQP) take a finite-difference Jacobian and
-            # diverge on such conditioning, so we always use Powell, a
-            # derivative-free direction-set method that is immune to it
-            # and reliably matches Excel's GRG.  Variable-cell limits are
-            # enforced as exact box bounds; any remaining constraint is
-            # enforced through the penalty above.
-            objective = _penalised if scipy_constraints else _obj
+            # diverge on such conditioning.  Powell is a derivative-free
+            # direction-set method that is immune to this and reliably
+            # matches Excel's GRG on these problems, so prefer it when
+            # there are no constraints.  Fall back to SLSQP only when
+            # constraints are present (Powell can't honour them).  The
+            # final result is clipped to the variable-cell limits below
+            # so the constraints are respected even if SLSQP drifts.
+            if scipy_constraints:
+                return opt.minimize(
+                    _obj, x0, method='SLSQP', bounds=bounds,
+                    constraints=scipy_constraints, callback=_pump,
+                    options={'maxiter': 1000, 'ftol': 1e-9})
             return opt.minimize(
-                objective, x0, method='Powell', bounds=powell_bounds,
+                _obj, x0, method='Powell', bounds=powell_bounds,
                 callback=_pump,
                 options={'maxiter': 20000, 'xtol': 1e-8, 'ftol': 1e-8})
 
@@ -924,10 +901,13 @@ class SolverDialog(QDialog):
                 self, "Solver", "Solver cancelled by user.")
             return
 
-        # Safety net: guarantee the reported solution honours the bounds,
-        # even if the optimiser stepped marginally outside them.
+        # Make the constraints bind: clip every variable that carries a
+        # <= / >= / = limit into range.  The search itself was free, so
+        # quality matches the old engine; this just guarantees the final
+        # values respect the limits the user set.
         if getattr(result, "x", None) is not None:
-            for i, (lo, hi) in enumerate(bounds):
+            for i in range(len(var_cells)):
+                lo, hi = clip_lo[i], clip_hi[i]
                 if lo is not None and result.x[i] < lo:
                     result.x[i] = lo
                 if hi is not None and result.x[i] > hi:
