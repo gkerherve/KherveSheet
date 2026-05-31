@@ -29,6 +29,11 @@ from . import icons
 from .formulas import build_formulas_menu
 
 
+# References to extra windows opened via "New Window" so they are not
+# garbage-collected while still on screen.
+_OPEN_WINDOWS = []
+
+
 class MainWindow(QMainWindow):
 
     def __init__(self, parent=None):
@@ -102,6 +107,8 @@ class MainWindow(QMainWindow):
         # ── File ─────────────────────────────────────────────────────
         file_menu = mb.addMenu("&File")
         file_menu.addAction("&New", self._new_workbook, "Ctrl+N")
+        file_menu.addAction("New &Window", self._new_window,
+                            "Ctrl+Shift+N")
         file_menu.addAction("&Open…", self._open_file, "Ctrl+O")
         file_menu.addSeparator()
 
@@ -818,6 +825,28 @@ class MainWindow(QMainWindow):
         self._undo_stack.clear()
         self._update_title()
         self._status_msg("New workbook created", 3000)
+
+    def _new_window(self):
+        """Open a brand-new independent MainWindow (a fresh front end).
+
+        The new window shares this process but has its own workbook,
+        undo stack and document, like a second instance of the app.
+        A module-level registry keeps a reference so the window is not
+        garbage-collected when this method returns.
+        """
+        win = MainWindow()
+        win.resize(self.size())
+        pos = self.pos()
+        win.move(pos.x() + 36, pos.y() + 36)
+        _OPEN_WINDOWS.append(win)
+        # Drop the reference once the window is closed.
+        win.destroyed.connect(
+            lambda _=None, w=win: _OPEN_WINDOWS.remove(w)
+            if w in _OPEN_WINDOWS else None)
+        win.show()
+        win.raise_()
+        win.activateWindow()
+        return win
 
     def _load_example(self, builder):
         """Create a new workbook from an example builder function."""
