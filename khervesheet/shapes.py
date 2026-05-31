@@ -288,9 +288,10 @@ class EmbeddedShape(QWidget):
             p.setPen(QPen(QColor(self._text_color)))
             p.setFont(self._text_font())
             valign = Qt.AlignTop if st in _CLOSED else Qt.AlignVCenter
-            align = (self._text_align & Qt.AlignHorizontal_Mask) | valign
-            p.drawText(inner.adjusted(4, 4, -4, -4),
-                       int(Qt.TextWordWrap | align), self._text)
+            align = (int(self._text_align) & int(Qt.AlignHorizontal_Mask)) \
+                | int(valign)
+            flags = int(Qt.TextWordWrap) | align
+            p.drawText(inner.adjusted(4, 4, -4, -4), flags, self._text)
         p.restore()
 
         # Selection border + handles (axis-aligned, never rotated).
@@ -481,8 +482,9 @@ class EmbeddedShape(QWidget):
             " border: 1px solid #3078c6; }")
         ed.setFont(self._text_font())
         ed.setTextColor(QColor(self._text_color))
-        ed.setAlignment(
-            (self._text_align & Qt.AlignHorizontal_Mask) | Qt.AlignTop)
+        ed.setAlignment(Qt.Alignment(
+            (int(self._text_align) & int(Qt.AlignHorizontal_Mask))
+            | int(Qt.AlignTop)))
         m = _PAD + 2
         ed.setGeometry(m, m, max(20, self.width() - 2 * m),
                        max(16, self.height() - 2 * m))
@@ -510,9 +512,9 @@ class EmbeddedShape(QWidget):
             ed.selectAll()
             ed.setFont(self._text_font())
             if align is not None:
-                ed.setAlignment(
-                    (self._text_align & Qt.AlignHorizontal_Mask)
-                    | Qt.AlignTop)
+                ed.setAlignment(Qt.Alignment(
+                    (int(self._text_align) & int(Qt.AlignHorizontal_Mask))
+                    | int(Qt.AlignTop)))
             ed.setTextCursor(cur)
         self.update()
         self._push_change(before, label)
