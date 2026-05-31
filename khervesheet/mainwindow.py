@@ -244,6 +244,12 @@ class MainWindow(QMainWindow):
         shapes_menu.setIcon(icons.shapes_button_icon(24))
         insert_menu.addMenu(shapes_menu)
 
+        # Equation submenu (presets + new equation editor).
+        equation_menu = self._make_equation_gallery()
+        equation_menu.setTitle("Equation")
+        equation_menu.setIcon(icons.equation_icon(24))
+        insert_menu.addMenu(equation_menu)
+
         # Sparkline.
         insert_menu.addAction("Sparkline\u2026", self._insert_sparkline)
         insert_menu.addSeparator()
@@ -604,6 +610,14 @@ class MainWindow(QMainWindow):
         self._shapes_btn.setPopupMode(QToolButton.InstantPopup)
         self._shapes_btn.setMenu(self._make_shape_gallery())
         plot_bar.addWidget(self._shapes_btn)
+
+        # ── Equation button ──────────────────────────────────────
+        self._equation_btn = QToolButton()
+        self._equation_btn.setIcon(icons.equation_icon(28))
+        self._equation_btn.setToolTip("Insert Equation")
+        self._equation_btn.setPopupMode(QToolButton.InstantPopup)
+        self._equation_btn.setMenu(self._make_equation_gallery())
+        plot_bar.addWidget(self._equation_btn)
 
         # ── Symbol insertion button ──────────────────────────────
         self._symbol_btn = QToolButton()
@@ -1415,6 +1429,13 @@ class MainWindow(QMainWindow):
                         shg = sg.create_group(f"shape_{si2}")
                         shg.attrs['data'] = json.dumps(shp.to_dict())
 
+                    # Equations.
+                    equations = getattr(sheet, '_equations', [])
+                    sg.attrs['equation_count'] = len(equations)
+                    for ei2, eqn in enumerate(equations):
+                        eqg = sg.create_group(f"equation_{ei2}")
+                        eqg.attrs['data'] = json.dumps(eqn.to_dict())
+
             self._status_msg(f"Saved to {path}", 5000)
             # Auto-commit for version history.
             self._auto_commit(path)
@@ -1754,6 +1775,21 @@ class MainWindow(QMainWindow):
                     if deferred_shapes:
                         sheet._deferred_shapes = deferred_shapes
 
+                    # Collect equation data.
+                    eq_count = int(sg.attrs.get('equation_count', 0))
+                    deferred_equations = []
+                    for ei2 in range(eq_count):
+                        eqg_key = f"equation_{ei2}"
+                        if eqg_key not in sg:
+                            continue
+                        edat = sg[eqg_key].attrs.get('data', '')
+                        if isinstance(edat, bytes):
+                            edat = edat.decode('utf-8')
+                        if edat:
+                            deferred_equations.append(json.loads(edat))
+                    if deferred_equations:
+                        sheet._deferred_equations = deferred_equations
+
                 wb.tabs.setCurrentIndex(0)
                 self.setCentralWidget(wb)
                 self._workbook = wb
@@ -1809,6 +1845,21 @@ class MainWindow(QMainWindow):
                     sheet._shapes.append(shp)
                 del sheet._deferred_shapes
 
+            # Create equations.
+            from .equation import EmbeddedEquation
+            for si in range(wb.tabs.count()):
+                sheet = wb.tabs.widget(si)
+                eq_dicts = getattr(sheet, '_deferred_equations', [])
+                if not eq_dicts:
+                    continue
+                if not hasattr(sheet, '_equations'):
+                    sheet._equations = []
+                viewport = sheet.table.viewport()
+                for ed in eq_dicts:
+                    eqn = EmbeddedEquation.from_dict(ed, viewport)
+                    sheet._equations.append(eqn)
+                del sheet._deferred_equations
+
             wb._combined_tab = None
             wb.ensure_layout_tabs()
             if layout_settings:
@@ -1862,6 +1913,13 @@ class MainWindow(QMainWindow):
         if not s:
             return
         from . import shapes as _sh
+        from . import equation as _eq
+        eqn = self._selected_equation()
+        if eqn is not None:
+            _eq._equation_clipboard = eqn.to_dict()
+            eqn._delete()
+            self._status_msg("Equation cut", 2000)
+            return
         shp = self._selected_shape()
         if shp is not None:
             _sh._shape_clipboard = shp.to_dict()
@@ -1890,6 +1948,12 @@ class MainWindow(QMainWindow):
         if not s:
             return
         from . import shapes as _sh
+        from . import equation as _eq
+        eqn = self._selected_equation()
+        if eqn is not None:
+            _eq._equation_clipboard = eqn.to_dict()
+            self._status_msg("Equation copied", 2000)
+            return
         shp = self._selected_shape()
         if shp is not None:
             _sh._shape_clipboard = shp.to_dict()
@@ -1960,6 +2024,25 @@ class MainWindow(QMainWindow):
                     InsertShapeCmd(s, shape, "Paste Shape"))
             self._status_msg("Shape pasted", 2000)
             return
+        # Check for a copied equation.
+        from . import equation as _eq
+        ec = getattr(_eq, '_equation_clipboard', None)
+        if ec:
+            from .equation import EmbeddedEquation, InsertEquationCmd
+            if not hasattr(s, '_equations'):
+                s._equations = []
+            viewport = s.table.viewport()
+            eqn = EmbeddedEquation.from_dict(ec, viewport)
+            eqn.move(int(ec.get("pos_x", 60)) + 20,
+                     int(ec.get("pos_y", 60)) + 20)
+            eqn.show()
+            eqn.raise_()
+            s._equations.append(eqn)
+            if self._undo_stack is not None:
+                self._undo_stack.push(
+                    InsertEquationCmd(s, eqn, "Paste Equation"))
+            self._status_msg("Equation pasted", 2000)
+            return
         # Check for image in system clipboard.
         clipboard = QApplication.clipboard()
         mime = clipboard.mimeData()
@@ -1980,6 +2063,10 @@ class MainWindow(QMainWindow):
     def _clear(self):
         s = self._active_sheet()
         if not s:
+            return
+        eqn = self._selected_equation()
+        if eqn is not None:
+            eqn._delete()
             return
         shp = self._selected_shape()
         if shp is not None:
@@ -2702,6 +2789,19 @@ class MainWindow(QMainWindow):
         for shp in getattr(s, '_shapes', []):
             if getattr(shp, '_selected', False):
                 return shp
+        for eq in getattr(s, '_equations', []):
+            if getattr(eq, '_selected', False):
+                return eq
+        return None
+
+    def _selected_equation(self):
+        """Return the currently selected EmbeddedEquation, if any."""
+        s = self._active_sheet()
+        if not s:
+            return None
+        for eq in getattr(s, '_equations', []):
+            if getattr(eq, '_selected', False):
+                return eq
         return None
 
     def _bring_forward(self):
@@ -3070,6 +3170,41 @@ class MainWindow(QMainWindow):
             self._undo_stack.push(
                 InsertShapeCmd(sheet, shape, "Insert Shape"))
         self._status_msg("Insert Shape", 3000)
+
+    def _make_equation_gallery(self):
+        """A drop-down gallery of preset equations plus a 'new' entry."""
+        from .equation import EquationGalleryMenu
+        return EquationGalleryMenu(self._insert_equation, self)
+
+    def _insert_equation(self, latex=None):
+        """Create an EmbeddedEquation on the active sheet (undoable).
+
+        ``latex`` None opens the editor for a fresh equation; a string
+        inserts that preset directly.
+        """
+        sheet = self._active_sheet()
+        if not sheet:
+            return
+        from .equation import (
+            EmbeddedEquation, EquationDialog, InsertEquationCmd)
+        if latex is None:
+            dlg = EquationDialog(parent=self)
+            if dlg.exec_() != QDialog.Accepted or not dlg.latex.strip():
+                return
+            eq = EmbeddedEquation(dlg.latex, dlg.fontsize, dlg.color,
+                                  sheet.table.viewport())
+        else:
+            eq = EmbeddedEquation(latex, 20, "#000000",
+                                  sheet.table.viewport())
+        if not hasattr(sheet, '_equations'):
+            sheet._equations = []
+        offset = len(sheet._equations) * 24
+        eq.move(60 + offset, 60 + offset)
+        sheet._equations.append(eq)
+        if self._undo_stack is not None:
+            self._undo_stack.push(
+                InsertEquationCmd(sheet, eq, "Insert Equation"))
+        self._status_msg("Insert Equation", 3000)
 
     # ── Format operations ────────────────────────────────────────────
     def _set_number_format(self, fmt: str):

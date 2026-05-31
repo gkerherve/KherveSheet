@@ -786,6 +786,7 @@ class SheetWidget(QWidget):
         self._charts: list = []
         self._images: list = []
         self._shapes: list = []
+        self._equations: list = []
 
         # Formula entry mode: when editing a formula, clicking a cell
         # inserts a cell reference instead of navigating.
@@ -875,6 +876,11 @@ class SheetWidget(QWidget):
             shp.deleteLater()
         if hasattr(self, '_shapes'):
             self._shapes.clear()
+        for eq in getattr(self, '_equations', []):
+            eq.setParent(None)
+            eq.deleteLater()
+        if hasattr(self, '_equations'):
+            self._equations.clear()
         # Reset column widths to default.
         for c in range(self.table.columnCount()):
             self.table.setColumnWidth(c, 80)
@@ -3258,6 +3264,12 @@ class SheetWidget(QWidget):
                 if getattr(shp, '_selected', False):
                     shp._selected = False
                     shp.update()
+
+            # Deselect any selected equation when clicking on the grid.
+            for eq in getattr(self, '_equations', []):
+                if getattr(eq, '_selected', False):
+                    eq._selected = False
+                    eq.update()
 
             # Capture inline editor state NOW, before Qt closes it.
             _live_editor = self._find_inline_editor()
