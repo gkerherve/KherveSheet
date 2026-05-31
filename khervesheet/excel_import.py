@@ -370,9 +370,55 @@ def _sp_text(sp):
     return "\n".join(paras).strip()
 
 
+def _sp_fill(sp):
+    """Return the shape's solid fill colour as #RRGGBB, or None."""
+    sppr = sp.find("xdr:spPr", _NS)
+    if sppr is None:
+        return None
+    fill = sppr.find("a:solidFill", _NS)
+    if fill is None:
+        return None
+    srgb = fill.find("a:srgbClr", _NS)
+    if srgb is not None and srgb.get("val"):
+        return "#" + srgb.get("val").upper()
+    return None
+
+
+def _sp_outline(sp):
+    """Return (colour #RRGGBB or None, width_pts float) for the line."""
+    sppr = sp.find("xdr:spPr", _NS)
+    if sppr is None:
+        return None, 1.0
+    ln = sppr.find("a:ln", _NS)
+    if ln is None:
+        return "#000000", 1.0
+    col = None
+    sf = ln.find("a:solidFill", _NS)
+    if sf is not None:
+        srgb = sf.find("a:srgbClr", _NS)
+        if srgb is not None and srgb.get("val"):
+            col = "#" + srgb.get("val").upper()
+    w = ln.get("w")
+    width = (int(w) / 12700.0) if w else 1.0   # EMU → points
+    return col, max(0.5, width)
+
+
+def _anchor_cell(node):
+    """Return (col, row) ints from an xdr:from / xdr:to node."""
+    if node is None:
+        return None
+    cc = node.find("xdr:col", _NS)
+    rc = node.find("xdr:row", _NS)
+    col = int(cc.text) if cc is not None and cc.text else 0
+    row = int(rc.text) if rc is not None and rc.text else 0
+    return col, row
+
+
 def import_textboxes(path, sheet_by_title):
-    """Parse drawing XML for floating text boxes and surface their text
-    as yellow notes anchored at each box's top-left cell."""
+    """Parse drawing XML for floating text boxes and recreate them as
+    real EmbeddedShape rectangles (with fill, outline and editable text)
+    positioned/sized from their cell anchors."""
+    from .shapes import EmbeddedShape
     touched = set()
     try:
         with zipfile.ZipFile(path) as zf:
@@ -401,6 +447,11 @@ def import_textboxes(path, sheet_by_title):
                 if not draw_path or draw_path not in names:
                     continue
 
+                if not hasattr(sheet, "_shapes"):
+                    sheet._shapes = []
+                table = sheet.table
+                viewport = table.viewport()
+
                 d_root = ET.fromstring(zf.read(draw_path))
                 for anc in list(d_root):
                     sp = anc.find("xdr:sp", _NS)
@@ -409,20 +460,34 @@ def import_textboxes(path, sheet_by_title):
                     text = _sp_text(sp)
                     if not text:
                         continue
-                    frm = anc.find("xdr:from", _NS)
-                    row = col = 0
-                    if frm is not None:
-                        rc = frm.find("xdr:row", _NS)
-                        cc = frm.find("xdr:col", _NS)
-                        if rc is not None and rc.text:
-                            row = int(rc.text)
-                        if cc is not None and cc.text:
-                            col = int(cc.text)
-                    if (row, col) in sheet._cell_notes:
+                    frm = _anchor_cell(anc.find("xdr:from", _NS))
+                    if frm is None:
                         continue
-                    sheet._cell_notes[(row, col)] = {
-                        "text": text, "kind": "note"}
-                    _ensure_item(sheet, row, col)
+                    col, row = frm
+                    x_px = sum(table.columnWidth(c) for c in range(col))
+                    y_px = sum(table.rowHeight(r) for r in range(row))
+                    to = _anchor_cell(anc.find("xdr:to", _NS))
+                    w_px, h_px = 160, 90
+                    if to is not None:
+                        tc, tr = to
+                        if tc > col:
+                            w_px = sum(table.columnWidth(c)
+                                       for c in range(col, tc))
+                        if tr > row:
+                            h_px = sum(table.rowHeight(r)
+                                       for r in range(row, tr))
+
+                    shape = EmbeddedShape("rectangle", viewport)
+                    fill = _sp_fill(sp) or "#FFFFCC"
+                    ocol, owidth = _sp_outline(sp)
+                    shape._fill_color = fill
+                    shape._outline_color = ocol or "#000000"
+                    shape._outline_width = owidth
+                    shape._text = text
+                    shape.move(x_px, y_px)
+                    shape.resize(max(60, w_px), max(30, h_px))
+                    shape.show()
+                    sheet._shapes.append(shape)
                     touched.add(sheet)
     except Exception:
         return

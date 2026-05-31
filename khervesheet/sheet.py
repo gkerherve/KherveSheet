@@ -782,6 +782,10 @@ class SheetWidget(QWidget):
         self._dependents: dict = {}      # (row, col) → set of (r, c) that depend on it
         self._col_formats: dict = {}     # col → format string
         self._merged_ranges: list = []   # [(r, c, row_span, col_span), ...]
+        # Embedded overlay widgets on the grid viewport.
+        self._charts: list = []
+        self._images: list = []
+        self._shapes: list = []
 
         # Formula entry mode: when editing a formula, clicking a cell
         # inserts a cell reference instead of navigating.
@@ -863,6 +867,11 @@ class SheetWidget(QWidget):
             img.deleteLater()
         if hasattr(self, '_images'):
             self._images.clear()
+        for shp in getattr(self, '_shapes', []):
+            shp.setParent(None)
+            shp.deleteLater()
+        if hasattr(self, '_shapes'):
+            self._shapes.clear()
         # Reset column widths to default.
         for c in range(self.table.columnCount()):
             self.table.setColumnWidth(c, 80)
