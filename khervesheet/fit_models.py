@@ -40,12 +40,15 @@ class FitFunction:
     several copies of the same shape can be summed in one composite."""
 
     def __init__(self, key: str, label: str, group: str,
-                 factory: Callable, expr: str = ""):
+                 factory: Callable, expr: str = "", guesser=None):
         self.key = key
         self.label = label
         self.group = group
         self._factory = factory
         self.expr = expr  # populated for user-built custom functions
+        # Optional guesser(x, y) -> {param_name: value}; used for models
+        # that don't ship an lmfit .guess() (our stable replacements).
+        self.guesser = guesser
 
     def make_model(self, prefix: str):
         return self._factory(prefix)
@@ -68,8 +71,8 @@ _LMFIT_SPECS = [
     ("DoniachModel", "Doniach-Sunjic", "XPS"),
     ("SkewedGaussianModel", "Skewed Gaussian", "Asymmetric"),
     ("SkewedVoigtModel", "Skewed Voigt", "Asymmetric"),
-    ("ExponentialGaussianModel", "Exp.-modified Gaussian",
-     "TGA / chromatography"),
+    # ExponentialGaussianModel is added separately below via a
+    # numerically-stable implementation (lmfit's overflows to NaN).
     ("BreitWignerModel", "Breit-Wigner-Fano", "Raman"),
     ("LognormalModel", "Log-normal", "Particle size"),
     ("StudentsTModel", "Student's t", "Statistics"),
@@ -97,6 +100,51 @@ def _builtin_factory(class_name):
     return factory
 
 
+# ── Stable exponentially-modified Gaussian ──────────────────────────
+#
+# lmfit's ExponentialGaussianModel evaluates exp(…)·erfc(…) directly,
+# where the exp term overflows and the erfc term underflows at extreme
+# trial parameters, producing inf·0 = NaN and aborting the fit.  We
+# evaluate the same function through the scaled complementary error
+# function erfcx(z)=exp(z²)·erfc(z), which never overflows:
+#     exp(u)·erfc(z) = exp(u − z²)·erfcx(z).
+
+def exp_gaussian(x, amplitude, center, sigma, gamma):
+    from scipy.special import erfcx
+    sigma = max(float(sigma), 1e-12)
+    gamma = float(gamma)
+    z = (center + gamma * sigma ** 2 - x) / (np.sqrt(2.0) * sigma)
+    u = (gamma / 2.0) * (2.0 * center + gamma * sigma ** 2 - 2.0 * x)
+    return (amplitude * gamma / 2.0) * np.exp(u - z ** 2) * erfcx(z)
+
+
+def _emg_factory(prefix):
+    import lmfit
+    m = lmfit.Model(exp_gaussian, prefix=prefix,
+                    name="Exp.-modified Gaussian")
+    m.set_param_hint("sigma", min=0)
+    m.set_param_hint("gamma", min=0)
+    return m
+
+
+def _emg_guess(x, y):
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    base = float(np.nanmin(y))
+    yy = y - base
+    i = int(np.nanargmax(yy))
+    height = float(yy[i]) or 1.0
+    above = yy >= height / 2.0
+    if above.any():
+        width = float(x[above].max() - x[above].min()) or 1.0
+    else:
+        width = (float(np.nanmax(x) - np.nanmin(x)) or 1.0) / 10.0
+    sigma = max(width / 2.3548, 1e-3)
+    area = float(np.trapz(yy, x)) or (height * sigma)
+    return {"amplitude": area, "center": float(x[i]),
+            "sigma": sigma, "gamma": 1.0 / sigma}
+
+
 def builtin_functions() -> List[FitFunction]:
     funcs = []
     for cls_name, label, group in _LMFIT_SPECS:
@@ -107,6 +155,10 @@ def builtin_functions() -> List[FitFunction]:
             continue
         funcs.append(FitFunction("lmfit:" + cls_name, label, group,
                                  _builtin_factory(cls_name)))
+    # Stable EMG (replaces lmfit's NaN-prone ExponentialGaussianModel).
+    funcs.append(FitFunction(
+        "emg_stable", "Exp.-modified Gaussian", "TGA / chromatography",
+        _emg_factory, guesser=_emg_guess))
     return funcs
 
 

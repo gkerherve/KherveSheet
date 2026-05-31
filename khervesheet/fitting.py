@@ -342,13 +342,26 @@ class FittingDialog(QDialog):
         if x is not None:
             mask = np.isfinite(x) & np.isfinite(y)
             if mask.sum() >= 3:
-                try:
-                    g = model.guess(y[mask], x=x[mask])
-                    for k in pars:
-                        if k in g:
-                            pars[k].set(value=g[k].value)
-                except Exception:
-                    pass
+                # Never set a value on a constrained (derived) parameter —
+                # lmfit's set(value=) silently drops the expression, which
+                # would free parameters like a Voigt's gamma/fwhm/height
+                # and break the model.
+                if func.guesser is not None:
+                    try:
+                        for k, v in func.guesser(x[mask], y[mask]).items():
+                            full = prefix + k
+                            if full in pars and not pars[full].expr:
+                                pars[full].set(value=v)
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        g = model.guess(y[mask], x=x[mask])
+                        for k in pars:
+                            if k in g and not pars[k].expr:
+                                pars[k].set(value=g[k].value)
+                    except Exception:
+                        pass
         out = {}
         for full, par in pars.items():
             # Skip derived parameters (lmfit exposes e.g. a Gaussian's
