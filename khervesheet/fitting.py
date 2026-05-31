@@ -164,9 +164,14 @@ class FittingDialog(QDialog):
         self._refresh_function_combo()
         self._sheet.table.itemSelectionChanged.connect(
             self._on_sheet_selection)
+        # Live data preview: redraw the raw points whenever a range
+        # changes (typed or picked from the sheet).
+        self._x_edit.textChanged.connect(self._preview_data)
+        self._y_edit.textChanged.connect(self._preview_data)
         sel = _selection_ref_str(self._sheet)
         if sel:
             self._y_edit.setText(sel)
+        self._preview_data()
 
     # ── Cell-pick machinery ─────────────────────────────────────────
 
@@ -770,6 +775,30 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
         self._fit_arrays = (x_full, labels, arrays, bg, total)
 
     # ── Plot & report ───────────────────────────────────────────────
+
+    def _preview_data(self):
+        """Show the picked X/Y data on the plot before any fit, so the
+        user can confirm the selection is right.  Once a fit exists the
+        plot keeps showing it (range edits from clicking cells must not
+        wipe the result), until the user fits again."""
+        if self._result is not None:
+            return
+        x_full, y_full = self._read_xy(silent=True)
+        self._ax.clear()
+        if (x_full is None or not np.isfinite(np.asarray(
+                y_full, dtype=float)).any()):
+            self._ax.text(
+                0.5, 0.5, "Select X and Y data ranges",
+                ha="center", va="center", color="#888",
+                transform=self._ax.transAxes)
+            self._canvas.draw_idle()
+            return
+        self._ax.plot(x_full, y_full, "o", ms=3, color="#3a78b4",
+                      label="data")
+        self._ax.legend(loc="best", fontsize=7, framealpha=0.8)
+        self._ax.relim()
+        self._ax.autoscale_view()
+        self._canvas.draw_idle()
 
     def _draw(self, x_full, y_full):
         self._ax.clear()
