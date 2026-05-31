@@ -15,9 +15,9 @@ the Free Software Foundation, either version 3 of the License, or
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt, QRect, QPoint, QPointF, QTimer
+from PyQt5.QtCore import Qt, QRect, QRectF, QPoint, QPointF, QTimer
 from PyQt5.QtGui import (
-    QPainter, QPen, QColor, QBrush, QPolygonF, QFont,
+    QPainter, QPen, QColor, QBrush, QFont,
 )
 from PyQt5.QtWidgets import (
     QWidget, QMenu, QDialog, QHBoxLayout, QFormLayout,
@@ -25,22 +25,21 @@ from PyQt5.QtWidgets import (
     QCheckBox, QTextEdit, QUndoCommand,
 )
 
+from . import shape_defs
+
 _HANDLE = 6
 _PAD = 3        # inset so outline + handles stay inside the widget
 _ROT_OFFSET = 18  # distance of rotation handle above the top edge
 _ROT_R = 5      # rotation-handle radius
 
-# Shape types that are closed regions (can have a fill).
-_CLOSED = {"rectangle", "rounded_rect", "oval", "triangle"}
 
-SHAPE_LABELS = [
-    ("rectangle", "Rectangle"),
-    ("rounded_rect", "Rounded Rectangle"),
-    ("oval", "Oval / Ellipse"),
-    ("triangle", "Triangle"),
-    ("line", "Line"),
-    ("arrow", "Arrow"),
-]
+def _is_closed(shape_type) -> bool:
+    """True for shapes that enclose a region (and so can carry a fill)."""
+    return not shape_defs.is_line(shape_type)
+
+
+# Backward-compatible export: the full gallery now lives in shape_defs.
+SHAPE_LABELS = [(k, v["label"]) for k, v in shape_defs.SHAPES.items()]
 
 
 # ── Helpers to reach the owning sheet / undo stack ─────────────────────
@@ -175,7 +174,7 @@ class EmbeddedShape(QWidget):
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self._shape_type = shape_type
-        self._fill_color = "#FFFFCC" if shape_type in _CLOSED else None
+        self._fill_color = "#FFFFCC" if _is_closed(shape_type) else None
         self._outline_color = "#000000"
         self._outline_width = 1.0
         self._text = ""
@@ -254,40 +253,20 @@ class EmbeddedShape(QWidget):
                    max(0.0, float(self._outline_width)))
         pen.setJoinStyle(Qt.MiterJoin)
         p.setPen(pen if self._outline_width > 0 else Qt.NoPen)
-        if self._fill_color and self._shape_type in _CLOSED:
+        st = self._shape_type
+        closed = _is_closed(st)
+        if self._fill_color and closed:
             p.setBrush(QBrush(QColor(self._fill_color)))
         else:
             p.setBrush(Qt.NoBrush)
 
-        st = self._shape_type
-        if st == "rectangle":
-            p.drawRect(inner)
-        elif st == "rounded_rect":
-            p.drawRoundedRect(inner, 12, 12)
-        elif st == "oval":
-            p.drawEllipse(inner)
-        elif st == "triangle":
-            poly = QPolygonF([
-                QPointF(inner.center().x(), inner.top()),
-                QPointF(inner.left(), inner.bottom()),
-                QPointF(inner.right(), inner.bottom()),
-            ])
-            p.drawPolygon(poly)
-        elif st in ("line", "arrow"):
-            p.setBrush(Qt.NoBrush)
-            # Horizontal through the vertical centre (rotation gives angle).
-            yc = inner.center().y()
-            a = QPointF(inner.left(), yc)
-            b = QPointF(inner.right(), yc)
-            p.drawLine(a, b)
-            if st == "arrow":
-                self._draw_arrowhead(p, a, b)
+        shape_defs.draw_shape(p, QRectF(inner), st)
 
         # Text (all shapes), hidden while the inline editor is open.
         if self._text and self._inline_editor is None:
             p.setPen(QPen(QColor(self._text_color)))
             p.setFont(self._text_font())
-            valign = Qt.AlignTop if st in _CLOSED else Qt.AlignVCenter
+            valign = Qt.AlignTop if closed else Qt.AlignVCenter
             align = (int(self._text_align) & int(Qt.AlignHorizontal_Mask)) \
                 | int(valign)
             flags = int(Qt.TextWordWrap) | align
@@ -322,17 +301,6 @@ class EmbeddedShape(QWidget):
         f.setItalic(self._italic)
         f.setUnderline(self._underline)
         return f
-
-    def _draw_arrowhead(self, p, a, b):
-        import math
-        ang = math.atan2(b.y() - a.y(), b.x() - a.x())
-        size = 10 + self._outline_width * 2
-        left = QPointF(b.x() - size * math.cos(ang - math.pi / 7),
-                       b.y() - size * math.sin(ang - math.pi / 7))
-        right = QPointF(b.x() - size * math.cos(ang + math.pi / 7),
-                        b.y() - size * math.sin(ang + math.pi / 7))
-        p.setBrush(QColor(self._outline_color))
-        p.drawPolygon(QPolygonF([b, left, right]))
 
     def _handle_positions(self):
         r = self.rect()
@@ -627,7 +595,7 @@ class ShapePropertiesDialog(QDialog):
     def __init__(self, shape, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Shape Properties")
-        closed = shape._shape_type in _CLOSED
+        closed = _is_closed(shape._shape_type)
         form = QFormLayout(self)
 
         # Fill (closed shapes only).

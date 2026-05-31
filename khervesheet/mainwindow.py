@@ -238,13 +238,9 @@ class MainWindow(QMainWindow):
         # Image.
         insert_menu.addAction("Image\u2026", self._insert_image)
 
-        # Shapes submenu.
+        # Shapes submenu (full gallery, grouped by category).
         shapes_menu = insert_menu.addMenu("Shapes")
-        from .shapes import SHAPE_LABELS
-        for stype, slabel in SHAPE_LABELS:
-            act = shapes_menu.addAction(
-                icons.shape_icon(stype, 24), slabel,
-                lambda _=False, t=stype: self._insert_shape(t))
+        self._populate_shapes_menu(shapes_menu)
 
         # Sparkline.
         insert_menu.addAction("Sparkline\u2026", self._insert_sparkline)
@@ -420,6 +416,14 @@ class MainWindow(QMainWindow):
             icons.redo_icon(28), "Redo", self._undo_stack.redo)
         self._redo_act.setToolTip("Redo (Ctrl+Y)")
         std.addSeparator()
+
+        # ── Solver button ───────────────────────────────────────────
+        self._solver_btn = QToolButton()
+        self._solver_btn.setIcon(icons.solver_icon(28))
+        self._solver_btn.setToolTip("Solver")
+        self._solver_btn.clicked.connect(self._open_solver)
+        std.addWidget(self._solver_btn)
+
         fx_btn = QToolButton()
         fx_btn.setText("f(x)")
         fx_btn.setStyleSheet(
@@ -587,11 +591,7 @@ class MainWindow(QMainWindow):
         self._shapes_btn.setToolTip("Insert Shape")
         self._shapes_btn.setPopupMode(QToolButton.InstantPopup)
         shapes_tb_menu = QMenu(self._shapes_btn)
-        from .shapes import SHAPE_LABELS
-        for stype, slabel in SHAPE_LABELS:
-            shapes_tb_menu.addAction(
-                icons.shape_icon(stype, 24), slabel,
-                lambda _=False, t=stype: self._insert_shape(t))
+        self._populate_shapes_menu(shapes_tb_menu)
         self._shapes_btn.setMenu(shapes_tb_menu)
         plot_bar.addWidget(self._shapes_btn)
 
@@ -607,12 +607,6 @@ class MainWindow(QMainWindow):
         self._symbol_btn.setMenu(sym_menu)
         plot_bar.addWidget(self._symbol_btn)
 
-        # ── Solver button ───────────────────────────────────────────
-        self._solver_btn = QToolButton()
-        self._solver_btn.setIcon(icons.solver_icon(28))
-        self._solver_btn.setToolTip("Solver")
-        self._solver_btn.clicked.connect(self._open_solver)
-        plot_bar.addWidget(self._solver_btn)
 
         # ── Insert button with dropdown ────────────────────────────
         self._insert_btn = QToolButton()
@@ -653,7 +647,7 @@ class MainWindow(QMainWindow):
             icons.note_icon(20), "Note\tShift+F2", self._insert_note)
         self._insert_btn.setMenu(ins_menu)
         # Lives on the Standard toolbar, just after Undo/Redo and f(x).
-        std.addWidget(self._insert_btn)
+        plot_bar.addWidget(self._insert_btn)
 
         # ── Merge/Unmerge button (in formatting toolbar) ─────────
         self._merge_btn = QToolButton()
@@ -2990,6 +2984,20 @@ class MainWindow(QMainWindow):
         if self._undo_stack is not None:
             self._undo_stack.push(InsertImageCmd(sheet, img, label))
         self._status_msg(label, 3000)
+
+    def _populate_shapes_menu(self, menu):
+        """Fill *menu* with the shape gallery grouped into Excel-style
+        categories (Lines, Rectangles, Basic Shapes, ...)."""
+        from . import shape_defs
+        for cat in shape_defs.CATEGORY_ORDER:
+            entries = shape_defs.shapes_in_category(cat)
+            if not entries:
+                continue
+            sub = menu.addMenu(cat)
+            for stype, slabel in entries:
+                sub.addAction(
+                    icons.shape_icon(stype, 24), slabel,
+                    lambda _=False, t=stype: self._insert_shape(t))
 
     def _insert_shape(self, shape_type="rectangle"):
         """Create an EmbeddedShape on the active sheet (undoable)."""

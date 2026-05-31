@@ -1525,38 +1525,20 @@ def solver_icon(size: int = 28) -> QIcon:
 
 
 def shape_icon(shape_type: str, size: int = 24) -> QIcon:
-    """Glyph for an individual shape type (menu / dropdown entries)."""
+    """Glyph for an individual shape type, rendered via the shape
+    registry so every gallery entry has a matching icon."""
+    from . import shape_defs
+
     def _draw(p, s):
         fg = _toolbar_fg()
-        m = s * 0.18
-        r = s - m
-        p.setPen(QPen(fg, max(1.2, s / 14)))
-        p.setBrush(Qt.NoBrush)
-        if shape_type == "rectangle":
-            p.drawRect(QRectF(m, m + s * 0.08, r - m, r - m - s * 0.16))
-        elif shape_type == "rounded_rect":
-            p.drawRoundedRect(
-                QRectF(m, m + s * 0.08, r - m, r - m - s * 0.16),
-                s * 0.12, s * 0.12)
-        elif shape_type == "oval":
-            p.drawEllipse(QRectF(m, m + s * 0.08, r - m, r - m - s * 0.16))
-        elif shape_type == "triangle":
-            p.drawPolygon(QPolygonF([
-                QPointF(s / 2, m), QPointF(m, r), QPointF(r, r)]))
-        elif shape_type == "line":
-            p.drawLine(QPointF(m, r), QPointF(r, m))
-        elif shape_type == "arrow":
-            a, b = QPointF(m, r), QPointF(r, m)
-            p.drawLine(a, b)
-            import math
-            ang = math.atan2(b.y() - a.y(), b.x() - a.x())
-            hs = s * 0.28
-            p.setBrush(fg)
-            left = QPointF(b.x() - hs * math.cos(ang - math.pi / 7),
-                           b.y() - hs * math.sin(ang - math.pi / 7))
-            right = QPointF(b.x() - hs * math.cos(ang + math.pi / 7),
-                            b.y() - hs * math.sin(ang + math.pi / 7))
-            p.drawPolygon(QPolygonF([b, left, right]))
+        m = s * 0.16
+        rect = QRectF(m, m, s - 2 * m, s - 2 * m)
+        p.setPen(QPen(fg, max(1.1, s / 16)))
+        if shape_defs.is_line(shape_type):
+            p.setBrush(Qt.NoBrush)
+        else:
+            p.setBrush(QColor("#dce8f5"))
+        shape_defs.draw_shape(p, rect, shape_type)
     return _fmt_icon(size, _draw)
 
 
