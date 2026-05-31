@@ -152,6 +152,13 @@ class FittingDialog(QDialog):
         self._fit_arrays = None      # (x_full, labels, comps, bg, total)
         self._fit_ctx = None         # ranges used for the last fit
         self._data_bg_full = None    # computed data background (x_full)
+        # Draggable region delimiters (data X coords) bounding the fit /
+        # background / residual range.  None until data is first shown.
+        self._range_lo = None
+        self._range_hi = None
+        self._range_lines = []       # the two axvline artists
+        self._drag_line = None       # which delimiter is being dragged
+        self._fit_region = None      # (lo, hi) used by the last fit
         self._peaks = []             # list of peak dicts
         self._cur_peak = -1          # index into _peaks shown in editor
         # Custom functions persist on the sheet for the session.
@@ -306,6 +313,12 @@ class FittingDialog(QDialog):
         self._nav = NavigationToolbar(self._canvas, self)
         rcol.addWidget(self._nav)
         rcol.addWidget(self._canvas, 1)
+        # Drag handlers for the region delimiter lines.
+        self._canvas.mpl_connect("button_press_event", self._on_line_press)
+        self._canvas.mpl_connect("motion_notify_event",
+                                 self._on_line_motion)
+        self._canvas.mpl_connect("button_release_event",
+                                 self._on_line_release)
         self._report = QTextEdit()
         self._report.setReadOnly(True)
         self._report.setMaximumHeight(160)
@@ -657,9 +670,16 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
             "y_full": y_full.copy(),
         }
         mask = np.isfinite(x_full) & np.isfinite(y_full)
+        # Restrict to the region between the delimiter lines, if set.
+        self._fit_region = self._region()
+        if self._fit_region is not None:
+            mask = mask & (x_full >= self._fit_region[0]) \
+                & (x_full <= self._fit_region[1])
         if mask.sum() < 3:
-            QMessageBox.warning(self, "Curve Fitting",
-                                "Not enough numeric data points to fit.")
+            QMessageBox.warning(
+                self, "Curve Fitting",
+                "Not enough numeric data points in the selected range "
+                "to fit. Move the green delimiter lines wider.")
             return
         x, y = x_full[mask], y_full[mask]
 
@@ -741,6 +761,12 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
 
     def _build_fit_arrays(self, x_full, bg_key, result):
         finite = np.isfinite(x_full)
+        # Restrict everything the fit produced to the region between the
+        # delimiters (background/peaks/total/residual are only meaningful
+        # there); the raw data scatter still shows the full range.
+        region = self._fit_region
+        if region is not None:
+            finite = finite & (x_full >= region[0]) & (x_full <= region[1])
         fill = np.nanmedian(x_full[finite]) if finite.any() else 0.0
         xf = np.where(finite, x_full, fill)
         comps = result.eval_components(x=xf)
@@ -776,6 +802,67 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
 
     # ── Plot & report ───────────────────────────────────────────────
 
+    # ── Region delimiters ───────────────────────────────────────────
+
+    def _region(self):
+        """Current fit region as (lo, hi), or None if not both set."""
+        if self._range_lo is None or self._range_hi is None:
+            return None
+        return (min(self._range_lo, self._range_hi),
+                max(self._range_lo, self._range_hi))
+
+    def _add_range_lines(self, x_full):
+        """Draw the two draggable region delimiters on the current axes,
+        initialising them to the data extent the first time."""
+        finite = np.asarray(x_full, dtype=float)
+        finite = finite[np.isfinite(finite)]
+        if finite.size == 0:
+            return
+        xmin, xmax = float(finite.min()), float(finite.max())
+        if self._range_lo is None or self._range_hi is None:
+            self._range_lo, self._range_hi = xmin, xmax
+        else:
+            # Keep within the data, but don't collapse the range.
+            self._range_lo = min(max(self._range_lo, xmin), xmax)
+            self._range_hi = min(max(self._range_hi, xmin), xmax)
+        self._range_lines = [
+            self._ax.axvline(self._range_lo, color="#27ae60", lw=1.3,
+                             ls="--", zorder=5),
+            self._ax.axvline(self._range_hi, color="#27ae60", lw=1.3,
+                             ls="--", zorder=5),
+        ]
+
+    def _on_line_press(self, event):
+        # Ignore while a pan/zoom tool is active, or outside the axes.
+        if (getattr(self._nav, "mode", "") or event.inaxes is not self._ax
+                or event.x is None or not self._range_lines):
+            return
+        trans = self._ax.transData
+        best, best_d = None, 8.0  # pixel tolerance
+        for i, val in enumerate((self._range_lo, self._range_hi)):
+            if val is None:
+                continue
+            xpix = trans.transform((val, 0))[0]
+            d = abs(event.x - xpix)
+            if d < best_d:
+                best, best_d = i, d
+        self._drag_line = best
+
+    def _on_line_motion(self, event):
+        if (self._drag_line is None or event.inaxes is not self._ax
+                or event.xdata is None):
+            return
+        if self._drag_line == 0:
+            self._range_lo = float(event.xdata)
+        else:
+            self._range_hi = float(event.xdata)
+        line = self._range_lines[self._drag_line]
+        line.set_xdata([event.xdata, event.xdata])
+        self._canvas.draw_idle()
+
+    def _on_line_release(self, event):
+        self._drag_line = None
+
     def _preview_data(self):
         """Show the picked X/Y data on the plot before any fit, so the
         user can confirm the selection is right.  Once a fit exists the
@@ -798,6 +885,7 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
         self._ax.legend(loc="best", fontsize=7, framealpha=0.8)
         self._ax.relim()
         self._ax.autoscale_view()
+        self._add_range_lines(x_full)
         self._canvas.draw_idle()
 
     def _draw(self, x_full, y_full):
@@ -824,10 +912,14 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
         self._ax.legend(loc="best", fontsize=7, framealpha=0.8)
         self._ax.relim()
         self._ax.autoscale_view()
+        self._add_range_lines(x_full)
         self._canvas.draw_idle()
 
     def _write_report(self, result, x_full, y_full):
         mask = np.isfinite(x_full) & np.isfinite(y_full)
+        region = self._fit_region
+        if region is not None:
+            mask = mask & (x_full >= region[0]) & (x_full <= region[1])
         _x, _l, _a, _bg, total = self._fit_arrays
         resid = y_full - total
         ss_res = float(np.nansum(resid[mask] ** 2))
