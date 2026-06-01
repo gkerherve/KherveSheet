@@ -28,6 +28,7 @@ from matplotlib.backends.backend_qt5agg import (
 from matplotlib.collections import PathCollection
 
 from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QFrame, QLabel,
     QListWidget, QListWidgetItem, QPushButton, QSpinBox, QDoubleSpinBox,
@@ -57,6 +58,18 @@ _SIZE_PRESETS = [
 _FILL_ORDERS = [("By row", "row"), ("By column", "col")]
 
 _MM_PER_IN = 25.4
+
+
+def _baked_icon(qta_name, px=48):
+    """A themed qtawesome icon flattened to a concrete pixmap.
+
+    Some styled, checkable ``QToolButton``s don't trigger qtawesome's
+    lazy glyph painter and end up blank on certain display/DPI combos.
+    Baking the glyph into a fixed pixmap renders reliably everywhere
+    (this is how the custom plot/shape glyphs already behave)."""
+    from . import icons
+    pm = icons.themed_icon(qta_name).pixmap(QSize(px, px))
+    return QIcon(pm)
 
 
 def _is_3d(d):
@@ -367,13 +380,13 @@ class _BaseLayoutTab(QWidget):
 
         self._tool_buttons = []
         specs = [
-            (icons.themed_icon("mdi.format-list-checks"), "Plots",
+            (_baked_icon("mdi.format-list-checks"), "Plots",
              self._build_plots_panel()),
-            (icons.themed_icon("mdi.view-grid"), "Arrangement",
+            (_baked_icon("mdi.view-grid"), "Arrangement",
              self._build_arrange_panel()),
-            (icons.themed_icon("mdi.arrow-expand-all"), "Outer margins",
+            (_baked_icon("mdi.arrow-expand-all"), "Outer margins",
              self._build_margins_panel()),
-            (icons.themed_icon("mdi.aspect-ratio"), self._size_group_label,
+            (_baked_icon("mdi.aspect-ratio"), self._size_group_label,
              self._build_size_panel()),
             (None, None, None),   # separator
             (icons.shapes_button_icon(24), "Insert shape",
@@ -394,7 +407,7 @@ class _BaseLayoutTab(QWidget):
         v.addStretch(1)
 
         export = QToolButton()
-        export.setIcon(icons.themed_icon("mdi.file-export-outline"))
+        export.setIcon(_baked_icon("mdi.file-export-outline"))
         export.setIconSize(QSize(24, 24))
         export.setFixedSize(44, 44)
         export.setAutoRaise(True)
@@ -537,7 +550,7 @@ class _BaseLayoutTab(QWidget):
             ("line", "Line", icons.shape_icon("line", 22)),
             ("arrow", "Arrow", icons.shape_icon("arrow", 22)),
             ("rectangle", "Rectangle", icons.shape_icon("rectangle", 22)),
-            ("textbox", "Text box", icons.themed_icon("mdi.format-text")),
+            ("textbox", "Text box", _baked_icon("mdi.format-text", 22)),
         ]
         for key, label, icon in tools:
             b = QPushButton(icon, "  " + label)
