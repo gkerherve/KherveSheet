@@ -923,6 +923,9 @@ class CombinedLayoutTab(_BaseLayoutTab):
     def _build_content(self):
         self._figure = Figure(figsize=(7.2, 5.4), dpi=100)
         self._canvas = FigureCanvas(self._figure)
+        # Clicking empty canvas (not a shape) clears the shape selection,
+        # so a deselected shape's handles/box don't linger.
+        self._canvas.installEventFilter(self)
         scroll = QScrollArea()
         # Keep the panel at its chosen size; don't stretch with the window.
         scroll.setWidgetResizable(False)
@@ -930,6 +933,14 @@ class CombinedLayoutTab(_BaseLayoutTab):
         scroll.setWidget(self._canvas)
         self._scroll = scroll
         return scroll
+
+    def eventFilter(self, obj, ev):
+        from PyQt5.QtCore import QEvent
+        if (obj is getattr(self, "_canvas", None)
+                and ev.type() == QEvent.MouseButtonPress):
+            from . import overlay
+            overlay.deselect_all(self)
+        return super().eventFilter(obj, ev)
 
     def _render(self):
         if self._suspend:
