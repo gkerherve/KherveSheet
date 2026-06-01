@@ -1020,6 +1020,131 @@ def _draw_arrow(p: QPainter, color: QColor, pw: float,
     p.drawPolygon(tri)
 
 
+# ── Plot-toolbar icons (QPainter — no qtawesome dependency) ──────
+
+def home_icon(size: int = 22) -> QIcon:
+    """Simple house glyph for 'reset view'."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    color = QColor(active_icon_color())
+    s = float(size)
+    pad = s * 0.10
+    # Roof: triangle.
+    peak = QPointF(s / 2, pad)
+    left = QPointF(pad, s * 0.48)
+    right = QPointF(s - pad, s * 0.48)
+    p.setPen(Qt.NoPen)
+    p.setBrush(color)
+    p.drawPolygon(QPolygonF([peak, left, right]))
+    # Body: rectangle with a door gap.
+    bx0, bx1 = s * 0.22, s * 0.78
+    by0, by1 = s * 0.44, s - pad
+    p.drawRect(QRectF(bx0, by0, bx1 - bx0, by1 - by0))
+    # Door cutout (transparent).
+    p.setCompositionMode(QPainter.CompositionMode_Clear)
+    dw = s * 0.18
+    p.drawRect(QRectF(s / 2 - dw / 2, s * 0.58, dw, by1 - s * 0.58))
+    p.end()
+    return QIcon(pm)
+
+
+def zoom_in_icon(size: int = 22) -> QIcon:
+    """Magnifying-glass with a '+' sign — pure QPainter."""
+    return _zoom_glass_icon(size, plus=True)
+
+
+def zoom_out_icon(size: int = 22) -> QIcon:
+    """Magnifying-glass with a '−' sign — pure QPainter."""
+    return _zoom_glass_icon(size, plus=False)
+
+
+def _zoom_glass_icon(size: int, plus: bool) -> QIcon:
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    color = QColor(active_icon_color())
+    accent = QColor("#00b040") if plus else QColor(ICON_ACCENT)
+    s = float(size)
+    # Lens circle.
+    cx, cy, r = s * 0.40, s * 0.40, s * 0.28
+    pw = max(1.4, s * 0.07)
+    p.setPen(QPen(color, pw))
+    p.setBrush(Qt.NoBrush)
+    p.drawEllipse(QPointF(cx, cy), r, r)
+    # Handle.
+    import math
+    hx = cx + r * math.cos(math.radians(45))
+    hy = cy + r * math.sin(math.radians(45))
+    p.setPen(QPen(color, pw * 1.3, Qt.SolidLine, Qt.RoundCap))
+    p.drawLine(QPointF(hx, hy), QPointF(s * 0.88, s * 0.88))
+    # +/− inside lens.
+    sym_half = r * 0.50
+    p.setPen(QPen(accent, pw * 0.9, Qt.SolidLine, Qt.RoundCap))
+    p.drawLine(QPointF(cx - sym_half, cy), QPointF(cx + sym_half, cy))
+    if plus:
+        p.drawLine(QPointF(cx, cy - sym_half), QPointF(cx, cy + sym_half))
+    p.end()
+    return QIcon(pm)
+
+
+def zoom_select_icon(size: int = 22) -> QIcon:
+    """Magnifying glass with a dashed rectangle — zoom to selection."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    color = QColor(active_icon_color())
+    s = float(size)
+    # Lens circle.
+    cx, cy, r = s * 0.40, s * 0.40, s * 0.28
+    pw = max(1.4, s * 0.07)
+    p.setPen(QPen(color, pw))
+    p.setBrush(Qt.NoBrush)
+    p.drawEllipse(QPointF(cx, cy), r, r)
+    # Handle.
+    import math
+    hx = cx + r * math.cos(math.radians(45))
+    hy = cy + r * math.sin(math.radians(45))
+    p.setPen(QPen(color, pw * 1.3, Qt.SolidLine, Qt.RoundCap))
+    p.drawLine(QPointF(hx, hy), QPointF(s * 0.88, s * 0.88))
+    # Dashed rectangle inside lens.
+    rw = r * 0.55
+    pen = QPen(QColor(ICON_ACCENT), max(1.0, pw * 0.7))
+    pen.setDashPattern([2, 2])
+    p.setPen(pen)
+    p.drawRect(QRectF(cx - rw, cy - rw, rw * 2, rw * 2))
+    p.end()
+    return QIcon(pm)
+
+
+def grid_icon(size: int = 22) -> QIcon:
+    """Simple 3×3 grid glyph."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    color = QColor(active_icon_color())
+    s = float(size)
+    pad = s * 0.12
+    pw = max(1.0, s * 0.06)
+    p.setPen(QPen(color, pw, Qt.SolidLine, Qt.RoundCap))
+    x0, x1 = pad, s - pad
+    span = x1 - x0
+    # Outer rectangle.
+    p.drawRect(QRectF(x0, pad, span, span))
+    # Two vertical and two horizontal inner lines.
+    for i in (1, 2):
+        t = x0 + span * i / 3
+        p.drawLine(QPointF(t, pad), QPointF(t, x1))
+        p.drawLine(QPointF(x0, pad + span * i / 3),
+                   QPointF(x1, pad + span * i / 3))
+    p.end()
+    return QIcon(pm)
+
+
 # ── Cell-formatting icons (QPainter) ──────────────────────────────
 # These never depend on qtawesome — always painted manually.
 

@@ -350,8 +350,7 @@ class FittingDialog(QDialog):
             f.setFixedWidth(6)
             return f
 
-        self._zoom_reset_btn = _tb(
-            icons.themed_icon("mdi.home"), "Reset view")
+        self._zoom_reset_btn = _tb(icons.home_icon(), "Reset view")
         ztb.addWidget(self._zoom_reset_btn)
         ztb.addWidget(_sep())
         # Y-axis nudge: top expand/shrink, bottom expand/shrink.
@@ -381,20 +380,18 @@ class FittingDialog(QDialog):
             ztb.addWidget(b)
         ztb.addWidget(_sep())
         # Zoom tools.
-        self._zoom_in_btn = _tb(
-            icons.themed_icon("mdi.magnify-plus-outline"), "Zoom in")
-        self._zoom_out_btn = _tb(
-            icons.themed_icon("mdi.magnify-minus-outline"), "Zoom out")
+        self._zoom_in_btn = _tb(icons.zoom_in_icon(), "Zoom in")
+        self._zoom_out_btn = _tb(icons.zoom_out_icon(), "Zoom out")
         self._zoom_sel_btn = _tb(
-            icons.themed_icon("mdi.magnify-scan"),
+            icons.zoom_select_icon(),
             "Zoom to selection — drag a box on the plot", checkable=True)
         for b in (self._zoom_in_btn, self._zoom_out_btn,
                   self._zoom_sel_btn):
             ztb.addWidget(b)
         ztb.addWidget(_sep())
         # Grid toggle.
-        self._grid_btn = _tb(
-            icons.themed_icon("mdi.grid"), "Toggle grid", checkable=True)
+        self._grid_btn = _tb(icons.grid_icon(), "Toggle grid",
+                             checkable=True)
         ztb.addWidget(self._grid_btn)
         ztb.addStretch()
         rcol.addLayout(ztb)
