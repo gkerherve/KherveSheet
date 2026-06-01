@@ -1452,6 +1452,31 @@ def save_file_icon(size: int = 28) -> QIcon:
     return _fmt_icon(size, _draw)
 
 
+def print_icon(size: int = 28) -> QIcon:
+    """Printer icon — matches KherveTeX style."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        pw = max(1.4, s / 18)
+        p.setPen(QPen(fg, pw))
+        # Paper coming out the top.
+        p.setBrush(QBrush(Qt.white))
+        p.drawRect(QRectF(s * 0.28, s * 0.08, s * 0.44, s * 0.30))
+        # Printer body.
+        p.setBrush(QBrush(QColor("#6a9fd8")))
+        p.drawRoundedRect(QRectF(s * 0.12, s * 0.32, s * 0.76, s * 0.36),
+                          s * 0.04, s * 0.04)
+        # Output tray.
+        p.setBrush(QBrush(Qt.white))
+        p.drawRect(QRectF(s * 0.24, s * 0.58, s * 0.52, s * 0.34))
+        # Text lines on paper.
+        p.setPen(QPen(QColor(140, 140, 140), max(1.0, s / 28)))
+        p.drawLine(QPointF(s * 0.34, s * 0.68),
+                   QPointF(s * 0.66, s * 0.68))
+        p.drawLine(QPointF(s * 0.34, s * 0.78),
+                   QPointF(s * 0.58, s * 0.78))
+    return _fmt_icon(size, _draw)
+
+
 def undo_icon(size: int = 28) -> QIcon:
     """Curved left arrow — matches KherveTeX style."""
     def _draw(p, s):

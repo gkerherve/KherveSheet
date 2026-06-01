@@ -465,13 +465,31 @@ class MainWindow(QMainWindow):
         self._fitting_btn.clicked.connect(self._open_fitting)
         std.addWidget(self._fitting_btn)
 
-        # fx_btn = QToolButton()
-        # fx_btn.setText("f(x)")
-        # fx_btn.setStyleSheet(
-        #     "QToolButton { font-style:italic; font-weight:bold; }")
-        # fx_btn.setToolTip("Insert Function (Shift+F3)")
-        # fx_btn.clicked.connect(self._open_insert_function_dialog)
-        # std.addWidget(fx_btn)
+        # ── Print button with dropdown ─────────────────────────────
+        self._print_btn = QToolButton()
+        self._print_btn.setIcon(icons.print_icon(_ICO))
+        self._print_btn.setToolTip("Print Preview (Ctrl+P)")
+        self._print_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        self._print_btn.clicked.connect(self._print_sheet)
+        print_menu = QMenu(self._print_btn)
+        print_menu.addAction("Print Preview\u2026", self._print_sheet)
+        print_menu.addSeparator()
+        print_menu.addAction("Margins\u2026", self._page_margins)
+        pm_orient = print_menu.addMenu("Orientation")
+        pm_orient.addAction("Portrait",
+                            lambda: self._set_orientation("portrait"))
+        pm_orient.addAction("Landscape",
+                            lambda: self._set_orientation("landscape"))
+        pm_size = print_menu.addMenu("Size")
+        for _pn, _pw, _ph in [("Letter", 215.9, 279.4),
+                               ("A4", 210, 297),
+                               ("A3", 297, 420),
+                               ("Legal", 215.9, 355.6)]:
+            pm_size.addAction(
+                f"{_pn} ({_pw:.0f} \u00d7 {_ph:.0f} mm)",
+                lambda n=_pn, w=_pw, h=_ph: self._set_page_size(n, w, h))
+        self._print_btn.setMenu(print_menu)
+        std.addWidget(self._print_btn)
 
         # Font toolbar
         fmt = self.addToolBar("Font")
