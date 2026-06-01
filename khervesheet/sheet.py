@@ -837,6 +837,7 @@ class SheetWidget(QWidget):
         # Formula entry mode: when editing a formula, clicking a cell
         # inserts a cell reference instead of navigating.
         self._formula_entry_cell = None   # (row, col) being edited
+        self._formula_pick_pending = None  # deferred click→range ref
         self._ref_highlight_active = False
         # Inline formula editor tracking: when an inline cell editor
         # contains "=" text, we save its state so a click on another cell
@@ -3727,6 +3728,70 @@ class SheetWidget(QWidget):
             it = QTableWidgetItem("")
             self.table.setItem(row, col, it)
         return it
+
+    def _finish_formula_pick(self):
+        """Finalise a click-or-drag formula reference insertion.
+
+        Called on mouse-release after a pending formula pick was recorded
+        on mouse-press.  Reads the current selection to decide whether to
+        insert a single-cell ref (``F3``) or a range ref (``F3:F11``).
+        """
+        pick = self._formula_pick_pending
+        self._formula_pick_pending = None
+        if pick is None:
+            return
+        # Determine the reference string from the current selection.
+        sel = self.table.selectedRanges()
+        if sel:
+            rng = sel[0]
+            r1, c1 = rng.topRow(), rng.leftColumn()
+            r2, c2 = rng.bottomRow(), rng.rightColumn()
+        else:
+            r1, c1 = pick["start"]
+            r2, c2 = r1, c1
+        if (r1, c1) == (r2, c2):
+            ref = col_index_to_letter(c1) + str(r1 + 1)
+        else:
+            ref = (col_index_to_letter(c1) + str(r1 + 1) + ":"
+                   + col_index_to_letter(c2) + str(r2 + 1))
+
+        fc_r, fc_c = pick["formula_cell"]
+        saved_text = pick["saved_text"] or self._inline_formula_text
+        saved_pos = pick["saved_pos"]
+        if saved_pos is None or saved_pos == 0:
+            saved_pos = self._inline_formula_pos or 0
+
+        # The inline editor captured at press time may have been closed
+        # by Qt during drag.  Re-find it; fall back to saved text.
+        inline_editor = self._find_inline_editor()
+        if inline_editor and inline_editor.text().startswith("="):
+            cp = inline_editor.cursorPosition()
+            text = inline_editor.text()
+            new_text = text[:cp] + ref + text[cp:]
+            inline_editor.setText(new_text)
+            inline_editor.setCursorPosition(cp + len(ref))
+            inline_editor.setFocus()
+            self._update_ref_highlights(new_text)
+        elif saved_text is not None:
+            new_text = saved_text[:saved_pos] + ref + saved_text[saved_pos:]
+            new_pos = saved_pos + len(ref)
+            self.table.setCurrentCell(fc_r, fc_c)
+            self.table.editItem(
+                self.table.item(fc_r, fc_c)
+                or self._ensure_item(fc_r, fc_c))
+            QTimer.singleShot(
+                0, lambda: self._set_inline_editor_text(new_text, new_pos))
+        else:
+            cp = self._formula_bar.cursorPosition()
+            text = self._formula_bar.text()
+            new_text = text[:cp] + ref + text[cp:]
+            self._formula_bar.setText(new_text)
+            self._formula_bar.setCursorPosition(cp + len(ref))
+            self._formula_bar.setFocus()
+            self._update_ref_highlights(new_text)
+        self._arrow_nav_active = False
+        self._arrow_nav_pos = None
+        self._arrow_nav_ref_span = None
 
     def _set_inline_editor_text(self, text, cursor_pos):
         """Set text and cursor on the active inline editor (deferred)."""
