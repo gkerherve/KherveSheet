@@ -848,6 +848,9 @@ class SheetWidget(QWidget):
         self._arrow_nav_active = False
         self._arrow_nav_pos = None       # (row, col) of ref cursor
         self._arrow_nav_ref_span = None  # (start, end) char indices in editor
+        # Range-finder: draggable formula reference highlights.
+        self._ref_tokens = []            # [{span,c1,r1,c2,r2,text}] for cur text
+        self._ref_drag = None            # active drag state, or None
 
         # Signals
         self.table.cellChanged.connect(self._on_cell_changed)
@@ -1513,6 +1516,7 @@ class SheetWidget(QWidget):
         self._arrow_nav_active = False
         self._arrow_nav_pos = None
         self._arrow_nav_ref_span = None
+        self._ref_drag = None
         wb = self._workbook()
         if wb is not None:
             wb.clear_active_formula(self)
@@ -1562,6 +1566,7 @@ class SheetWidget(QWidget):
         self._arrow_nav_active = False
         self._arrow_nav_pos = None
         self._arrow_nav_ref_span = None
+        self._ref_drag = None
         wb = self._workbook()
         if wb is not None:
             wb.clear_active_formula(self)
@@ -1660,11 +1665,48 @@ class SheetWidget(QWidget):
 
         return result
 
+    def _parse_ref_tokens(self, text: str):
+        """Parse *text* into a list of reference tokens, each
+        ``{"span": (start, end), "c1","r1","c2","r2", "text"}`` in the
+        ORIGINAL string (cross-sheet tokens blanked length-preservingly so
+        spans stay valid).  Used to drag the highlights ("range finder")."""
+        # Ensure the shared patterns / func-name set are compiled.
+        self._parse_cell_refs("")
+        text = text or ""
+        masked = _XREF_PATTERN.sub(
+            lambda m: " " * (m.end() - m.start()), text)
+        tokens = []
+        used = []
+        for m in self._RANGE_PATTERN.finditer(masked):
+            c1 = letter_to_col_index(m.group(1).upper())
+            r1 = int(m.group(2)) - 1
+            c2 = letter_to_col_index(m.group(3).upper())
+            r2 = int(m.group(4)) - 1
+            tokens.append({"span": (m.start(), m.end()),
+                           "c1": min(c1, c2), "r1": min(r1, r2),
+                           "c2": max(c1, c2), "r2": max(r1, r2),
+                           "text": text[m.start():m.end()]})
+            used.append((m.start(), m.end()))
+        for m in self._REF_PATTERN.finditer(masked):
+            if any(s <= m.start() and m.end() <= e for s, e in used):
+                continue
+            letters = m.group(1).upper()
+            if letters in self._FUNC_NAMES:
+                continue
+            c = letter_to_col_index(letters)
+            r = int(m.group(2)) - 1
+            tokens.append({"span": (m.start(), m.end()),
+                           "c1": c, "r1": r, "c2": c, "r2": r,
+                           "text": text[m.start():m.end()]})
+        tokens.sort(key=lambda t: t["span"][0])
+        return tokens
+
     def _update_ref_highlights(self, text: str):
         """Parse cell refs from *text* and highlight them on the grid."""
         from .cellformat import CellFormatDelegate
         delegate = self._fmt_delegate
         refs = self._parse_cell_refs(text)
+        self._ref_tokens = self._parse_ref_tokens(text)
         colors = CellFormatDelegate.REF_COLORS
         new_highlights = {}
         for i, key in enumerate(refs):
@@ -1686,9 +1728,93 @@ class SheetWidget(QWidget):
         old = set(delegate._ref_highlights.keys())
         delegate._ref_highlights.clear()
         self._ref_highlight_active = False
+        self._ref_tokens = []
         for (r, c) in old:
             idx = self.table.model().index(r, c)
             self.table.update(idx)
+
+    # ── Range finder: drag a reference highlight to move it ──────────
+    def _active_formula_target(self):
+        """The widget holding the in-progress formula text — the live
+        inline cell editor (if its text starts with '='), else the
+        formula bar.  None if no formula is being entered."""
+        editor = self._find_inline_editor()
+        if editor is not None and editor.text().startswith("="):
+            return editor
+        if (self._formula_entry_cell is not None
+                and self._formula_bar.text().startswith("=")):
+            return self._formula_bar
+        return None
+
+    def _ref_token_rect(self, tok):
+        """Viewport rect spanning a token's cell range."""
+        t = self.table
+        x1 = t.columnViewportPosition(tok["c1"])
+        y1 = t.rowViewportPosition(tok["r1"])
+        x2 = t.columnViewportPosition(tok["c2"]) + t.columnWidth(tok["c2"])
+        y2 = t.rowViewportPosition(tok["r2"]) + t.rowHeight(tok["r2"])
+        return QRect(x1, y1, x2 - x1, y2 - y1)
+
+    def _ref_token_at(self, pos):
+        """Index of the reference token under *pos* (viewport coords),
+        else None.  Single-cell refs are fully grabbable; multi-cell
+        ranges grab on the border band only (so interior clicks still
+        select / insert)."""
+        band = 4
+        for i, tok in enumerate(self._ref_tokens):
+            rect = self._ref_token_rect(tok)
+            single = (tok["c1"] == tok["c2"] and tok["r1"] == tok["r2"])
+            if single:
+                if rect.adjusted(-band, -band, band, band).contains(pos):
+                    return i
+                continue
+            outer = rect.adjusted(band, band, -band, -band)
+            if rect.contains(pos) and not outer.contains(pos):
+                return i
+        return None
+
+    def _begin_ref_drag(self, idx, event):
+        target = self._active_formula_target()
+        if target is None:
+            return False
+        toks = self._parse_ref_tokens(target.text())
+        if idx < 0 or idx >= len(toks):
+            return False
+        cell = self.table.indexAt(event.pos())
+        if not cell.isValid():
+            return False
+        tok = toks[idx]
+        self._ref_drag = {
+            "target": target,
+            "text0": target.text(),
+            "span0": tok["span"],
+            "token0": tok["text"],
+            "press": (cell.row(), cell.column()),
+        }
+        self.table.viewport().setCursor(Qt.SizeAllCursor)
+        return True
+
+    def _ref_drag_move(self, event):
+        d = self._ref_drag
+        cell = self.table.indexAt(event.pos())
+        if not cell.isValid():
+            return
+        pr, pc = d["press"]
+        drow = cell.row() - pr
+        dcol = cell.column() - pc
+        new_tok = shift_formula(d["token0"], drow, dcol)
+        s, e = d["span0"]
+        new_text = d["text0"][:s] + new_tok + d["text0"][e:]
+        target = d["target"]
+        target.blockSignals(True)
+        target.setText(new_text)
+        target.setCursorPosition(min(len(new_text), s + len(new_tok)))
+        target.blockSignals(False)
+        self._update_ref_highlights(new_text)
+
+    def _end_ref_drag(self):
+        self._ref_drag = None
+        self.table.viewport().unsetCursor()
 
     # ── Formula evaluation (basic) ───────────────────────────────────
     def _evaluate_formula(self, formula: str, row: int, col: int,
@@ -3464,6 +3590,15 @@ class SheetWidget(QWidget):
             return super().eventFilter(obj, event)
         etype = event.type()
 
+        # ── Range-finder: dragging a reference highlight ─────────────
+        if self._ref_drag is not None:
+            if etype == QEvent.MouseMove:
+                self._ref_drag_move(event)
+                return True
+            if etype == QEvent.MouseButtonRelease:
+                self._end_ref_drag()
+                return True
+
         # Keep the marching-ants overlay sized to the viewport.
         if (etype == QEvent.Resize and self._marching_range is not None):
             self._sync_ants_overlay()
@@ -3472,11 +3607,16 @@ class SheetWidget(QWidget):
             self._hide_note_popup()
 
         if etype == QEvent.MouseMove and not self._fill_dragging:
-            hr = self._fill_handle_rect()
-            if hr and hr.contains(event.pos()):
-                self.table.viewport().setCursor(Qt.CrossCursor)
+            # Move cursor when hovering a draggable reference highlight.
+            if (self._ref_highlight_active
+                    and self._ref_token_at(event.pos()) is not None):
+                self.table.viewport().setCursor(Qt.SizeAllCursor)
             else:
-                self.table.viewport().unsetCursor()
+                hr = self._fill_handle_rect()
+                if hr and hr.contains(event.pos()):
+                    self.table.viewport().setCursor(Qt.CrossCursor)
+                else:
+                    self.table.viewport().unsetCursor()
             # Note / comment hover popup
             pos = event.pos()
             idx = self.table.indexAt(pos)
@@ -3491,6 +3631,12 @@ class SheetWidget(QWidget):
 
         elif (etype == QEvent.MouseButtonPress
               and event.button() == Qt.LeftButton):
+            # Range finder: start dragging a reference highlight if the
+            # press lands on one (takes precedence over click-to-insert).
+            if self._ref_highlight_active:
+                ti = self._ref_token_at(event.pos())
+                if ti is not None and self._begin_ref_drag(ti, event):
+                    return True
             # Cross-sheet pick: if another sheet is mid-formula-entry,
             # clicking a cell here inserts "<ThisSheet>!<ref>" into that
             # sheet's formula bar and returns focus to it.
