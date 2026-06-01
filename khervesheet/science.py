@@ -30,7 +30,7 @@ from PyQt5.QtWidgets import (
 
 from .sheet import SheetWidget, BulkCellEditCmd, col_index_to_letter
 from .solver import (
-    _PickLineEdit, _parse_ref, _parse_range, _selection_ref_str,
+    _PickLineEdit, _parse_range, _selection_ref_str,
     _PICK_STYLE, _NORMAL_STYLE,
 )
 
@@ -47,9 +47,12 @@ class ScienceToolDialog(QDialog):
     """
 
     TITLE = "Science Tool"
-    #: when True the X column is also written next to the result so the
-    #: output is a ready-to-plot X/Y pair.
-    EMIT_X = True
+    #: when True an X column is written next to the result.  Off by
+    #: default: transforms that leave X unchanged (normalise, integrate,
+    #: derivative, smooth) already have X in the source, so a copy would
+    #: just be a confusing duplicate.  Tools that produce a *new* X
+    #: (FFT, interpolation, find peaks) emit it as their own column.
+    EMIT_X = False
 
     def __init__(self, sheet: SheetWidget, parent=None):
         super().__init__(parent)
@@ -182,9 +185,14 @@ class ScienceToolDialog(QDialog):
 
     def _resolve_output_start(self) -> Tuple[int, int]:
         ref = self._out_edit.text().strip()
-        rc = _parse_ref(ref) if ref else None
-        if rc is not None:
-            return rc
+        if ref:
+            # Accept a single cell ($C$1) or a range ($C$1:$C$1000) /
+            # comma-list — results always start at the top-left cell.
+            cells = _parse_range(ref)
+            if cells:
+                rows = [r for r, _c in cells]
+                cols = [c for _r, c in cells]
+                return (min(rows), min(cols))
         return (0, self._sheet.column_count())
 
     def _write_columns(self, cols: List[Tuple[str, np.ndarray]]):
