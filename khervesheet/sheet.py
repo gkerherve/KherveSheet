@@ -3929,14 +3929,18 @@ class SheetWidget(QWidget):
             self._ensure_columns_fill_viewport()
 
         # ── Detect inline editor creation on viewport ────────────
+        # At ChildAdded time the widget may not yet be a QLineEdit in
+        # Python's sip wrapper, so defer the isinstance check.
         if (obj is self.table.viewport()
                 and event.type() == QEvent.ChildAdded):
             try:
                 child = event.child()
-                if (isinstance(child, QLineEdit)
-                        and child is not self._formula_bar):
-                    child.textChanged.connect(
-                        self._on_inline_editor_text)
+                def _try_connect(w=child):
+                    if (isinstance(w, QLineEdit)
+                            and w is not self._formula_bar):
+                        w.textChanged.connect(
+                            self._on_inline_editor_text)
+                QTimer.singleShot(0, _try_connect)
             except Exception:
                 pass
 
@@ -3969,6 +3973,41 @@ class SheetWidget(QWidget):
         if obj is self.table and event.type() == QEvent.KeyPress:
             key = event.key()
             editor = self._find_inline_editor()
+
+            # ── '=' with no editor → redirect straight to formula bar ──
+            if (key == Qt.Key_Equal and editor is None
+                    and self._formula_entry_cell is None):
+                r = self.table.currentRow()
+                c = self.table.currentColumn()
+                if r >= 0 and c >= 0:
+                    self._formula_entry_cell = (r, c)
+                    self._formula_bar.setText("=")
+                    self._formula_bar.setFocus()
+                    self._formula_bar.setCursorPosition(1)
+                    wb = self._workbook()
+                    if wb is not None:
+                        wb.set_active_formula(self)
+                    return True          # eat the key
+
+            # ── '=' typed into an existing inline editor → redirect ──
+            if (key == Qt.Key_Equal and editor is not None
+                    and not editor.text()):
+                r = self.table.currentRow()
+                c = self.table.currentColumn()
+                if r >= 0 and c >= 0:
+                    self.table.closeEditor(
+                        editor, QAbstractItemDelegate.RevertModelData)
+                    self._inline_formula_cell = None
+                    self._inline_formula_text = None
+                    self._formula_entry_cell = (r, c)
+                    self._formula_bar.setText("=")
+                    self._formula_bar.setFocus()
+                    self._formula_bar.setCursorPosition(1)
+                    wb = self._workbook()
+                    if wb is not None:
+                        wb.set_active_formula(self)
+                    return True          # eat the key
+
             if key == Qt.Key_Escape:
                 if editor:
                     # Cancel inline edit without committing.
