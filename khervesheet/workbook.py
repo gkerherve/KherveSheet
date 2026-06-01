@@ -111,6 +111,10 @@ class WorkbookWidget(QWidget):
 
         self._combined_tab = None
 
+        # Cross-sheet formula support.
+        self._active_formula_sheet = None  # sheet currently entering "="
+        self._in_xref_refresh = False      # re-entrancy guard
+
         # Create default sheets
         for i in range(3):
             self.add_sheet(f"Sheet{i + 1}")
@@ -201,6 +205,49 @@ class WorkbookWidget(QWidget):
     def sheet_names(self) -> List[str]:
         return [self.tabs.tabText(i) for i in range(self.tabs.count())
                 if isinstance(self.tabs.widget(i), SheetWidget)]
+
+    # ── Cross-sheet formula support ──────────────────────────────────
+    def sheet_by_name(self, name: str) -> Optional[SheetWidget]:
+        """Find a sheet by its tab name (case-insensitive)."""
+        if not name:
+            return None
+        target = name.strip().strip("'").lower()
+        for i in range(self.tabs.count()):
+            w = self.tabs.widget(i)
+            if (isinstance(w, SheetWidget)
+                    and self.tabs.tabText(i).lower() == target):
+                return w
+        return None
+
+    def name_of_sheet(self, sheet) -> str:
+        """Tab name for a SheetWidget (empty string if not found)."""
+        idx = self.tabs.indexOf(sheet)
+        return self.tabs.tabText(idx) if idx >= 0 else ""
+
+    def set_active_formula(self, sheet):
+        self._active_formula_sheet = sheet
+
+    def clear_active_formula(self, sheet):
+        if self._active_formula_sheet is sheet:
+            self._active_formula_sheet = None
+
+    def refresh_cross_sheet(self):
+        """Re-evaluate every cross-sheet formula across all sheets and
+        cascade their local dependents.  Guarded against re-entrancy so
+        the cascade can't loop back into another refresh."""
+        if self._in_xref_refresh:
+            return
+        self._in_xref_refresh = True
+        try:
+            for s in self.all_sheets():
+                cells = list(getattr(s, "_xref_cells", ()) or ())
+                if not cells:
+                    continue
+                for (r, c) in cells:
+                    s._reeval_formula_cell(r, c)
+                s._recalc_from_seeds(cells)
+        finally:
+            self._in_xref_refresh = False
 
     def _close_tab(self, idx: int):
         if not isinstance(self.tabs.widget(idx), SheetWidget):

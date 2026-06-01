@@ -11,6 +11,7 @@ the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 """
 
+import re
 from typing import List, Optional
 
 import numpy as np
@@ -59,6 +60,39 @@ def letter_to_col_index(letters: str) -> int:
     for ch in letters.upper():
         result = result * 26 + (ord(ch) - ord('A') + 1)
     return result - 1
+
+
+# Cross-sheet reference token:  Sheet1!B5  or  'My Sheet'!A1:A10
+# Group 1 = sheet name (quoted or bare), group 2 = the A1 / A1:B10 ref.
+_XREF_PATTERN = re.compile(
+    r"(?:'([^']+)'|([A-Za-z_]\w*))\s*!\s*"
+    r"(\$?[A-Za-z]{1,3}\$?\d{1,7}(?:\s*:\s*\$?[A-Za-z]{1,3}\$?\d{1,7})?)")
+
+
+def _quote_sheet_name(name: str) -> str:
+    """Wrap a sheet name in single quotes if it isn't a bare identifier."""
+    if re.fullmatch(r"[A-Za-z_]\w*", name or ""):
+        return name
+    return "'" + (name or "").replace("'", "") + "'"
+
+
+def _parse_a1(ref: str):
+    """'B5' / '$B$5' → (col_index, row_index)."""
+    m = re.fullmatch(r'\$?([A-Za-z]{1,3})\$?(\d{1,7})', ref.strip())
+    return letter_to_col_index(m.group(1)), int(m.group(2)) - 1
+
+
+def _compile_xref(name: str, ref: str) -> str:
+    """Build the runtime call for a cross-sheet ref: a single cell →
+    ``_XC("Sheet", r, c)``; a range → ``_XRANGE("Sheet", c1, r1, c2, r2)``."""
+    name_lit = repr(name)
+    if ":" in ref:
+        a, b = ref.split(":", 1)
+        c1, r1 = _parse_a1(a)
+        c2, r2 = _parse_a1(b)
+        return f"_XRANGE({name_lit},{c1},{r1},{c2},{r2})"
+    c, r = _parse_a1(ref)
+    return f"_XC({name_lit},{r},{c})"
 
 
 def shift_formula(formula: str, d_row: int, d_col: int) -> str:
@@ -787,6 +821,7 @@ class SheetWidget(QWidget):
         self._shadow: dict = {}          # (row, col) → last-known text
         self._cell_formulas: dict = {}   # (row, col) → "=formula"
         self._dependents: dict = {}      # (row, col) → set of (r, c) that depend on it
+        self._xref_cells: set = set()    # formula cells using Sheet!ref
         self._col_formats: dict = {}     # col → format string
         self._merged_ranges: list = []   # [(r, c, row_span, col_span), ...]
         # Embedded overlay widgets on the grid viewport.
@@ -864,6 +899,7 @@ class SheetWidget(QWidget):
         self._shadow.clear()
         self._cell_formulas.clear()
         self._dependents.clear()
+        self._xref_cells.clear()
         self._cell_formats.clear()
         self._col_formats.clear()
         self._col_designations.clear()
@@ -1328,6 +1364,8 @@ class SheetWidget(QWidget):
 
         # Recalculate any cells that depend on this one.
         self._recalc_dependents(row, col)
+        # Refresh cross-sheet formulas elsewhere that may read this cell.
+        self._refresh_cross_sheet()
 
     # ── Dependency tracking ──────────────────────────────────────────
     def _register_deps(self, row, col, formula):
@@ -1337,10 +1375,16 @@ class SheetWidget(QWidget):
         refs = self._parse_cell_refs(formula)
         for ref_key in refs:
             self._dependents.setdefault(ref_key, set()).add((row, col))
+        # Track cross-sheet formula cells so the workbook can refresh them.
+        if _XREF_PATTERN.search(formula or ""):
+            self._xref_cells.add((row, col))
+        else:
+            self._xref_cells.discard((row, col))
 
     def _unregister_deps(self, row, col):
         """Remove (row, col) from all dependency sets."""
         key = (row, col)
+        self._xref_cells.discard(key)
         for deps in self._dependents.values():
             deps.discard(key)
 
@@ -1450,9 +1494,15 @@ class SheetWidget(QWidget):
                 c = self.table.currentColumn()
                 if r >= 0 and c >= 0:
                     self._formula_entry_cell = (r, c)
+            wb = self._workbook()
+            if wb is not None:
+                wb.set_active_formula(self)
             self._update_ref_highlights(text)
         elif not text.startswith("="):
             self._formula_entry_cell = None
+            wb = self._workbook()
+            if wb is not None:
+                wb.clear_active_formula(self)
             self._clear_ref_highlights()
 
     def _exit_formula_mode(self):
@@ -1463,6 +1513,9 @@ class SheetWidget(QWidget):
         self._arrow_nav_active = False
         self._arrow_nav_pos = None
         self._arrow_nav_ref_span = None
+        wb = self._workbook()
+        if wb is not None:
+            wb.clear_active_formula(self)
         self._clear_ref_highlights()
         # Restore formula bar to the current cell's stored value
         # and return focus to the grid so the cell is active again.
@@ -1509,6 +1562,9 @@ class SheetWidget(QWidget):
         self._arrow_nav_active = False
         self._arrow_nav_pos = None
         self._arrow_nav_ref_span = None
+        wb = self._workbook()
+        if wb is not None:
+            wb.clear_active_formula(self)
         self._clear_ref_highlights()
         idx = self.table.currentIndex()
         if not idx.isValid():
@@ -1544,8 +1600,12 @@ class SheetWidget(QWidget):
     def _parse_cell_refs(self, formula_text: str):
         """Extract unique (row, col) positions from cell references
         in *formula_text*, expanding ranges like A1:A10 into every
-        cell in the range.  Returns a list of (row, col)."""
+        cell in the range.  Returns a list of (row, col).
+
+        Cross-sheet tokens (``Sheet1!A1``) are removed first so their
+        inner ref isn't mistaken for a local cell on this sheet."""
         import re
+        formula_text = _XREF_PATTERN.sub(" ", formula_text or "")
         if SheetWidget._RANGE_PATTERN is None:
             SheetWidget._RANGE_PATTERN = re.compile(
                 r'\$?([A-Za-z]{1,3})\$?(\d{1,7})'
@@ -1983,6 +2043,8 @@ class SheetWidget(QWidget):
                   "_AGG": self._agg_range,
                   "_COL": self._agg_col,
                   "_RANGE": self._range_values,
+                  "_XC": self._XC,
+                  "_XRANGE": self._XRANGE,
                   }
         self._eval_ns = ns
         _lower = {}
@@ -2016,11 +2078,28 @@ class SheetWidget(QWidget):
         object is value-independent and safe to cache by formula text.
         Returns False if the expression cannot be compiled.
         """
-        import re
         self._build_eval_ns()
         ns = self._eval_ns
         ns_lower = self._eval_ns_lower
         expr = formula[1:]  # strip leading =
+
+        # Mask cross-sheet refs (Sheet1!B5, 'My Sheet'!A1:B10) with
+        # letters-only placeholders so the local cell-ref/range regexes
+        # below don't corrupt the embedded sheet-name string literals.
+        # Restore them to _XC/_XRANGE calls after the local rewrites.
+        xref_subs = {}
+
+        def _mask_xref(m):
+            name = m.group(1) if m.group(1) is not None else m.group(2)
+            ref = m.group(3)
+            # Token has no digits (so the cell-ref regex can't match it)
+            # and an underscore (so the whole-column SUM(A) pass, which
+            # matches a run of letters, can't match it either).
+            token = "XSHEETREF_" + col_index_to_letter(len(xref_subs))
+            xref_subs[token] = _compile_xref(name, ref)
+            return token
+
+        expr = _XREF_PATTERN.sub(_mask_xref, expr)
 
         def _normalise_func(m):
             word = m.group(1)
@@ -2034,6 +2113,8 @@ class SheetWidget(QWidget):
         expr = self._compile_column_functions(expr)
         expr = re.sub(r'(\$?)([A-Za-z]{1,3})(\$?)(\d+)\b',
                       self._compile_cell_ref, expr)
+        for token, call in xref_subs.items():
+            expr = expr.replace(token, call)
         expr = expr.replace("^", "**")
         try:
             return compile(expr, "<formula>", "eval")
@@ -2077,6 +2158,77 @@ class SheetWidget(QWidget):
         pattern = (r'(SUM|AVERAGE|AVG|MEAN|MIN|MAX|COUNT|STDEV)'
                    r'\s*\(\s*([A-Z]+)\s*\)')
         return re.sub(pattern, _expand, expr, flags=re.IGNORECASE)
+
+    # ── Cross-sheet support ──────────────────────────────────────────
+    def _workbook(self):
+        """Walk up to the owning WorkbookWidget, or None."""
+        w = self.parent()
+        while w is not None:
+            if hasattr(w, "sheet_by_name") and hasattr(w, "all_sheets"):
+                return w
+            p = w.parent()
+            if p is w:
+                break
+            w = p
+        return None
+
+    def _refresh_cross_sheet(self):
+        wb = self._workbook()
+        if wb is not None:
+            wb.refresh_cross_sheet()
+
+    def _reeval_formula_cell(self, r, c):
+        """Re-evaluate one formula cell in place (used by cross-sheet
+        refresh).  Leaves local-dependent cascading to the caller."""
+        formula = self._cell_formulas.get((r, c))
+        if not formula:
+            return
+        dec = self._cell_decimals(r, c)
+        result = self._apply_cell_number_format(
+            str(self._evaluate_formula(formula, r, c, dec)), r, c)
+        self._set_cell_quiet(r, c, result)
+
+    def _XC(self, name, r, c):
+        """Read a single cell value from another sheet (Sheet!A1)."""
+        wb = self._workbook()
+        s = wb.sheet_by_name(name) if wb else None
+        return s._cell_val(r, c) if s is not None else 0.0
+
+    def _XRANGE(self, name, c1, r1, c2, r2):
+        """Read a range of values from another sheet (Sheet!A1:B10)."""
+        wb = self._workbook()
+        s = wb.sheet_by_name(name) if wb else None
+        return s._range_values(c1, r1, c2, r2) if s is not None else []
+
+    def _pick_cross_sheet_ref(self, event):
+        """If another sheet is mid-formula-entry, insert a reference to the
+        clicked cell on *this* sheet into that sheet's formula bar.
+
+        Returns True if the click was consumed."""
+        wb = self._workbook()
+        if wb is None:
+            return False
+        target = getattr(wb, "_active_formula_sheet", None)
+        if (target is None or target is self
+                or getattr(target, "_formula_entry_cell", None) is None):
+            return False
+        idx = self.table.indexAt(event.pos())
+        if not idx.isValid():
+            return False
+        cell = col_index_to_letter(idx.column()) + str(idx.row() + 1)
+        name = _quote_sheet_name(wb.name_of_sheet(self))
+        ref = "{}!{}".format(name, cell)
+        bar = target._formula_bar
+        cp = bar.cursorPosition()
+        text = bar.text()
+        new_text = text[:cp] + ref + text[cp:]
+        bar.setText(new_text)
+        bar.setCursorPosition(cp + len(ref))
+        target._update_ref_highlights(new_text)
+        # Return to the originating sheet so the user can keep editing.
+        wb.tabs.setCurrentWidget(target)
+        bar.setFocus()
+        return True
 
     # ── Compiled-formula runtime helpers ─────────────────────────────
     def _cell_val(self, r, c):
@@ -2721,6 +2873,7 @@ class SheetWidget(QWidget):
         for r, c in formula_cells:
             self.data_changed.emit(c)
             self._recalc_dependents(r, c)
+        self._refresh_cross_sheet()
         # Clear marching ants after paste.
         self._clear_marching_ants()
 
@@ -3338,6 +3491,12 @@ class SheetWidget(QWidget):
 
         elif (etype == QEvent.MouseButtonPress
               and event.button() == Qt.LeftButton):
+            # Cross-sheet pick: if another sheet is mid-formula-entry,
+            # clicking a cell here inserts "<ThisSheet>!<ref>" into that
+            # sheet's formula bar and returns focus to it.
+            if (self._formula_entry_cell is None
+                    and self._pick_cross_sheet_ref(event)):
+                return True
             # Deselect any selected chart when clicking on the grid.
             prev = getattr(self, '_selected_chart', None)
             if prev:
@@ -3558,6 +3717,7 @@ class SheetWidget(QWidget):
         # Recalculate cells that depend on any changed cell.
         for r, c, _old, _new in changes:
             self._recalc_dependents(r, c)
+        self._refresh_cross_sheet()
         self._fill_anchor_range = None
 
     def _auto_fill_down(self):

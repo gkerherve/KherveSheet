@@ -2018,6 +2018,10 @@ class MainWindow(QMainWindow):
             if layout_settings:
                 wb._combined_tab.apply_settings(layout_settings)
 
+            # Now that every sheet exists, resolve cross-sheet formulas
+            # (a Sheet2!… formula may have loaded before its source sheet).
+            wb.refresh_cross_sheet()
+
             self._status_msg(
                 f"Loaded {path}", 5000)
         except Exception as e:
