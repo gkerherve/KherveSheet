@@ -1157,8 +1157,18 @@ def _toolbar_fg() -> QColor:
 
 
 def _fmt_icon(size: int, draw_fn) -> QIcon:
-    """Create a *size*×*size* icon by calling *draw_fn(painter, size)*."""
-    pm = QPixmap(size, size)
+    """Create a *size*×*size* icon by calling *draw_fn(painter, size)*.
+
+    The pixmap is rendered at the display's device-pixel-ratio so the
+    glyph stays crisp on HiDPI screens (and doesn't visibly re-scale
+    between normal/hover states)."""
+    app = QApplication.instance()
+    try:
+        dpr = max(1.0, float(app.devicePixelRatio())) if app else 1.0
+    except Exception:  # noqa: BLE001
+        dpr = 1.0
+    pm = QPixmap(int(round(size * dpr)), int(round(size * dpr)))
+    pm.setDevicePixelRatio(dpr)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing, True)
@@ -1568,35 +1578,59 @@ def equation_icon(size: int = 28) -> QIcon:
 
 
 def merge_cells_icon(size: int = 28) -> QIcon:
-    """Four cells merging into one with inward arrows."""
+    """One wide cell with a faint divider and two arrows meeting at the
+    centre — reads as 'join into one cell'."""
     def _draw(p, s):
         fg = _toolbar_fg()
-        m = s * 0.15
-        r = s - m
-        mid = s / 2
-        # 2x2 grid
-        p.setPen(QPen(fg, max(1.0, s / 20)))
+        rect = QRectF(s * 0.12, s * 0.30, s * 0.76, s * 0.40)
+        p.setPen(QPen(fg, max(1.3, s / 18), Qt.SolidLine,
+                      Qt.RoundCap, Qt.RoundJoin))
         p.setBrush(Qt.NoBrush)
-        p.drawRect(QRectF(m, m, r - m, r - m))
-        p.setPen(QPen(fg, max(0.8, s / 24), Qt.DashLine))
-        p.drawLine(QPointF(m, mid), QPointF(r, mid))
-        p.drawLine(QPointF(mid, m), QPointF(mid, r))
-        # Inward arrows
+        p.drawRoundedRect(rect, s * 0.06, s * 0.06)
+        # Faint centre divider (the seam being merged away).
+        p.setPen(QPen(fg, max(0.8, s / 26), Qt.DashLine))
+        p.drawLine(QPointF(s * 0.5, rect.top() + s * 0.06),
+                   QPointF(s * 0.5, rect.bottom() - s * 0.06))
+        # Two arrows meeting at the centre.
         p.setPen(Qt.NoPen)
         p.setBrush(fg)
-        a = s * 0.08
-        p.drawPolygon(QPolygonF([
-            QPointF(m + a, mid), QPointF(m + a * 3, mid - a),
-            QPointF(m + a * 3, mid + a)]))
-        p.drawPolygon(QPolygonF([
-            QPointF(r - a, mid), QPointF(r - a * 3, mid - a),
-            QPointF(r - a * 3, mid + a)]))
-        p.drawPolygon(QPolygonF([
-            QPointF(mid, m + a), QPointF(mid - a, m + a * 3),
-            QPointF(mid + a, m + a * 3)]))
-        p.drawPolygon(QPolygonF([
-            QPointF(mid, r - a), QPointF(mid - a, r - a * 3),
-            QPointF(mid + a, r - a * 3)]))
+        a = s * 0.085
+        cy = rect.center().y()
+        mid = s * 0.5
+        p.drawPolygon(QPolygonF([                # left → centre
+            QPointF(mid - a * 0.6, cy), QPointF(mid - a * 2.4, cy - a),
+            QPointF(mid - a * 2.4, cy + a)]))
+        p.drawPolygon(QPolygonF([                # right → centre
+            QPointF(mid + a * 0.6, cy), QPointF(mid + a * 2.4, cy - a),
+            QPointF(mid + a * 2.4, cy + a)]))
+    return _fmt_icon(size, _draw)
+
+
+def unmerge_cells_icon(size: int = 28) -> QIcon:
+    """One cell with a solid divider and two arrows pushing outward —
+    reads as 'split back into separate cells'."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        rect = QRectF(s * 0.12, s * 0.30, s * 0.76, s * 0.40)
+        p.setPen(QPen(fg, max(1.3, s / 18), Qt.SolidLine,
+                      Qt.RoundCap, Qt.RoundJoin))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(rect, s * 0.06, s * 0.06)
+        # Solid centre divider (the new split).
+        p.setPen(QPen(fg, max(1.0, s / 20)))
+        p.drawLine(QPointF(s * 0.5, rect.top()),
+                   QPointF(s * 0.5, rect.bottom()))
+        # Two arrows pushing outward from the centre.
+        p.setPen(Qt.NoPen)
+        p.setBrush(fg)
+        a = s * 0.085
+        cy = rect.center().y()
+        p.drawPolygon(QPolygonF([                # → left edge
+            QPointF(s * 0.20, cy), QPointF(s * 0.20 + a * 1.8, cy - a),
+            QPointF(s * 0.20 + a * 1.8, cy + a)]))
+        p.drawPolygon(QPolygonF([                # → right edge
+            QPointF(s * 0.80, cy), QPointF(s * 0.80 - a * 1.8, cy - a),
+            QPointF(s * 0.80 - a * 1.8, cy + a)]))
     return _fmt_icon(size, _draw)
 
 

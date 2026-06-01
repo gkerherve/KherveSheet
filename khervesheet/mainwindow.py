@@ -341,10 +341,10 @@ class MainWindow(QMainWindow):
         format_menu.addAction("Row Height…", self._format_row_height)
         format_menu.addSeparator()
         merge_act = format_menu.addAction("Merge Cells", self._merge_cells)
-        merge_act.setIcon(icons.themed_icon("mdi.table-merge-cells"))
+        merge_act.setIcon(icons.merge_cells_icon(20))
         unmerge_act = format_menu.addAction(
             "Unmerge Cells", self._unmerge_cells)
-        unmerge_act.setIcon(icons.themed_icon("mdi.table-split-cell"))
+        unmerge_act.setIcon(icons.unmerge_cells_icon(20))
         self._wrap_act = format_menu.addAction(
             "Wrap Text", self._toggle_wrap_text)
         self._wrap_act.setIcon(icons.themed_icon("mdi.wrap"))
