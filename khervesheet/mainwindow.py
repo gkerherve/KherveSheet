@@ -133,6 +133,9 @@ class MainWindow(QMainWindow):
         exp.addAction("Excel…", self._export_excel)
 
         file_menu.addSeparator()
+        file_menu.addAction("Print Preview…", self._print_sheet, "Ctrl+P")
+
+        file_menu.addSeparator()
         self._recent_menu = file_menu.addMenu("Recent Files")
         self._rebuild_recent_menu()
 
@@ -3856,7 +3859,6 @@ class MainWindow(QMainWindow):
                 "Printing requires PyQt5 print support module.")
             return
         printer = QPrinter(QPrinter.HighResolution)
-        # Apply stored orientation.
         orient = getattr(self, '_page_orientation', 'portrait')
         if orient == 'landscape':
             printer.setOrientation(QPrinter.Landscape)
@@ -3868,9 +3870,9 @@ class MainWindow(QMainWindow):
         preview.exec_()
 
     def _render_sheet_to_printer(self, printer, sheet):
-        """Render the used cell region to the printer, scaled to fit."""
-        from PyQt5.QtGui import QPainter as _P, QPixmap
-        from PyQt5.QtCore import QRect, QPoint
+        """Paint cells manually onto the printer, scaled to fit page."""
+        from PyQt5.QtGui import QPainter, QFont, QColor, QPen
+        from PyQt5.QtCore import QRectF
         table = sheet.table
 
         # ── Find the used cell region ────────────────────────────
@@ -3884,28 +3886,64 @@ class MainWindow(QMainWindow):
         max_row = min(max_row + 1, table.rowCount() - 1)
         max_col = min(max_col + 1, table.columnCount() - 1)
 
-        src_w = sum(table.columnWidth(c) for c in range(max_col + 1))
-        src_h = sum(table.rowHeight(r) for r in range(max_row + 1))
+        col_ws = [table.columnWidth(c) for c in range(max_col + 1)]
+        row_hs = [table.rowHeight(r) for r in range(max_row + 1)]
+        src_w = sum(col_ws)
+        src_h = sum(row_hs)
         if src_w <= 0 or src_h <= 0:
             return
 
-        # ── Render table to an off-screen pixmap ─────────────────
-        pixmap = QPixmap(src_w, src_h)
-        pixmap.fill(Qt.white)
-        pix_painter = _P(pixmap)
-        table.render(pix_painter, QPoint(0, 0),
-                     QRect(0, 0, src_w, src_h))
-        pix_painter.end()
-
-        # ── Draw the pixmap onto the printer page, scaled to fit ─
-        painter = _P(printer)
+        # ── Compute scale to fit page ────────────────────────────
         page = printer.pageRect()
-        sx = page.width() / src_w
-        sy = page.height() / src_h
-        scale = min(sx, sy)
-        dest_w = int(src_w * scale)
-        dest_h = int(src_h * scale)
-        painter.drawPixmap(QRect(0, 0, dest_w, dest_h), pixmap)
+        dpi_x = max(printer.logicalDpiX(), 1)
+        dpi_y = max(printer.logicalDpiY(), 1)
+        screen_dpi = 96.0
+        page_w = page.width() * screen_dpi / dpi_x
+        page_h = page.height() * screen_dpi / dpi_y
+        scale = min(page_w / src_w, page_h / src_h)
+        dev_sx = scale * dpi_x / screen_dpi
+        dev_sy = scale * dpi_y / screen_dpi
+
+        painter = QPainter(printer)
+        painter.scale(dev_sx, dev_sy)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+
+        grid_pen = QPen(QColor(180, 180, 180), 0.5)
+        default_font = QFont("Segoe UI", 9)
+
+        y = 0.0
+        for r in range(max_row + 1):
+            x = 0.0
+            rh = row_hs[r]
+            for c in range(max_col + 1):
+                cw = col_ws[c]
+                cell_rect = QRectF(x, y, cw, rh)
+
+                # Fill colour.
+                fmt = sheet._cell_formats.get((r, c))
+                if fmt and fmt.bg_color:
+                    painter.fillRect(cell_rect, QColor(fmt.bg_color))
+
+                # Grid lines.
+                painter.setPen(grid_pen)
+                painter.drawRect(cell_rect)
+
+                # Cell text.
+                it = table.item(r, c)
+                if it and it.text():
+                    font = it.font() if it.font().family() else default_font
+                    painter.setFont(font)
+                    fg = it.foreground().color() if it.foreground().style() else QColor(0, 0, 0)
+                    painter.setPen(fg)
+                    align = (it.textAlignment()
+                             if it.textAlignment()
+                             else int(Qt.AlignLeft | Qt.AlignVCenter))
+                    text_rect = cell_rect.adjusted(3, 1, -3, -1)
+                    painter.drawText(text_rect, align, it.text())
+
+                x += cw
+            y += rh
+
         painter.end()
 
     # ── Data operations ──────────────────────────────────────────────
