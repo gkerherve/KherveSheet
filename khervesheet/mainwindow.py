@@ -83,6 +83,11 @@ class MainWindow(QMainWindow):
             self._toggle_live_spell(self._spell_live_act.isChecked())
 
     def _wire_undo_to_sheets(self):
+        # The layout tab hosts its own overlay shapes; give it the shared
+        # undo stack so inserts/edits there are undoable too.
+        ct = getattr(self._workbook, '_combined_tab', None)
+        if ct is not None:
+            ct._undo_stack = self._undo_stack
         for s in self._workbook.all_sheets():
             s._undo_stack = self._undo_stack
             self._apply_live_spell_to(s)
@@ -449,13 +454,13 @@ class MainWindow(QMainWindow):
         self._fitting_btn.clicked.connect(self._open_fitting)
         std.addWidget(self._fitting_btn)
 
-        fx_btn = QToolButton()
-        fx_btn.setText("f(x)")
-        fx_btn.setStyleSheet(
-            "QToolButton { font-style:italic; font-weight:bold; }")
-        fx_btn.setToolTip("Insert Function (Shift+F3)")
-        fx_btn.clicked.connect(self._open_insert_function_dialog)
-        std.addWidget(fx_btn)
+        # fx_btn = QToolButton()
+        # fx_btn.setText("f(x)")
+        # fx_btn.setStyleSheet(
+        #     "QToolButton { font-style:italic; font-weight:bold; }")
+        # fx_btn.setToolTip("Insert Function (Shift+F3)")
+        # fx_btn.clicked.connect(self._open_insert_function_dialog)
+        # std.addWidget(fx_btn)
 
         # Font toolbar
         fmt = self.addToolBar("Font")
@@ -799,6 +804,15 @@ class MainWindow(QMainWindow):
     # ── Active sheet helper ──────────────────────────────────────────
     def _active_sheet(self) -> SheetWidget:
         return self._workbook.current_sheet()
+
+    def _active_shape_host(self):
+        """The widget shapes should be inserted on / read from: the layout
+        tab when it is current, otherwise the active sheet."""
+        from .plot_layout import is_layout_tab
+        w = self._workbook.tabs.currentWidget()
+        if is_layout_tab(w):
+            return w
+        return self._active_sheet()
 
     # ── File operations ──────────────────────────────────────────────
     def _maybe_save_changes(self) -> bool:
@@ -2890,7 +2904,7 @@ class MainWindow(QMainWindow):
     # ── Bring forward / send backward ────────────────────────────────
     def _selected_shape(self):
         """Return the currently selected EmbeddedShape, if any."""
-        s = self._active_sheet()
+        s = self._active_shape_host()
         if not s:
             return None
         for shp in getattr(s, '_shapes', []):
@@ -3278,9 +3292,15 @@ class MainWindow(QMainWindow):
 
     def _insert_shape(self, shape_type="rectangle"):
         """Create an EmbeddedShape on the active sheet (undoable)."""
-        sheet = self._active_sheet()
-        if not sheet:
+        from .plot_layout import is_layout_tab
+        host = self._active_shape_host()
+        if host is None:
             return
+        if is_layout_tab(host):
+            host.insert_shape(shape_type)
+            self._status_msg("Insert Shape", 3000)
+            return
+        sheet = host
         from .shapes import EmbeddedShape, InsertShapeCmd
         viewport = sheet.table.viewport()
         shape = EmbeddedShape(shape_type, viewport)

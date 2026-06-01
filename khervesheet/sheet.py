@@ -789,6 +789,10 @@ class SheetWidget(QWidget):
         self._shapes: list = []
         self._equations: list = []
 
+        # Overlay widgets (charts, images, shapes, equations) float as
+        # children of the grid viewport.
+        self.overlay_host = lambda: self.table.viewport()
+
         # Formula entry mode: when editing a formula, clicking a cell
         # inserts a cell reference instead of navigating.
         self._formula_entry_cell = None   # (row, col) being edited

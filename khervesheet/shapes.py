@@ -66,6 +66,16 @@ def _find_undo_stack(viewport_widget):
     return getattr(sw, "_undo_stack", None) if sw else None
 
 
+def _overlay_parent(host):
+    """The widget shapes float as children of, for a shape *host*.
+
+    Sheets host shapes on their table viewport; the layout tab (and any
+    other host) exposes ``overlay_host()`` directly."""
+    if hasattr(host, "overlay_host"):
+        return host.overlay_host()
+    return host.table.viewport()
+
+
 # ── Undo commands ──────────────────────────────────────────────────────
 
 class InsertShapeCmd(QUndoCommand):
@@ -85,7 +95,7 @@ class InsertShapeCmd(QUndoCommand):
             return
         if self._shape not in self._sheet._shapes:
             self._sheet._shapes.append(self._shape)
-        self._shape.setParent(self._sheet.table.viewport())
+        self._shape.setParent(_overlay_parent(self._sheet))
         self._shape.show()
 
 
@@ -98,7 +108,7 @@ class DeleteShapeCmd(QUndoCommand):
         self._size = shape.size()
 
     def undo(self):
-        self._shape.setParent(self._sheet.table.viewport())
+        self._shape.setParent(_overlay_parent(self._sheet))
         self._shape.move(self._pos)
         self._shape.resize(self._size)
         if self._shape not in self._sheet._shapes:
