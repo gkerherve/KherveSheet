@@ -22,12 +22,12 @@ from typing import Optional
 
 import numpy as np
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox,
     QMessageBox, QSplitter, QWidget, QTextEdit, QListWidget, QLineEdit,
-    QCheckBox, QToolButton,
+    QCheckBox, QToolButton, QFrame,
 )
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as \
@@ -328,33 +328,100 @@ class FittingDialog(QDialog):
         self._figure = Figure(figsize=(5, 4), dpi=100, tight_layout=True)
         self._canvas = FigureCanvas(self._figure)
         self._ax = self._figure.add_subplot(111)
-        # Compact custom zoom toolbar.
+        # Compact custom toolbar: home, axis nudge, zoom, grid.
         ztb = QHBoxLayout()
         ztb.setContentsMargins(0, 0, 0, 0)
-        self._zoom_in_btn = QToolButton()
-        self._zoom_in_btn.setIcon(icons.themed_icon("mdi.magnify-plus-outline"))
-        self._zoom_in_btn.setToolTip("Zoom in")
-        self._zoom_out_btn = QToolButton()
-        self._zoom_out_btn.setIcon(
-            icons.themed_icon("mdi.magnify-minus-outline"))
-        self._zoom_out_btn.setToolTip("Zoom out")
-        self._zoom_sel_btn = QToolButton()
-        self._zoom_sel_btn.setIcon(icons.themed_icon("mdi.magnify-scan"))
-        self._zoom_sel_btn.setToolTip(
-            "Zoom to selection — drag a box on the plot")
-        self._zoom_sel_btn.setCheckable(True)
-        self._zoom_reset_btn = QToolButton()
-        self._zoom_reset_btn.setIcon(icons.themed_icon("mdi.fit-to-page-outline"))
-        self._zoom_reset_btn.setToolTip("Fit all data")
-        for b in (self._zoom_in_btn, self._zoom_out_btn,
-                  self._zoom_sel_btn, self._zoom_reset_btn):
+        ztb.setSpacing(1)
+        ICO = QSize(22, 22)
+
+        def _tb(icon, tip, checkable=False):
+            b = QToolButton()
+            b.setIcon(icon)
+            b.setIconSize(ICO)
+            b.setToolTip(tip)
+            b.setCheckable(checkable)
+            b.setAutoRaise(True)
+            return b
+
+        def _sep():
+            f = QFrame()
+            f.setFrameShape(QFrame.VLine)
+            f.setFrameShadow(QFrame.Sunken)
+            f.setFixedWidth(6)
+            return f
+
+        self._zoom_reset_btn = _tb(
+            icons.themed_icon("mdi.home"), "Reset view")
+        ztb.addWidget(self._zoom_reset_btn)
+        ztb.addWidget(_sep())
+        # Y-axis nudge: top expand/shrink, bottom expand/shrink.
+        self._y_hi_exp = _tb(
+            icons.axis_arrow_icon("y", "hi", True), "Expand Y top")
+        self._y_hi_shr = _tb(
+            icons.axis_arrow_icon("y", "hi", False), "Shrink Y top")
+        self._y_lo_exp = _tb(
+            icons.axis_arrow_icon("y", "lo", True), "Expand Y bottom")
+        self._y_lo_shr = _tb(
+            icons.axis_arrow_icon("y", "lo", False), "Shrink Y bottom")
+        for b in (self._y_hi_exp, self._y_hi_shr,
+                  self._y_lo_exp, self._y_lo_shr):
             ztb.addWidget(b)
+        ztb.addWidget(_sep())
+        # X-axis nudge: right expand/shrink, left expand/shrink.
+        self._x_hi_exp = _tb(
+            icons.axis_arrow_icon("x", "hi", True), "Expand X right")
+        self._x_hi_shr = _tb(
+            icons.axis_arrow_icon("x", "hi", False), "Shrink X right")
+        self._x_lo_exp = _tb(
+            icons.axis_arrow_icon("x", "lo", True), "Expand X left")
+        self._x_lo_shr = _tb(
+            icons.axis_arrow_icon("x", "lo", False), "Shrink X left")
+        for b in (self._x_hi_exp, self._x_hi_shr,
+                  self._x_lo_exp, self._x_lo_shr):
+            ztb.addWidget(b)
+        ztb.addWidget(_sep())
+        # Zoom tools.
+        self._zoom_in_btn = _tb(
+            icons.themed_icon("mdi.magnify-plus-outline"), "Zoom in")
+        self._zoom_out_btn = _tb(
+            icons.themed_icon("mdi.magnify-minus-outline"), "Zoom out")
+        self._zoom_sel_btn = _tb(
+            icons.themed_icon("mdi.magnify-scan"),
+            "Zoom to selection — drag a box on the plot", checkable=True)
+        for b in (self._zoom_in_btn, self._zoom_out_btn,
+                  self._zoom_sel_btn):
+            ztb.addWidget(b)
+        ztb.addWidget(_sep())
+        # Grid toggle.
+        self._grid_btn = _tb(
+            icons.themed_icon("mdi.grid"), "Toggle grid", checkable=True)
+        ztb.addWidget(self._grid_btn)
         ztb.addStretch()
         rcol.addLayout(ztb)
+        # Connections — zoom.
         self._zoom_in_btn.clicked.connect(lambda: self._zoom(0.7))
         self._zoom_out_btn.clicked.connect(lambda: self._zoom(1.0 / 0.7))
         self._zoom_reset_btn.clicked.connect(self._zoom_reset)
         self._zoom_sel_btn.toggled.connect(self._on_zoom_select_toggled)
+        # Connections — axis nudge (20 % per click).
+        self._y_hi_exp.clicked.connect(
+            lambda: self._nudge_axis("y", "hi", True))
+        self._y_hi_shr.clicked.connect(
+            lambda: self._nudge_axis("y", "hi", False))
+        self._y_lo_exp.clicked.connect(
+            lambda: self._nudge_axis("y", "lo", True))
+        self._y_lo_shr.clicked.connect(
+            lambda: self._nudge_axis("y", "lo", False))
+        self._x_hi_exp.clicked.connect(
+            lambda: self._nudge_axis("x", "hi", True))
+        self._x_hi_shr.clicked.connect(
+            lambda: self._nudge_axis("x", "hi", False))
+        self._x_lo_exp.clicked.connect(
+            lambda: self._nudge_axis("x", "lo", True))
+        self._x_lo_shr.clicked.connect(
+            lambda: self._nudge_axis("x", "lo", False))
+        # Connections — grid.
+        self._grid_btn.toggled.connect(self._toggle_grid)
         # Rubber-band state for zoom-to-selection.
         self._zoom_select = False
         self._zoom_start = None
@@ -927,6 +994,29 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
             self._zoom_rect = None
             self._zoom_start = None
             self._canvas.draw_idle()
+
+    def _nudge_axis(self, axis, side, expand):
+        """Shift one edge of an axis limit by 20 % of the current span.
+
+        *axis*: ``"x"`` or ``"y"``.
+        *side*: ``"hi"`` (top / right) or ``"lo"`` (bottom / left).
+        *expand*: ``True`` pushes the edge outward, ``False`` pulls it in.
+        """
+        get, set_ = ((self._ax.get_ylim, self._ax.set_ylim) if axis == "y"
+                      else (self._ax.get_xlim, self._ax.set_xlim))
+        lo, hi = get()
+        delta = 0.20 * (hi - lo)
+        if not expand:
+            delta = -delta
+        if side == "hi":
+            set_(lo, hi + delta)
+        else:
+            set_(lo - delta, hi)
+        self._canvas.draw_idle()
+
+    def _toggle_grid(self, on):
+        self._ax.grid(on, ls="--", alpha=0.4)
+        self._canvas.draw_idle()
 
     def _on_line_press(self, event):
         if event.inaxes is not self._ax or event.x is None:
