@@ -3852,22 +3852,66 @@ class MainWindow(QMainWindow):
         preview.exec_()
 
     def _render_sheet_to_printer(self, printer, sheet):
-        """Render sheet grid to the given QPrinter."""
+        """Render sheet grid (and embedded charts) to the given QPrinter.
+
+        The table widget measures are in screen pixels while
+        QPrinter.HighResolution reports its page rect in device dots
+        (e.g. 1200 DPI).  We must convert to a common coordinate
+        system before computing the fit-to-page scale.
+        """
         from PyQt5.QtGui import QPainter as _P
+        from PyQt5.QtCore import QRect, QRectF, QPoint
         painter = _P(printer)
         table = sheet.table
-        # Render visible cells onto the printer page.
-        total_w = sum(table.columnWidth(c)
-                      for c in range(table.columnCount()))
-        total_h = sum(table.rowHeight(r)
-                      for r in range(table.rowCount())
-                      if table.item(r, 0) is not None or r < 50)
-        page = printer.pageRect()
-        sx = page.width() / max(total_w, 1)
-        sy = page.height() / max(total_h, 1)
-        scale = min(sx, sy, 1.0)
-        painter.scale(scale, scale)
-        table.render(painter)
+
+        # ── Determine the used cell region ───────────────────────
+        max_row = max_col = 0
+        for r in range(table.rowCount()):
+            for c in range(table.columnCount()):
+                it = table.item(r, c)
+                if it and it.text():
+                    max_row = max(max_row, r)
+                    max_col = max(max_col, c)
+        # Include at least one row/col beyond the data for padding.
+        max_row = min(max_row + 1, table.rowCount() - 1)
+        max_col = min(max_col + 1, table.columnCount() - 1)
+
+        # Widen the region to include any embedded charts that extend
+        # beyond the data range.
+        charts = getattr(sheet, '_charts', [])
+        for ch in charts:
+            w = getattr(ch, '_widget', ch)
+            if hasattr(w, 'geometry'):
+                g = w.geometry()
+                max_col = max(max_col, table.columnAt(g.right()))
+                max_row = max(max_row, table.rowAt(g.bottom()))
+
+        # Source rectangle in screen pixels.
+        src_w = sum(table.columnWidth(c) for c in range(max_col + 1))
+        src_h = sum(table.rowHeight(r) for r in range(max_row + 1))
+        src_rect = QRect(0, 0, max(src_w, 1), max(src_h, 1))
+
+        # ── Page rectangle in screen-pixel-equivalent units ──────
+        page_rect = printer.pageRect()       # device dots
+        dpi_x = max(printer.logicalDpiX(), 1)
+        dpi_y = max(printer.logicalDpiY(), 1)
+        screen_dpi = 96.0
+        page_w_px = page_rect.width() * screen_dpi / dpi_x
+        page_h_px = page_rect.height() * screen_dpi / dpi_y
+
+        # Scale to fit the used region onto the page (allow scaling up).
+        sx = page_w_px / max(src_w, 1)
+        sy = page_h_px / max(src_h, 1)
+        scale = min(sx, sy)
+
+        # Convert scale back to printer device coordinates.
+        device_scale_x = scale * dpi_x / screen_dpi
+        device_scale_y = scale * dpi_y / screen_dpi
+        painter.scale(device_scale_x, device_scale_y)
+
+        # Render only the used region of the table.
+        table.render(painter, QPoint(0, 0), table.rect().intersected(
+            QRect(0, 0, src_w, src_h)))
         painter.end()
 
     # ── Data operations ──────────────────────────────────────────────
