@@ -412,6 +412,10 @@ class _BaseLayoutTab(QWidget):
         row.addWidget(self._build_controls())
         row.addWidget(self._build_content(), stretch=1)
 
+        # Pin all panels by default — done after the content exists so the
+        # cards stack above it (and get raised on show).
+        self._pin_btn.setChecked(True)
+
     # "Show all" mode pins cards in two stacked columns: the left column
     # runs top-to-bottom, the right column holds Plots then Insert.
     _LEFT_STACK = ("arrange", "margins", "size")
@@ -488,9 +492,6 @@ class _BaseLayoutTab(QWidget):
         export.setToolTip("Export the layout to SVG / PDF / PNG")
         export.clicked.connect(self._export)
         v.addWidget(export, alignment=Qt.AlignHCenter)
-
-        # Show every panel by default (pinned in the two columns).
-        self._pin_btn.setChecked(True)
 
         return strip
 
@@ -580,6 +581,8 @@ class _BaseLayoutTab(QWidget):
         super().showEvent(ev)
         if getattr(self, "_show_all", False):
             self._position_pinned_cards()
+            for key in self._PINNED:
+                self._cards[key].raise_()
 
     def _build_plots_panel(self):
         panel = QWidget()
