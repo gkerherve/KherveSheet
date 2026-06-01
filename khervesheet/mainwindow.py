@@ -702,6 +702,15 @@ class MainWindow(QMainWindow):
         self._merge_btn.clicked.connect(self._toggle_merge)
         fmt.addWidget(self._merge_btn)
 
+        # Uniform button look: flat (auto-raise) at the toolbar icon size.
+        # Widget-based QToolButtons otherwise keep a bevel and a default
+        # icon size, so they don't match the action buttons and their icon
+        # visibly resizes when hovered.  Normalise them all.
+        for _tb in (std, fmt, plot_bar):
+            for _btn in _tb.findChildren(QToolButton):
+                _btn.setAutoRaise(True)
+                _btn.setIconSize(icon_size)
+
     # ── Status bar ───────────────────────────────────────────────────
     def _status_msg(self, text: str, timeout: int = 0):
         """Show a message in the status label. *timeout* in ms;
