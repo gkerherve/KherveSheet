@@ -27,8 +27,8 @@ from matplotlib.backends.backend_qt5agg import (
 )
 from matplotlib.collections import PathCollection
 
-from PyQt5.QtCore import Qt, QSize
-from PyQt5.QtGui import QIcon
+from PyQt5.QtCore import Qt, QSize, QPointF, QRectF
+from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QPen
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QFrame, QLabel,
     QListWidget, QListWidgetItem, QPushButton, QSpinBox, QDoubleSpinBox,
@@ -60,15 +60,69 @@ _FILL_ORDERS = [("By row", "row"), ("By column", "col")]
 _MM_PER_IN = 25.4
 
 
-def _baked_icon(qta_name, px=48):
-    """A themed qtawesome icon flattened to a concrete pixmap.
+def _glyph_icon(kind, size=24):
+    """Hand-drawn toolbar glyph (pure QPainter, no qtawesome dependency).
 
-    Some styled, checkable ``QToolButton``s don't trigger qtawesome's
-    lazy glyph painter and end up blank on certain display/DPI combos.
-    Baking the glyph into a fixed pixmap renders reliably everywhere
-    (this is how the custom plot/shape glyphs already behave)."""
+    The Layout strip must show its icons even when qtawesome is not
+    installed — ``icons.themed_icon`` returns an empty icon in that case.
+    Drawing the glyphs directly guarantees they always render, exactly
+    like the app's custom plot/shape glyphs do."""
     from . import icons
-    pm = icons.themed_icon(qta_name).pixmap(QSize(px, px))
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    c = QColor(icons.active_icon_color())
+    s = float(size)
+    pw = max(1.4, s * 0.08)
+    pen = QPen(c, pw, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+
+    if kind == "plots":              # bulleted checklist
+        for fy in (0.28, 0.50, 0.72):
+            y = s * fy
+            p.setPen(Qt.NoPen)
+            p.setBrush(c)
+            p.drawEllipse(QPointF(s * 0.22, y), s * 0.055, s * 0.055)
+            p.setPen(pen)
+            p.drawLine(QPointF(s * 0.38, y), QPointF(s * 0.82, y))
+    elif kind == "grid":             # 2×2 tiles
+        p.setPen(Qt.NoPen)
+        p.setBrush(c)
+        side = s * 0.30
+        for fx in (0.16, 0.54):
+            for fy in (0.16, 0.54):
+                p.drawRoundedRect(
+                    QRectF(s * fx, s * fy, side, side), 2.0, 2.0)
+    elif kind == "margins":          # dashed page frame + inner content
+        dpen = QPen(c, max(1.0, pw * 0.7))
+        dpen.setStyle(Qt.DashLine)
+        p.setPen(dpen)
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(QRectF(s * 0.12, s * 0.12, s * 0.76, s * 0.76))
+        p.setPen(pen)
+        p.drawRect(QRectF(s * 0.30, s * 0.30, s * 0.40, s * 0.40))
+    elif kind == "size":             # diagonal resize arrows
+        p.setPen(pen)
+        p.drawLine(QPointF(s * 0.24, s * 0.24), QPointF(s * 0.76, s * 0.76))
+        p.drawLine(QPointF(s * 0.24, s * 0.24), QPointF(s * 0.24, s * 0.44))
+        p.drawLine(QPointF(s * 0.24, s * 0.24), QPointF(s * 0.44, s * 0.24))
+        p.drawLine(QPointF(s * 0.76, s * 0.76), QPointF(s * 0.76, s * 0.56))
+        p.drawLine(QPointF(s * 0.76, s * 0.76), QPointF(s * 0.56, s * 0.76))
+    elif kind == "export":           # tray with an up-arrow
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawLine(QPointF(s * 0.20, s * 0.56), QPointF(s * 0.20, s * 0.82))
+        p.drawLine(QPointF(s * 0.20, s * 0.82), QPointF(s * 0.80, s * 0.82))
+        p.drawLine(QPointF(s * 0.80, s * 0.82), QPointF(s * 0.80, s * 0.56))
+        p.drawLine(QPointF(s * 0.50, s * 0.64), QPointF(s * 0.50, s * 0.18))
+        p.drawLine(QPointF(s * 0.50, s * 0.18), QPointF(s * 0.34, s * 0.34))
+        p.drawLine(QPointF(s * 0.50, s * 0.18), QPointF(s * 0.66, s * 0.34))
+    elif kind == "text":             # capital T
+        p.setPen(pen)
+        p.drawLine(QPointF(s * 0.24, s * 0.28), QPointF(s * 0.76, s * 0.28))
+        p.drawLine(QPointF(s * 0.50, s * 0.28), QPointF(s * 0.50, s * 0.74))
+
+    p.end()
     return QIcon(pm)
 
 
@@ -380,13 +434,13 @@ class _BaseLayoutTab(QWidget):
 
         self._tool_buttons = []
         specs = [
-            (_baked_icon("mdi.format-list-checks"), "Plots",
+            (_glyph_icon("plots"), "Plots",
              self._build_plots_panel()),
-            (_baked_icon("mdi.view-grid"), "Arrangement",
+            (_glyph_icon("grid"), "Arrangement",
              self._build_arrange_panel()),
-            (_baked_icon("mdi.arrow-expand-all"), "Outer margins",
+            (_glyph_icon("margins"), "Outer margins",
              self._build_margins_panel()),
-            (_baked_icon("mdi.aspect-ratio"), self._size_group_label,
+            (_glyph_icon("size"), self._size_group_label,
              self._build_size_panel()),
             (None, None, None),   # separator
             (icons.shapes_button_icon(24), "Insert shape",
@@ -407,7 +461,7 @@ class _BaseLayoutTab(QWidget):
         v.addStretch(1)
 
         export = QToolButton()
-        export.setIcon(_baked_icon("mdi.file-export-outline"))
+        export.setIcon(_glyph_icon("export"))
         export.setIconSize(QSize(24, 24))
         export.setFixedSize(44, 44)
         export.setAutoRaise(True)
@@ -550,7 +604,7 @@ class _BaseLayoutTab(QWidget):
             ("line", "Line", icons.shape_icon("line", 22)),
             ("arrow", "Arrow", icons.shape_icon("arrow", 22)),
             ("rectangle", "Rectangle", icons.shape_icon("rectangle", 22)),
-            ("textbox", "Text box", _baked_icon("mdi.format-text", 22)),
+            ("textbox", "Text box", _glyph_icon("text", 22)),
         ]
         for key, label, icon in tools:
             b = QPushButton(icon, "  " + label)
