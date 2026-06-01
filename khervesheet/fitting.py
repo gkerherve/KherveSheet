@@ -27,16 +27,16 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QComboBox,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView, QGroupBox,
     QMessageBox, QSplitter, QWidget, QTextEdit, QListWidget, QLineEdit,
-    QCheckBox,
+    QCheckBox, QToolButton,
 )
 
-from matplotlib.backends.backend_qt5agg import (
-    FigureCanvasQTAgg as FigureCanvas,
-    NavigationToolbar2QT as NavigationToolbar,
-)
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as \
+    FigureCanvas
 from matplotlib.figure import Figure
+from matplotlib.patches import Rectangle
 
 from .sheet import SheetWidget, col_index_to_letter
+from . import icons
 from .solver import _PickLineEdit, _parse_range, _selection_ref_str
 from . import fit_models as fm
 
@@ -328,9 +328,38 @@ class FittingDialog(QDialog):
         self._figure = Figure(figsize=(5, 4), dpi=100, tight_layout=True)
         self._canvas = FigureCanvas(self._figure)
         self._ax = self._figure.add_subplot(111)
-        # Pan / box-zoom / save toolbar (matplotlib's own).
-        self._nav = NavigationToolbar(self._canvas, self)
-        rcol.addWidget(self._nav)
+        # Compact custom zoom toolbar.
+        ztb = QHBoxLayout()
+        ztb.setContentsMargins(0, 0, 0, 0)
+        self._zoom_in_btn = QToolButton()
+        self._zoom_in_btn.setIcon(icons.themed_icon("mdi.magnify-plus-outline"))
+        self._zoom_in_btn.setToolTip("Zoom in")
+        self._zoom_out_btn = QToolButton()
+        self._zoom_out_btn.setIcon(
+            icons.themed_icon("mdi.magnify-minus-outline"))
+        self._zoom_out_btn.setToolTip("Zoom out")
+        self._zoom_sel_btn = QToolButton()
+        self._zoom_sel_btn.setIcon(icons.themed_icon("mdi.magnify-scan"))
+        self._zoom_sel_btn.setToolTip(
+            "Zoom to selection — drag a box on the plot")
+        self._zoom_sel_btn.setCheckable(True)
+        self._zoom_reset_btn = QToolButton()
+        self._zoom_reset_btn.setIcon(icons.themed_icon("mdi.fit-to-page-outline"))
+        self._zoom_reset_btn.setToolTip("Fit all data")
+        for b in (self._zoom_in_btn, self._zoom_out_btn,
+                  self._zoom_sel_btn, self._zoom_reset_btn):
+            ztb.addWidget(b)
+        ztb.addStretch()
+        rcol.addLayout(ztb)
+        self._zoom_in_btn.clicked.connect(lambda: self._zoom(0.7))
+        self._zoom_out_btn.clicked.connect(lambda: self._zoom(1.0 / 0.7))
+        self._zoom_reset_btn.clicked.connect(self._zoom_reset)
+        self._zoom_sel_btn.toggled.connect(self._on_zoom_select_toggled)
+        # Rubber-band state for zoom-to-selection.
+        self._zoom_select = False
+        self._zoom_start = None
+        self._zoom_rect = None
+
         rcol.addWidget(self._canvas, 1)
         # Drag handlers for the region delimiter lines.
         self._canvas.mpl_connect("button_press_event", self._on_line_press)
@@ -868,10 +897,46 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
                              ls="--", zorder=5),
         ]
 
+    # ── Zoom controls ───────────────────────────────────────────────
+
+    def _zoom(self, factor):
+        """Scale the current view about its centre (<1 zooms in)."""
+        for get, set_ in ((self._ax.get_xlim, self._ax.set_xlim),
+                          (self._ax.get_ylim, self._ax.set_ylim)):
+            lo, hi = get()
+            c = 0.5 * (lo + hi)
+            half = 0.5 * (hi - lo) * factor
+            set_(c - half, c + half)
+        self._canvas.draw_idle()
+
+    def _zoom_reset(self):
+        """Autoscale back to all data."""
+        self._ax.relim()
+        self._ax.autoscale(enable=True, axis="both")
+        self._ax.autoscale_view()
+        self._canvas.draw_idle()
+
+    def _on_zoom_select_toggled(self, on):
+        self._zoom_select = on
+        self._canvas.setCursor(Qt.CrossCursor if on else Qt.ArrowCursor)
+        if not on and self._zoom_rect is not None:
+            try:
+                self._zoom_rect.remove()
+            except Exception:
+                pass
+            self._zoom_rect = None
+            self._zoom_start = None
+            self._canvas.draw_idle()
+
     def _on_line_press(self, event):
-        # Ignore while a pan/zoom tool is active, or outside the axes.
-        if (getattr(self._nav, "mode", "") or event.inaxes is not self._ax
-                or event.x is None or not self._range_lines):
+        if event.inaxes is not self._ax or event.x is None:
+            return
+        # Zoom-to-selection: start the rubber band.
+        if self._zoom_select:
+            if event.xdata is not None:
+                self._zoom_start = (event.xdata, event.ydata)
+            return
+        if not self._range_lines:
             return
         trans = self._ax.transData
         best, best_d = None, 8.0  # pixel tolerance
@@ -885,6 +950,24 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
         self._drag_line = best
 
     def _on_line_motion(self, event):
+        # Update the rubber-band rectangle while selecting a zoom box.
+        if self._zoom_select and self._zoom_start is not None:
+            if event.inaxes is not self._ax or event.xdata is None:
+                return
+            x0, y0 = self._zoom_start
+            x1, y1 = event.xdata, event.ydata
+            if self._zoom_rect is not None:
+                try:
+                    self._zoom_rect.remove()
+                except Exception:
+                    pass
+            self._zoom_rect = Rectangle(
+                (min(x0, x1), min(y0, y1)), abs(x1 - x0), abs(y1 - y0),
+                fill=False, edgecolor="#3a78b4", ls="--", lw=1.0,
+                zorder=10)
+            self._ax.add_patch(self._zoom_rect)
+            self._canvas.draw_idle()
+            return
         if (self._drag_line is None or event.inaxes is not self._ax
                 or event.xdata is None):
             return
@@ -897,6 +980,27 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
         self._canvas.draw_idle()
 
     def _on_line_release(self, event):
+        # Finish a zoom-box selection.
+        if self._zoom_select and self._zoom_start is not None:
+            x0, y0 = self._zoom_start
+            self._zoom_start = None
+            if self._zoom_rect is not None:
+                try:
+                    self._zoom_rect.remove()
+                except Exception:
+                    pass
+                self._zoom_rect = None
+            if (event is not None and event.inaxes is self._ax
+                    and event.xdata is not None):
+                x1, y1 = event.xdata, event.ydata
+                if abs(x1 - x0) > 0 and abs(y1 - y0) > 0:
+                    self._ax.set_xlim(min(x0, x1), max(x0, x1))
+                    self._ax.set_ylim(min(y0, y1), max(y0, y1))
+            self._zoom_select = False
+            self._canvas.setCursor(Qt.ArrowCursor)
+            self._zoom_sel_btn.setChecked(False)  # one-shot
+            self._canvas.draw_idle()
+            return
         self._drag_line = None
 
     def _preview_data(self):
@@ -920,6 +1024,7 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
                       label="data")
         self._ax.legend(loc="best", fontsize=7, framealpha=0.8)
         self._ax.relim()
+        self._ax.autoscale(enable=True, axis="both")
         self._ax.autoscale_view()
         self._add_range_lines(x_full)
         self._canvas.draw_idle()
@@ -947,6 +1052,7 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
             self._ax.axhline(offset, color="#cccccc", lw=0.6, zorder=1)
         self._ax.legend(loc="best", fontsize=7, framealpha=0.8)
         self._ax.relim()
+        self._ax.autoscale(enable=True, axis="both")
         self._ax.autoscale_view()
         self._add_range_lines(x_full)
         self._canvas.draw_idle()
