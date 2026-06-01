@@ -415,7 +415,7 @@ class _BaseLayoutTab(QWidget):
     _CORNERS = {"plots": "tl", "arrange": "bl", "size": "tr", "margins": "br"}
     _GROUP_KEYS = ("plots", "arrange", "size", "margins")
     _CARD_W = 200             # panel width (px)
-    _STRIP_W = 56
+    _STRIP_W = 40
 
     # ── Controls: a vertical icon strip with ribbon-style flyouts ─────
     def _build_controls(self):
@@ -428,12 +428,9 @@ class _BaseLayoutTab(QWidget):
         strip.setObjectName("layoutToolStrip")
         strip.setFrameShape(QFrame.NoFrame)
         strip.setFixedWidth(self._STRIP_W)
-        strip.setStyleSheet(
-            "#layoutToolStrip { background:#f3f3f3;"
-            " border-right:1px solid #d0d0d0; }")
         v = QVBoxLayout(strip)
-        v.setContentsMargins(6, 8, 6, 8)
-        v.setSpacing(6)
+        v.setContentsMargins(4, 6, 4, 6)
+        v.setSpacing(4)
 
         # One reusable card per group: a floating child widget (not a
         # menu/popup) so the combo and spin boxes inside behave normally.
@@ -457,8 +454,8 @@ class _BaseLayoutTab(QWidget):
         # "Show all" pin toggle — pins the four group cards in the corners.
         self._pin_btn = QToolButton()
         self._pin_btn.setIcon(_glyph_icon("dashboard"))
-        self._pin_btn.setIconSize(QSize(24, 24))
-        self._pin_btn.setFixedSize(44, 44)
+        self._pin_btn.setIconSize(QSize(20, 20))
+        self._pin_btn.setFixedSize(30, 30)
         self._pin_btn.setAutoRaise(True)
         self._pin_btn.setCheckable(True)
         self._pin_btn.setToolTip("Show all panels (pinned in the corners)")
@@ -467,7 +464,7 @@ class _BaseLayoutTab(QWidget):
 
         line = QFrame()
         line.setFrameShape(QFrame.HLine)
-        line.setStyleSheet("color:#d0d0d0;")
+        line.setFrameShadow(QFrame.Sunken)
         v.addWidget(line)
 
         # Insert card (single flyout only; not part of the corner set).
@@ -482,8 +479,8 @@ class _BaseLayoutTab(QWidget):
 
         export = QToolButton()
         export.setIcon(_glyph_icon("export"))
-        export.setIconSize(QSize(24, 24))
-        export.setFixedSize(44, 44)
+        export.setIconSize(QSize(20, 20))
+        export.setFixedSize(30, 30)
         export.setAutoRaise(True)
         export.setToolTip("Export the layout to SVG / PDF / PNG")
         export.clicked.connect(self._export)
@@ -494,15 +491,13 @@ class _BaseLayoutTab(QWidget):
     def _make_card(self, title, panel):
         card = QFrame(self)
         card.setObjectName("layoutFlyout")
-        card.setStyleSheet(
-            "#layoutFlyout { background:#ffffff;"
-            " border:1px solid #c0c0c0; border-radius:4px; }")
         card.setFixedWidth(self._CARD_W)
         cv = QVBoxLayout(card)
         cv.setContentsMargins(10, 8, 10, 10)
         cv.setSpacing(6)
         lbl = QLabel(title)
-        lbl.setStyleSheet("font-weight:bold; color:#444;")
+        lbl.setObjectName("layoutFlyoutTitle")
+        lbl.setStyleSheet("font-weight:bold;")
         cv.addWidget(lbl)
         cv.addWidget(panel)
         card.hide()
@@ -511,8 +506,8 @@ class _BaseLayoutTab(QWidget):
     def _flyout_button(self, icon, title, key):
         btn = QToolButton()
         btn.setIcon(icon)
-        btn.setIconSize(QSize(24, 24))
-        btn.setFixedSize(44, 44)
+        btn.setIconSize(QSize(20, 20))
+        btn.setFixedSize(30, 30)
         btn.setAutoRaise(True)
         btn.setCheckable(True)
         btn.setToolTip(title)
@@ -740,6 +735,8 @@ class _BaseLayoutTab(QWidget):
             "height_mm": self._height_mm.value(),
             "dpi": self._dpi.value(),
             "shapes": [s.to_dict() for s in self._shapes],
+            "plots": [{"title": it["title"], "visible": it["visible"]}
+                      for it in self._items],
         }
 
     def apply_settings(self, st):
@@ -770,6 +767,17 @@ class _BaseLayoutTab(QWidget):
         finally:
             self._suspend = False
         self._restore_shapes(st.get("shapes", []))
+        # Restore plot visibility and order.
+        saved_plots = st.get("plots", [])
+        if saved_plots:
+            lookup = {p["title"]: p["visible"] for p in saved_plots}
+            order = {p["title"]: i for i, p in enumerate(saved_plots)}
+            for it in self._items:
+                if it["title"] in lookup:
+                    it["visible"] = lookup[it["title"]]
+            self._items.sort(
+                key=lambda it: order.get(it["title"], len(order)))
+            self._repopulate_list()
         self._render()
 
     def _restore_shapes(self, shape_dicts):

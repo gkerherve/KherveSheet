@@ -74,6 +74,15 @@ QToolBar QComboBox::drop-down, QToolBar QFontComboBox::drop-down {
     border-top-right-radius: 4px;
     border-bottom-right-radius: 4px;
 }
+#layoutToolStrip {
+    background: palette(button);
+    border-right: 1px solid palette(mid);
+}
+#layoutFlyout {
+    background: palette(base);
+    border: 1px solid palette(mid);
+    border-radius: 4px;
+}
 """
 
 # ── Light theme ──────────────────────────────────────────────────
