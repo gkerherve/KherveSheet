@@ -1461,18 +1461,18 @@ def undo_icon(size: int = 28) -> QIcon:
         p.setPen(QPen(fg, pw, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         p.setBrush(Qt.NoBrush)
         path = QPainterPath()
-        path.moveTo(s * 0.2, s * 0.55)
-        path.lineTo(s * 0.58, s * 0.55)
-        path.cubicTo(s * 0.84, s * 0.55, s * 0.84, s * 0.2,
-                     s * 0.58, s * 0.2)
+        path.moveTo(s * 0.2, s * 0.45)
+        path.lineTo(s * 0.58, s * 0.45)
+        path.cubicTo(s * 0.84, s * 0.45, s * 0.84, s * 0.8,
+                     s * 0.58, s * 0.8)
         p.drawPath(path)
         # Arrowhead.
         p.setBrush(QBrush(fg))
         p.setPen(Qt.NoPen)
         p.drawPolygon(QPolygonF([
-            QPointF(s * 0.08, s * 0.55),
-            QPointF(s * 0.32, s * 0.38),
-            QPointF(s * 0.32, s * 0.72),
+            QPointF(s * 0.08, s * 0.45),
+            QPointF(s * 0.32, s * 0.28),
+            QPointF(s * 0.32, s * 0.62),
         ]))
     return _fmt_icon(size, _draw)
 
@@ -1486,18 +1486,18 @@ def redo_icon(size: int = 28) -> QIcon:
         p.setPen(QPen(fg, pw, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
         p.setBrush(Qt.NoBrush)
         path = QPainterPath()
-        path.moveTo(s * 0.8, s * 0.55)
-        path.lineTo(s * 0.42, s * 0.55)
-        path.cubicTo(s * 0.16, s * 0.55, s * 0.16, s * 0.2,
-                     s * 0.42, s * 0.2)
+        path.moveTo(s * 0.8, s * 0.45)
+        path.lineTo(s * 0.42, s * 0.45)
+        path.cubicTo(s * 0.16, s * 0.45, s * 0.16, s * 0.8,
+                     s * 0.42, s * 0.8)
         p.drawPath(path)
         # Arrowhead.
         p.setBrush(QBrush(fg))
         p.setPen(Qt.NoPen)
         p.drawPolygon(QPolygonF([
-            QPointF(s * 0.92, s * 0.55),
-            QPointF(s * 0.68, s * 0.38),
-            QPointF(s * 0.68, s * 0.72),
+            QPointF(s * 0.92, s * 0.45),
+            QPointF(s * 0.68, s * 0.28),
+            QPointF(s * 0.68, s * 0.62),
         ]))
     return _fmt_icon(size, _draw)
 
