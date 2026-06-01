@@ -78,6 +78,13 @@ QToolBar QComboBox::drop-down, QToolBar QFontComboBox::drop-down {
     border-top-right-radius: 4px;
     border-bottom-right-radius: 4px;
 }
+QToolBar QComboBox::down-arrow, QToolBar QFontComboBox::down-arrow {
+    image: none;
+    border-style: solid;
+    border-width: 4px 4px 0 4px;
+    border-color: palette(text) transparent transparent transparent;
+    width: 0px; height: 0px;
+}
 #layoutToolStrip {
     background: palette(button);
     border-right: 1px solid palette(mid);
