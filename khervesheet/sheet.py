@@ -3880,34 +3880,47 @@ class SheetWidget(QWidget):
 
         When the text starts with '=', close the inline cell editor and
         redirect to the formula bar so that range-picking works reliably.
+        The close/redirect is deferred so it runs outside the textChanged
+        signal handler (Qt ignores closeEditor inside the signal).
         """
         r = self.table.currentRow()
         c = self.table.currentColumn()
         if r >= 0 and c >= 0 and text.startswith("="):
-            # Close the inline editor without committing …
-            editor = self._find_inline_editor()
-            if editor is not None:
-                self.table.closeEditor(
-                    editor, QAbstractItemDelegate.RevertModelData)
-            # … and redirect to the formula bar.
             self._inline_formula_cell = None
             self._inline_formula_text = None
             self._inline_formula_pos = None
-            self._formula_entry_cell = (r, c)
-            self._formula_bar.blockSignals(True)
-            self._formula_bar.setText(text)
-            self._formula_bar.blockSignals(False)
-            self._formula_bar.setFocus()
-            self._formula_bar.setCursorPosition(len(text))
-            wb = self._workbook()
-            if wb is not None:
-                wb.set_active_formula(self)
-            self._update_ref_highlights(text)
+            QTimer.singleShot(0, lambda: self._redirect_to_formula_bar(
+                r, c, text))
         else:
             self._inline_formula_cell = None
             self._inline_formula_text = None
             self._inline_formula_pos = None
             self._clear_ref_highlights()
+
+    def _redirect_to_formula_bar(self, row, col, text):
+        """Close inline editor and move formula text to the formula bar."""
+        editor = self._find_inline_editor()
+        if editor is not None:
+            self.table.closeEditor(
+                editor, QAbstractItemDelegate.RevertModelData)
+        # Restore the cell to its previous value (don't commit the '=…').
+        self.table.blockSignals(True)
+        it = self.table.item(row, col)
+        old = self._shadow.get((row, col), "")
+        if it is not None:
+            it.setText(old)
+        self.table.blockSignals(False)
+        # Activate formula bar.
+        self._formula_entry_cell = (row, col)
+        self._formula_bar.blockSignals(True)
+        self._formula_bar.setText(text)
+        self._formula_bar.blockSignals(False)
+        self._formula_bar.setFocus()
+        self._formula_bar.setCursorPosition(len(text))
+        wb = self._workbook()
+        if wb is not None:
+            wb.set_active_formula(self)
+        self._update_ref_highlights(text)
 
     def eventFilter(self, obj, event):
         # ── Keep columns filling the viewport on resize ───────────
