@@ -417,7 +417,8 @@ class MainWindow(QMainWindow):
 
     # ── Toolbars ─────────────────────────────────────────────────────
     def _build_toolbars(self):
-        icon_size = QSize(28, 28)
+        self._ico = _ICO = 32
+        icon_size = QSize(_ICO, _ICO)
 
         # Standard toolbar
         std = self.addToolBar("Standard")
@@ -426,30 +427,30 @@ class MainWindow(QMainWindow):
         std.setMovable(False)
 
         std.addAction(
-            icons.new_file_icon(28), "New", self._new_workbook)
+            icons.new_file_icon(_ICO), "New", self._new_workbook)
         std.addAction(
-            icons.open_file_icon(28), "Open", self._open_file)
+            icons.open_file_icon(_ICO), "Open", self._open_file)
         std.addAction(
-            icons.save_file_icon(28), "Save", self._save_file)
+            icons.save_file_icon(_ICO), "Save", self._save_file)
         std.addSeparator()
 
         self._undo_act = std.addAction(
-            icons.undo_icon(28), "Undo", self._undo_stack.undo)
+            icons.undo_icon(_ICO), "Undo", self._undo_stack.undo)
         self._undo_act.setToolTip("Undo (Ctrl+Z)")
         self._redo_act = std.addAction(
-            icons.redo_icon(28), "Redo", self._undo_stack.redo)
+            icons.redo_icon(_ICO), "Redo", self._undo_stack.redo)
         self._redo_act.setToolTip("Redo (Ctrl+Y)")
         std.addSeparator()
 
         # ── Solver button ───────────────────────────────────────────
         self._solver_btn = QToolButton()
-        self._solver_btn.setIcon(icons.solver_icon(28))
+        self._solver_btn.setIcon(icons.solver_icon(_ICO))
         self._solver_btn.setToolTip("Solver")
         self._solver_btn.clicked.connect(self._open_solver)
         std.addWidget(self._solver_btn)
 
         self._fitting_btn = QToolButton()
-        self._fitting_btn.setIcon(icons.fitting_icon(28))
+        self._fitting_btn.setIcon(icons.fitting_icon(_ICO))
         self._fitting_btn.setToolTip("Curve Fitting")
         self._fitting_btn.clicked.connect(self._open_fitting)
         std.addWidget(self._fitting_btn)
@@ -487,19 +488,19 @@ class MainWindow(QMainWindow):
         fmt.addSeparator()
 
         self._bold_act = fmt.addAction(
-            icons.bold_icon(28), "Bold", self._toggle_bold)
+            icons.bold_icon(_ICO), "Bold", self._toggle_bold)
         self._bold_act.setToolTip("Bold (Ctrl+B)")
         self._bold_act.setCheckable(True)
         self._bold_act.setShortcut("Ctrl+B")
 
         self._italic_act = fmt.addAction(
-            icons.italic_icon(28), "Italic", self._toggle_italic)
+            icons.italic_icon(_ICO), "Italic", self._toggle_italic)
         self._italic_act.setToolTip("Italic (Ctrl+I)")
         self._italic_act.setCheckable(True)
         self._italic_act.setShortcut("Ctrl+I")
 
         self._underline_act = fmt.addAction(
-            icons.underline_icon(28), "Underline",
+            icons.underline_icon(_ICO), "Underline",
             self._toggle_underline)
         self._underline_act.setToolTip("Underline (Ctrl+U)")
         self._underline_act.setCheckable(True)
@@ -508,19 +509,19 @@ class MainWindow(QMainWindow):
         fmt.addSeparator()
 
         self._align_left_act = fmt.addAction(
-            icons.align_left_icon(28), "Align Left",
+            icons.align_left_icon(_ICO), "Align Left",
             lambda: self._apply_alignment(Qt.AlignLeft | Qt.AlignVCenter))
         self._align_left_act.setToolTip("Align Left")
         self._align_left_act.setCheckable(True)
 
         self._align_center_act = fmt.addAction(
-            icons.align_center_icon(28), "Align Center",
+            icons.align_center_icon(_ICO), "Align Center",
             lambda: self._apply_alignment(Qt.AlignHCenter | Qt.AlignVCenter))
         self._align_center_act.setToolTip("Align Center")
         self._align_center_act.setCheckable(True)
 
         self._align_right_act = fmt.addAction(
-            icons.align_right_icon(28), "Align Right",
+            icons.align_right_icon(_ICO), "Align Right",
             lambda: self._apply_alignment(Qt.AlignRight | Qt.AlignVCenter))
         self._align_right_act.setToolTip("Align Right")
         self._align_right_act.setCheckable(True)
@@ -541,7 +542,7 @@ class MainWindow(QMainWindow):
         self._last_fill_color = "#ffff00"
         self._fill_btn = QToolButton()
         self._fill_btn.setIcon(
-            icons.fill_color_icon(28, self._last_fill_color))
+            icons.fill_color_icon(_ICO, self._last_fill_color))
         self._fill_btn.setToolTip("Fill Color")
         self._fill_btn.setPopupMode(QToolButton.MenuButtonPopup)
         self._fill_btn.clicked.connect(self._apply_last_fill_color)
@@ -555,7 +556,7 @@ class MainWindow(QMainWindow):
         self._last_font_color = "#ff0000"
         self._font_color_btn = QToolButton()
         self._font_color_btn.setIcon(
-            icons.font_color_icon(28, self._last_font_color))
+            icons.font_color_icon(_ICO, self._last_font_color))
         self._font_color_btn.setToolTip("Font Color")
         self._font_color_btn.setPopupMode(QToolButton.MenuButtonPopup)
         self._font_color_btn.clicked.connect(
@@ -568,7 +569,7 @@ class MainWindow(QMainWindow):
 
         # ── Border button with dropdown ───────────────────────────
         self._border_btn = QToolButton()
-        self._border_btn.setIcon(icons.border_icon(28))
+        self._border_btn.setIcon(icons.border_icon(_ICO))
         self._border_btn.setToolTip("Borders")
         self._border_btn.setPopupMode(QToolButton.InstantPopup)
         brd_menu = self._build_border_menu(self._border_btn)
@@ -597,13 +598,13 @@ class MainWindow(QMainWindow):
         self._plot_btn.setToolTip("Insert Chart")
         self._plot_btn.setPopupMode(QToolButton.MenuButtonPopup)
         self._last_plot_type = "Line"
-        self._plot_btn.setIcon(icons.plot_icon_line(28))
+        self._plot_btn.setIcon(icons.plot_icon_line(_ICO))
         self._plot_btn.clicked.connect(
             lambda: self._insert_chart(self._last_plot_type))
         plot_menu = QMenu(self._plot_btn)
         for pt in SheetWidget.PLOT_TYPES:
             fn = _plot_icon_fns.get(pt)
-            ic = fn(28) if fn else icons.themed_icon("mdi.chart-line")
+            ic = fn(_ICO) if fn else icons.themed_icon("mdi.chart-line")
             act = plot_menu.addAction(ic, pt,
                                       lambda t=pt: self._plot_from_menu(t))
         self._plot_btn.setMenu(plot_menu)
@@ -612,7 +613,7 @@ class MainWindow(QMainWindow):
 
         # ── Table Design button ──────────────────────────────────
         self._table_design_btn = QToolButton()
-        self._table_design_btn.setIcon(icons.table_design_icon(28))
+        self._table_design_btn.setIcon(icons.table_design_icon(_ICO))
         self._table_design_btn.setToolTip("Table Design")
         self._table_design_btn.setPopupMode(QToolButton.InstantPopup)
         self._table_design_btn.setMenu(self._table_design_menu)
@@ -620,14 +621,14 @@ class MainWindow(QMainWindow):
 
         # ── Image button ────────────────────────────────────────
         img_btn = QToolButton()
-        img_btn.setIcon(icons.image_icon(28))
+        img_btn.setIcon(icons.image_icon(_ICO))
         img_btn.setToolTip("Insert Image")
         img_btn.clicked.connect(self._insert_image)
         plot_bar.addWidget(img_btn)
 
         # ── Shapes button ───────────────────────────────────────
         self._shapes_btn = QToolButton()
-        self._shapes_btn.setIcon(icons.shapes_button_icon(28))
+        self._shapes_btn.setIcon(icons.shapes_button_icon(_ICO))
         self._shapes_btn.setToolTip("Insert Shape")
         self._shapes_btn.setPopupMode(QToolButton.InstantPopup)
         self._shapes_btn.setMenu(self._make_shape_gallery())
@@ -635,7 +636,7 @@ class MainWindow(QMainWindow):
 
         # ── Equation button ──────────────────────────────────────
         self._equation_btn = QToolButton()
-        self._equation_btn.setIcon(icons.equation_icon(28))
+        self._equation_btn.setIcon(icons.equation_icon(_ICO))
         self._equation_btn.setToolTip("Insert Equation")
         self._equation_btn.setPopupMode(QToolButton.InstantPopup)
         self._equation_btn.setMenu(self._make_equation_gallery())
@@ -643,7 +644,7 @@ class MainWindow(QMainWindow):
 
         # ── Symbol insertion button ──────────────────────────────
         self._symbol_btn = QToolButton()
-        self._symbol_btn.setIcon(icons.omega_icon(28))
+        self._symbol_btn.setIcon(icons.omega_icon(_ICO))
         self._symbol_btn.setToolTip("Insert Symbol")
         self._symbol_btn.setPopupMode(QToolButton.InstantPopup)
         sym_menu = QMenu(self._symbol_btn)
@@ -656,7 +657,7 @@ class MainWindow(QMainWindow):
 
         # ── Insert button with dropdown ────────────────────────────
         self._insert_btn = QToolButton()
-        self._insert_btn.setIcon(icons.symbol_icon(28))
+        self._insert_btn.setIcon(icons.symbol_icon(_ICO))
         self._insert_btn.setToolTip("Insert")
         self._insert_btn.setPopupMode(QToolButton.InstantPopup)
         ins_menu = QMenu(self._insert_btn)
@@ -697,7 +698,7 @@ class MainWindow(QMainWindow):
 
         # ── Merge/Unmerge button (in formatting toolbar) ─────────
         self._merge_btn = QToolButton()
-        self._merge_btn.setIcon(icons.merge_cells_icon(28))
+        self._merge_btn.setIcon(icons.merge_cells_icon(_ICO))
         self._merge_btn.setToolTip("Merge / Unmerge Cells")
         self._merge_btn.clicked.connect(self._toggle_merge)
         fmt.addWidget(self._merge_btn)
@@ -2501,13 +2502,13 @@ class MainWindow(QMainWindow):
 
     def _on_fill_palette(self, color):
         self._last_fill_color = color
-        self._fill_btn.setIcon(icons.fill_color_icon(28, color))
+        self._fill_btn.setIcon(icons.fill_color_icon(self._ico, color))
         self._apply_fill_color(color)
         self._fill_btn.menu().close()
 
     def _on_font_palette(self, color):
         self._last_font_color = color
-        self._font_color_btn.setIcon(icons.font_color_icon(28, color))
+        self._font_color_btn.setIcon(icons.font_color_icon(self._ico, color))
         self._apply_font_color(color)
         self._font_color_btn.menu().close()
 
@@ -2523,7 +2524,7 @@ class MainWindow(QMainWindow):
             c = dlg.currentColor().name()
             self._last_fill_color = c
             self._fill_btn.setIcon(
-                icons.fill_color_icon(28, c))
+                icons.fill_color_icon(self._ico, c))
             self._apply_fill_color(c)
 
     def _apply_fill_color(self, color_hex):
@@ -2564,7 +2565,7 @@ class MainWindow(QMainWindow):
             c = dlg.currentColor().name()
             self._last_font_color = c
             self._font_color_btn.setIcon(
-                icons.font_color_icon(28, c))
+                icons.font_color_icon(self._ico, c))
             self._apply_font_color(c)
 
     def _apply_font_color(self, color_hex):
@@ -2729,12 +2730,13 @@ class MainWindow(QMainWindow):
 
     def _refresh_toolbar_icons(self):
         """Rebuild format toolbar icons so they match the current theme."""
-        self._bold_act.setIcon(icons.bold_icon(28))
-        self._italic_act.setIcon(icons.italic_icon(28))
-        self._underline_act.setIcon(icons.underline_icon(28))
-        self._align_left_act.setIcon(icons.align_left_icon(28))
-        self._align_center_act.setIcon(icons.align_center_icon(28))
-        self._align_right_act.setIcon(icons.align_right_icon(28))
+        s = self._ico
+        self._bold_act.setIcon(icons.bold_icon(s))
+        self._italic_act.setIcon(icons.italic_icon(s))
+        self._underline_act.setIcon(icons.underline_icon(s))
+        self._align_left_act.setIcon(icons.align_left_icon(s))
+        self._align_center_act.setIcon(icons.align_center_icon(s))
+        self._align_right_act.setIcon(icons.align_right_icon(s))
 
     # ── Version control ─────────────────────────────────────────────
     def _vc_repo_dir(self):
@@ -2991,7 +2993,7 @@ class MainWindow(QMainWindow):
         self._last_plot_type = plot_type
         fn = self._plot_icon_fns.get(plot_type)
         if fn:
-            self._plot_btn.setIcon(fn(28))
+            self._plot_btn.setIcon(fn(self._ico))
         self._insert_chart(plot_type)
 
     def _build_symbol_grid(self, parent_menu):
