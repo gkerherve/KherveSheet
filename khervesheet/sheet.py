@@ -837,7 +837,7 @@ class SheetWidget(QWidget):
         # Formula entry mode: when editing a formula, clicking a cell
         # inserts a cell reference instead of navigating.
         self._formula_entry_cell = None   # (row, col) being edited
-        self._formula_pick_pending = None  # deferred click→range ref
+        self._pick_drag = None            # click-drag inserting a range ref
         self._ref_highlight_active = False
         # Inline formula editor tracking: when an inline cell editor
         # contains "=" text, we save its state so a click on another cell
@@ -1517,8 +1517,9 @@ class SheetWidget(QWidget):
         self._arrow_nav_active = False
         self._arrow_nav_pos = None
         self._arrow_nav_ref_span = None
-        if self._ref_drag is not None:
+        if self._ref_drag is not None or self._pick_drag is not None:
             self._ref_drag = None
+            self._pick_drag = None
             self._release_drag_grab()
         wb = self._workbook()
         if wb is not None:
@@ -1569,8 +1570,9 @@ class SheetWidget(QWidget):
         self._arrow_nav_active = False
         self._arrow_nav_pos = None
         self._arrow_nav_ref_span = None
-        if self._ref_drag is not None:
+        if self._ref_drag is not None or self._pick_drag is not None:
             self._ref_drag = None
+            self._pick_drag = None
             self._release_drag_grab()
         wb = self._workbook()
         if wb is not None:
@@ -3729,69 +3731,39 @@ class SheetWidget(QWidget):
             self.table.setItem(row, col, it)
         return it
 
-    def _finish_formula_pick(self):
-        """Finalise a click-or-drag formula reference insertion.
-
-        Called on mouse-release after a pending formula pick was recorded
-        on mouse-press.  Reads the current selection to decide whether to
-        insert a single-cell ref (``F3``) or a range ref (``F3:F11``).
-        """
-        pick = self._formula_pick_pending
-        self._formula_pick_pending = None
-        if pick is None:
+    def _pick_drag_move(self, event):
+        """Widen the just-inserted single ref into a range as the user
+        drags from the clicked (anchor) cell to the current cell."""
+        d = self._pick_drag
+        cell = self.table.indexAt(event.pos())
+        if not cell.isValid():
             return
-        # Determine the reference string from the current selection.
-        sel = self.table.selectedRanges()
-        if sel:
-            rng = sel[0]
-            r1, c1 = rng.topRow(), rng.leftColumn()
-            r2, c2 = rng.bottomRow(), rng.rightColumn()
-        else:
-            r1, c1 = pick["start"]
-            r2, c2 = r1, c1
+        ar, ac = d["anchor"]
+        r1, c1 = min(ar, cell.row()), min(ac, cell.column())
+        r2, c2 = max(ar, cell.row()), max(ac, cell.column())
         if (r1, c1) == (r2, c2):
             ref = col_index_to_letter(c1) + str(r1 + 1)
         else:
             ref = (col_index_to_letter(c1) + str(r1 + 1) + ":"
                    + col_index_to_letter(c2) + str(r2 + 1))
+        w = (self._formula_bar if d["where"] == "bar"
+             else self._find_inline_editor())
+        if w is None:
+            return
+        text = w.text()
+        s = d["ins_start"]
+        e = s + d["ref_len"]
+        new_text = text[:s] + ref + text[e:]
+        w.blockSignals(True)
+        w.setText(new_text)
+        w.setCursorPosition(s + len(ref))
+        w.blockSignals(False)
+        d["ref_len"] = len(ref)
+        self._update_ref_highlights(new_text)
 
-        fc_r, fc_c = pick["formula_cell"]
-        saved_text = pick["saved_text"] or self._inline_formula_text
-        saved_pos = pick["saved_pos"]
-        if saved_pos is None or saved_pos == 0:
-            saved_pos = self._inline_formula_pos or 0
-
-        # The inline editor captured at press time may have been closed
-        # by Qt during drag.  Re-find it; fall back to saved text.
-        inline_editor = self._find_inline_editor()
-        if inline_editor and inline_editor.text().startswith("="):
-            cp = inline_editor.cursorPosition()
-            text = inline_editor.text()
-            new_text = text[:cp] + ref + text[cp:]
-            inline_editor.setText(new_text)
-            inline_editor.setCursorPosition(cp + len(ref))
-            inline_editor.setFocus()
-            self._update_ref_highlights(new_text)
-        elif saved_text is not None:
-            new_text = saved_text[:saved_pos] + ref + saved_text[saved_pos:]
-            new_pos = saved_pos + len(ref)
-            self.table.setCurrentCell(fc_r, fc_c)
-            self.table.editItem(
-                self.table.item(fc_r, fc_c)
-                or self._ensure_item(fc_r, fc_c))
-            QTimer.singleShot(
-                0, lambda: self._set_inline_editor_text(new_text, new_pos))
-        else:
-            cp = self._formula_bar.cursorPosition()
-            text = self._formula_bar.text()
-            new_text = text[:cp] + ref + text[cp:]
-            self._formula_bar.setText(new_text)
-            self._formula_bar.setCursorPosition(cp + len(ref))
-            self._formula_bar.setFocus()
-            self._update_ref_highlights(new_text)
-        self._arrow_nav_active = False
-        self._arrow_nav_pos = None
-        self._arrow_nav_ref_span = None
+    def _end_pick_drag(self):
+        self._pick_drag = None
+        self._release_drag_grab()
 
     def _set_inline_editor_text(self, text, cursor_pos):
         """Set text and cursor on the active inline editor (deferred)."""
@@ -4047,6 +4019,15 @@ class SheetWidget(QWidget):
                 self._end_ref_drag()
                 return True
 
+        # Click-drag widening a just-inserted reference into a range.
+        if self._pick_drag is not None:
+            if etype == QEvent.MouseMove:
+                self._pick_drag_move(event)
+                return True
+            if etype == QEvent.MouseButtonRelease:
+                self._end_pick_drag()
+                return True
+
         # Keep the marching-ants overlay sized to the viewport.
         if (etype == QEvent.Resize and self._marching_range is not None):
             self._sync_ants_overlay()
@@ -4142,17 +4123,54 @@ class SheetWidget(QWidget):
                     r, c = idx.row(), idx.column()
                     fc_r, fc_c = formula_cell
                     if (r, c) != (fc_r, fc_c):
-                        # Defer insertion until mouse release so that a
-                        # click-drag produces a range ref (e.g. F3:F11)
-                        # instead of a single cell ref.
-                        self._formula_pick_pending = {
-                            "formula_cell": formula_cell,
-                            "inline_editor": inline_editor,
-                            "saved_text": saved_text,
-                            "saved_pos": saved_pos,
-                            "start": (r, c),
-                        }
-                        # Do NOT consume — let Qt update the selection.
+                        # Insert the clicked cell's reference NOW (consume
+                        # the press so the editor stays open).  If the user
+                        # then drags, the single ref is widened to a range
+                        # (e.g. F3:F11) in _pick_drag_move.
+                        ref = col_index_to_letter(c) + str(r + 1)
+                        where = None
+                        ins_start = 0
+                        if inline_editor:
+                            cp = inline_editor.cursorPosition()
+                            text = inline_editor.text()
+                            inline_editor.setText(text[:cp] + ref + text[cp:])
+                            inline_editor.setCursorPosition(cp + len(ref))
+                            inline_editor.setFocus()
+                            self._update_ref_highlights(inline_editor.text())
+                            where, ins_start = "editor", cp
+                        elif saved_text is not None:
+                            new_text = (saved_text[:saved_pos] + ref
+                                        + saved_text[saved_pos:])
+                            new_pos = saved_pos + len(ref)
+                            self.table.setCurrentCell(fc_r, fc_c)
+                            self.table.editItem(
+                                self.table.item(fc_r, fc_c)
+                                or self._ensure_item(fc_r, fc_c))
+                            QTimer.singleShot(
+                                0, lambda: self._set_inline_editor_text(
+                                    new_text, new_pos))
+                        else:
+                            cp = self._formula_bar.cursorPosition()
+                            text = self._formula_bar.text()
+                            self._formula_bar.setText(
+                                text[:cp] + ref + text[cp:])
+                            self._formula_bar.setCursorPosition(cp + len(ref))
+                            self._formula_bar.setFocus()
+                            self._update_ref_highlights(
+                                self._formula_bar.text())
+                            where, ins_start = "bar", cp
+                        self._arrow_nav_active = False
+                        self._arrow_nav_pos = None
+                        self._arrow_nav_ref_span = None
+                        if where is not None:
+                            self._pick_drag = {
+                                "where": where, "anchor": (r, c),
+                                "ins_start": ins_start, "ref_len": len(ref)}
+                            try:
+                                self.table.viewport().grabMouse()
+                            except Exception:
+                                pass
+                        return True  # consume click
                     else:
                         # Clicked on the formula cell itself — clear state.
                         self._inline_formula_text = None
@@ -4181,11 +4199,6 @@ class SheetWidget(QWidget):
                 self._fill_anchor_range = None
                 self._auto_fill_down()
                 return True
-
-        elif (etype == QEvent.MouseButtonRelease
-              and getattr(self, '_formula_pick_pending', None)):
-            self._finish_formula_pick()
-            return True
 
         elif etype == QEvent.MouseMove and self._fill_dragging:
             row = self.table.rowAt(event.pos().y())
