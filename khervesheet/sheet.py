@@ -1516,7 +1516,9 @@ class SheetWidget(QWidget):
         self._arrow_nav_active = False
         self._arrow_nav_pos = None
         self._arrow_nav_ref_span = None
-        self._ref_drag = None
+        if self._ref_drag is not None:
+            self._ref_drag = None
+            self._release_drag_grab()
         wb = self._workbook()
         if wb is not None:
             wb.clear_active_formula(self)
@@ -1566,7 +1568,9 @@ class SheetWidget(QWidget):
         self._arrow_nav_active = False
         self._arrow_nav_pos = None
         self._arrow_nav_ref_span = None
-        self._ref_drag = None
+        if self._ref_drag is not None:
+            self._ref_drag = None
+            self._release_drag_grab()
         wb = self._workbook()
         if wb is not None:
             wb.clear_active_formula(self)
@@ -1774,31 +1778,55 @@ class SheetWidget(QWidget):
         return None
 
     def _begin_ref_drag(self, idx, event):
-        target = self._active_formula_target()
-        if target is None:
+        # Resolve the in-progress formula text and where it lives, being
+        # permissive: the formula bar, a live in-cell editor, the tracked
+        # inline-edit state, or the cell's stored formula.
+        is_bar = False
+        cell = None
+        text0 = None
+        cr, cc = self.table.currentRow(), self.table.currentColumn()
+        if (self._formula_entry_cell is not None
+                and self._formula_bar.text().startswith("=")):
+            is_bar, cell, text0 = True, self._formula_entry_cell, \
+                self._formula_bar.text()
+        else:
+            ed = self._find_inline_editor()
+            if ed is not None and ed.text().startswith("="):
+                cell, text0 = (cr, cc), ed.text()
+            elif (self._inline_formula_cell is not None
+                    and (self._inline_formula_text or "").startswith("=")):
+                cell, text0 = (self._inline_formula_cell,
+                               self._inline_formula_text)
+            elif (cr, cc) in self._cell_formulas:
+                cell, text0 = (cr, cc), self._cell_formulas[(cr, cc)]
+        if text0 is None or cell is None:
             return False
-        toks = self._parse_ref_tokens(target.text())
+        toks = self._parse_ref_tokens(text0)
         if idx < 0 or idx >= len(toks):
             return False
-        cell = self.table.indexAt(event.pos())
-        if not cell.isValid():
+        pcell = self.table.indexAt(event.pos())
+        if not pcell.isValid():
             return False
         tok = toks[idx]
         self._ref_drag = {
-            "is_bar": target is self._formula_bar,
-            "cell": (self.table.currentRow(), self.table.currentColumn()),
-            "text0": target.text(),
-            "span0": tok["span"],
-            "token0": tok["text"],
-            "press": (cell.row(), cell.column()),
-            "last_text": target.text(),
+            "is_bar": is_bar, "cell": cell, "text0": text0,
+            "span0": tok["span"], "token0": tok["text"],
+            "press": (pcell.row(), pcell.column()), "last_text": text0,
         }
-        self.table.viewport().setCursor(Qt.SizeAllCursor)
+        vp = self.table.viewport()
+        vp.setCursor(Qt.SizeAllCursor)
+        # Explicit grab so move/release reach us even though the press was
+        # consumed (the implicit grab is unreliable while a cell editor has
+        # focus).
+        try:
+            vp.grabMouse()
+        except Exception:
+            pass
         return True
 
     def _set_inline_cell_formula(self, r, c, text):
-        """Apply a live formula to a cell directly — used when the in-cell
-        editor was destroyed by the drag's mouse press."""
+        """Apply a live formula to a cell directly (used while dragging a
+        reference when no in-cell editor is open)."""
         self._cell_formulas[(r, c)] = text
         self._register_deps(r, c, text)
         dec = self._cell_decimals(r, c)
@@ -1825,29 +1853,39 @@ class SheetWidget(QWidget):
             bar.setCursorPosition(cur)
             bar.blockSignals(False)
         else:
+            r, c = d["cell"]
             ed = self._find_inline_editor()
             if ed is not None:
                 ed.blockSignals(True)
                 ed.setText(new_text)
                 ed.setCursorPosition(cur)
                 ed.blockSignals(False)
-                ed.setFocus()          # keep the editor alive during drag
             else:
-                # Editor was destroyed by the press — drive the cell live.
-                r, c = d["cell"]
+                # No live editor — drive the cell's formula directly.
                 self._set_inline_cell_formula(r, c, new_text)
+            # Keep tracked inline state in sync so the result survives an
+            # editor that was destroyed by the press.
+            self._inline_formula_cell = (r, c)
+            self._inline_formula_text = new_text
+            self._inline_formula_pos = cur
         self._update_ref_highlights(new_text)
+
+    def _release_drag_grab(self):
+        try:
+            self.table.viewport().releaseMouse()
+        except Exception:
+            pass
 
     def _end_ref_drag(self):
         d = self._ref_drag
         self._ref_drag = None
         self.table.viewport().unsetCursor()
+        self._release_drag_grab()
         if not d or d["is_bar"]:
-            return  # the bar keeps the text; Enter commits as usual
+            return  # the bar / live editor keeps the text; Enter commits
         if self._find_inline_editor() is not None:
             return  # still editing in-cell; Enter commits as usual
-        # The in-cell editor closed during the drag — commit the moved
-        # formula to the cell and recalc dependents.
+        # No editor open — commit the moved formula to the cell and recalc.
         r, c = d["cell"]
         self._set_inline_cell_formula(r, c, d["last_text"])
         self._recalc_dependents(r, c)
@@ -4039,42 +4077,17 @@ class SheetWidget(QWidget):
                     r, c = idx.row(), idx.column()
                     fc_r, fc_c = formula_cell
                     if (r, c) != (fc_r, fc_c):
-                        ref = col_index_to_letter(c) + str(r + 1)
-                        if inline_editor:
-                            # Editor still alive — insert directly.
-                            cp = inline_editor.cursorPosition()
-                            text = inline_editor.text()
-                            new_text = text[:cp] + ref + text[cp:]
-                            inline_editor.setText(new_text)
-                            inline_editor.setCursorPosition(cp + len(ref))
-                            inline_editor.setFocus()
-                            self._update_ref_highlights(new_text)
-                        elif saved_text is not None:
-                            # Editor was closed — reopen with ref inserted.
-                            new_text = (saved_text[:saved_pos] + ref
-                                        + saved_text[saved_pos:])
-                            new_pos = saved_pos + len(ref)
-                            self.table.setCurrentCell(fc_r, fc_c)
-                            self.table.editItem(
-                                self.table.item(fc_r, fc_c)
-                                or self._ensure_item(fc_r, fc_c))
-                            QTimer.singleShot(0, lambda: self._set_inline_editor_text(
-                                new_text, new_pos))
-                        else:
-                            # Formula bar mode.
-                            cp = self._formula_bar.cursorPosition()
-                            text = self._formula_bar.text()
-                            new_text = text[:cp] + ref + text[cp:]
-                            self._formula_bar.setText(new_text)
-                            self._formula_bar.setCursorPosition(
-                                cp + len(ref))
-                            self._formula_bar.setFocus()
-                            self._update_ref_highlights(new_text)
-                        # Reset arrow nav — click takes over.
-                        self._arrow_nav_active = False
-                        self._arrow_nav_pos = None
-                        self._arrow_nav_ref_span = None
-                        return True  # consume click
+                        # Defer insertion until mouse release so that a
+                        # click-drag produces a range ref (e.g. F3:F11)
+                        # instead of a single cell ref.
+                        self._formula_pick_pending = {
+                            "formula_cell": formula_cell,
+                            "inline_editor": inline_editor,
+                            "saved_text": saved_text,
+                            "saved_pos": saved_pos,
+                            "start": (r, c),
+                        }
+                        # Do NOT consume — let Qt update the selection.
                     else:
                         # Clicked on the formula cell itself — clear state.
                         self._inline_formula_text = None
@@ -4103,6 +4116,11 @@ class SheetWidget(QWidget):
                 self._fill_anchor_range = None
                 self._auto_fill_down()
                 return True
+
+        elif (etype == QEvent.MouseButtonRelease
+              and getattr(self, '_formula_pick_pending', None)):
+            self._finish_formula_pick()
+            return True
 
         elif etype == QEvent.MouseMove and self._fill_dragging:
             row = self.table.rowAt(event.pos().y())
