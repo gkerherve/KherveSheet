@@ -52,6 +52,10 @@ def _make_app_icon():
 _COMMON_QSS = """
 QToolBar { padding: 0px; margin: 0px; spacing: 1px; }
 QToolButton { padding: 1px; margin: 0px; }
+/* Flatten the drop-down (menu) half of MenuButtonPopup tool buttons so it
+   doesn't draw its own raised/bevelled frame on hover. */
+QToolButton::menu-button { border: none; background: transparent; width: 14px; }
+QToolButton::menu-arrow { width: 8px; height: 8px; }
 QSpinBox, QDoubleSpinBox { min-height: 22px; }
 QSpinBox::up-button, QDoubleSpinBox::up-button,
 QSpinBox::down-button, QDoubleSpinBox::down-button {
