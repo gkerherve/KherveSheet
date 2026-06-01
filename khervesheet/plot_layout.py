@@ -412,9 +412,11 @@ class _BaseLayoutTab(QWidget):
         row.addWidget(self._build_controls())
         row.addWidget(self._build_content(), stretch=1)
 
-    # Cards pinned one-per-corner in "show all" mode.
-    _CORNERS = {"plots": "tl", "arrange": "bl", "size": "tr", "margins": "br"}
-    _GROUP_KEYS = ("plots", "arrange", "size", "margins")
+    # "Show all" mode pins cards in two stacked columns: the left column
+    # runs top-to-bottom, the right column holds Plots then Insert.
+    _LEFT_STACK = ("arrange", "margins", "size")
+    _RIGHT_STACK = ("plots", "insert")
+    _PINNED = _LEFT_STACK + _RIGHT_STACK
     _CARD_W = 200             # panel width (px)
     _STRIP_W = 40
 
@@ -517,9 +519,6 @@ class _BaseLayoutTab(QWidget):
         return btn
 
     def _toggle_card(self, btn, key):
-        # Leaving "show all" pinned mode if the user opens a single flyout.
-        if self._show_all and key in self._cards and key != "insert":
-            self._pin_btn.setChecked(False)
         card = self._cards[key]
         if not btn.isChecked():
             card.hide()
@@ -528,11 +527,8 @@ class _BaseLayoutTab(QWidget):
             if b is not btn and b is not self._pin_btn:
                 b.setChecked(False)
         for k, c in self._cards.items():
-            if c is card:
-                continue
-            if self._show_all and k in self._GROUP_KEYS:
-                continue   # keep the pinned corner cards visible
-            c.hide()
+            if c is not card:
+                c.hide()
         card.adjustSize()
         card.move(self._STRIP_W + 8, 8)
         card.show()
@@ -540,40 +536,42 @@ class _BaseLayoutTab(QWidget):
 
     def _set_show_all(self, on):
         self._show_all = on
-        for key in self._GROUP_KEYS:
+        # While pinned, the per-group buttons are inert (use the cards).
+        for key in self._PINNED:
             self._buttons[key].setEnabled(not on)
             if on:
                 self._buttons[key].setChecked(False)
         if on:
-            # Drop any single flyout, then pin the four group cards.
-            self._cards["insert"].hide()
-            self._buttons["insert"].setChecked(False)
-            self._position_corner_cards()
-            for key in self._GROUP_KEYS:
+            self._position_pinned_cards()
+            for key in self._PINNED:
                 self._cards[key].show()
                 self._cards[key].raise_()
         else:
-            for key in self._GROUP_KEYS:
+            for key in self._PINNED:
                 self._cards[key].hide()
 
-    def _position_corner_cards(self):
+    def _position_pinned_cards(self):
+        """Two stacked columns: left runs top-to-bottom (Arrangement,
+        Margins, Size); right holds Plots then Insert."""
         if not getattr(self, "_cards", None):
             return
-        w, h = self.width(), self.height()
-        m = 8
-        left = self._STRIP_W + m
-        for key in self._GROUP_KEYS:
-            card = self._cards[key]
-            card.adjustSize()
-            corner = self._CORNERS[key]
-            x = left if corner in ("tl", "bl") else w - card.width() - m
-            y = m if corner in ("tl", "tr") else h - card.height() - m
-            card.move(x, max(m, y))
+        w = self.width()
+        m, gap = 8, 10
+        left_x = self._STRIP_W + m
+        right_x = max(left_x, w - self._CARD_W - m)
+        for stack, x in ((self._LEFT_STACK, left_x),
+                         (self._RIGHT_STACK, right_x)):
+            y = m
+            for key in stack:
+                card = self._cards[key]
+                card.adjustSize()
+                card.move(x, y)
+                y += card.height() + gap
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
         if getattr(self, "_show_all", False):
-            self._position_corner_cards()
+            self._position_pinned_cards()
 
     def _build_plots_panel(self):
         panel = QWidget()
