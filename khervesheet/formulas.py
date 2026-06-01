@@ -129,6 +129,30 @@ FUNCTION_CATEGORIES = {
         "ISREF", "ISTEXT",
         "N", "NA", "TYPE",
     ],
+    "Data Analysis": [
+        # ── Derivative ──
+        "DERIV", "DERIV2", "DERIV.SMOOTH",
+        # ── Integration ──
+        "TRAPZ", "CUMTRAPZ", "SIMPS",
+        # ── Smoothing & filtering ──
+        "SAVGOL", "MOVAVG", "EWMA",
+        "LOWPASS", "HIGHPASS", "BANDPASS",
+        "MEDIAN.FILTER",
+        # ── Normalisation ──
+        "NORM.MAX", "NORM.AREA", "NORM.MINMAX", "NORM.ZSCORE",
+        "NORM.PEAK", "NORM.RANGE",
+        # ── FFT / spectral ──
+        "FFT.MAG", "FFT.PHASE", "FFT.FREQ",
+        "FFT.REAL", "FFT.IMAG", "IFFT",
+        "FFT.POWER",
+        # ── Interpolation & resampling ──
+        "INTERP.LINEAR", "INTERP.SPLINE", "INTERP.AKIMA",
+        "RESAMPLE",
+        # ── Peak detection ──
+        "FIND.PEAKS", "FIND.PEAKS.X", "FIND.PEAKS.Y",
+        # ── Baseline ──
+        "BASELINE.POLY", "BASELINE.ALS",
+    ],
 }
 
 # Order for the menu (matches Excel's ribbon left-to-right).
@@ -136,6 +160,7 @@ CATEGORY_ORDER = [
     "Math && Trig", "Text", "Date && Time",
     "Logical", "Lookup && Reference", "Financial",
     "Statistical", "Engineering", "Information",
+    "Data Analysis",
 ]
 
 # ── Function help (syntax + one-line description) ────────────────────
@@ -433,6 +458,175 @@ FUNCTION_HELP = {
     "N":          "N(value)\nConverts a value to a number.",
     "NA":         "NA()\nReturns the error value #N/A.",
     "TYPE":       "TYPE(value)\nReturns a number indicating the data type of a value.",
+
+    # ── Data Analysis — Derivative ──────────────────────────────
+    "DERIV":
+        "DERIV(y_range, x_range)\n"
+        "Returns the numerical first derivative dy/dx using central "
+        "finite differences (numpy.gradient).  The result is an array "
+        "the same length as the input.  Select the output range first, "
+        "type the formula, then press Ctrl+Shift+Enter.",
+    "DERIV2":
+        "DERIV2(y_range, x_range)\n"
+        "Returns the numerical second derivative d\u00b2y/dx\u00b2 by applying "
+        "numpy.gradient twice.  Useful for finding inflection points in "
+        "spectroscopy data.",
+    "DERIV.SMOOTH":
+        "DERIV.SMOOTH(y_range, x_range, [window], [poly_order])\n"
+        "Returns the Savitzky\u2013Golay first derivative.  Combines "
+        "smoothing and differentiation in a single step — often "
+        "cleaner than DERIV on noisy data.  Default window = 7, "
+        "poly_order = 3.",
+
+    # ── Data Analysis — Integration ─────────────────────────────
+    "TRAPZ":
+        "TRAPZ(y_range, x_range)\n"
+        "Returns the definite integral of y over x using the "
+        "trapezoidal rule (numpy.trapz).  Returns a single number.",
+    "CUMTRAPZ":
+        "CUMTRAPZ(y_range, x_range)\n"
+        "Returns the cumulative trapezoidal integral — an array whose "
+        "i-th element is the integral from x\u2080 to x\u1d62.  "
+        "Select an output range the same length as the input.",
+    "SIMPS":
+        "SIMPS(y_range, x_range)\n"
+        "Returns the definite integral using Simpson\u2019s rule "
+        "(scipy.integrate.simpson).  More accurate than TRAPZ for "
+        "smooth curves.  Returns a single number.",
+
+    # ── Data Analysis — Smoothing & filtering ───────────────────
+    "SAVGOL":
+        "SAVGOL(y_range, [window], [poly_order])\n"
+        "Applies a Savitzky\u2013Golay smoothing filter "
+        "(scipy.signal.savgol_filter).  Preserves peak shape better "
+        "than a moving average.  Default window = 7, poly_order = 3.",
+    "MOVAVG":
+        "MOVAVG(y_range, [window])\n"
+        "Returns the centred moving-average of y.  Default window = 5.  "
+        "Edge values are filled with the original data so the output "
+        "has the same length as the input.",
+    "EWMA":
+        "EWMA(y_range, [alpha])\n"
+        "Returns the exponentially weighted moving average.  "
+        "alpha = 0 keeps the raw data, alpha = 1 maximises smoothing.  "
+        "Default alpha = 0.3.",
+    "LOWPASS":
+        "LOWPASS(y_range, x_range, cutoff_freq)\n"
+        "Applies a Butterworth low-pass filter.  cutoff_freq is in "
+        "the same units as 1/x (e.g. Hz if x is seconds).  "
+        "Removes high-frequency noise.",
+    "HIGHPASS":
+        "HIGHPASS(y_range, x_range, cutoff_freq)\n"
+        "Applies a Butterworth high-pass filter.  Removes slow "
+        "baseline drifts while preserving sharp features.",
+    "BANDPASS":
+        "BANDPASS(y_range, x_range, low_freq, high_freq)\n"
+        "Applies a Butterworth band-pass filter.  Keeps only the "
+        "frequency components between low_freq and high_freq.",
+    "MEDIAN.FILTER":
+        "MEDIAN.FILTER(y_range, [kernel_size])\n"
+        "Applies a median filter — replaces each point with the "
+        "median of its kernel_size neighbours.  Excellent for removing "
+        "spike artifacts.  Default kernel_size = 5.",
+
+    # ── Data Analysis — Normalisation ───────────────────────────
+    "NORM.MAX":
+        "NORM.MAX(y_range)\n"
+        "Normalises by dividing every value by the maximum.  "
+        "The output peaks at 1.",
+    "NORM.AREA":
+        "NORM.AREA(y_range, x_range)\n"
+        "Normalises so the integral of y over x equals 1 "
+        "(area normalisation).",
+    "NORM.MINMAX":
+        "NORM.MINMAX(y_range)\n"
+        "Scales y linearly so the minimum becomes 0 and the "
+        "maximum becomes 1.",
+    "NORM.ZSCORE":
+        "NORM.ZSCORE(y_range)\n"
+        "Returns (y \u2212 mean) / stdev for each point (z-score "
+        "standardisation).",
+    "NORM.PEAK":
+        "NORM.PEAK(y_range, x_range, x_ref)\n"
+        "Normalises by dividing every value by the y-value at the "
+        "x position closest to x_ref.  Useful when normalising to "
+        "a reference peak.",
+    "NORM.RANGE":
+        "NORM.RANGE(y_range, new_min, new_max)\n"
+        "Scales y linearly into the interval [new_min, new_max].",
+
+    # ── Data Analysis — FFT / spectral ──────────────────────────
+    "FFT.MAG":
+        "FFT.MAG(y_range)\n"
+        "Returns the magnitude (absolute value) of the discrete "
+        "Fourier transform — the single-sided amplitude spectrum.  "
+        "Output length is N/2 + 1.",
+    "FFT.PHASE":
+        "FFT.PHASE(y_range)\n"
+        "Returns the phase angle (in radians) of each FFT bin.",
+    "FFT.FREQ":
+        "FFT.FREQ(y_range, x_range)\n"
+        "Returns the frequency axis corresponding to FFT.MAG.  "
+        "Units are 1/x-units (e.g. Hz if x is in seconds).  "
+        "Output length is N/2 + 1.",
+    "FFT.REAL":
+        "FFT.REAL(y_range)\n"
+        "Returns the real part of the discrete Fourier transform.",
+    "FFT.IMAG":
+        "FFT.IMAG(y_range)\n"
+        "Returns the imaginary part of the discrete Fourier transform.",
+    "IFFT":
+        "IFFT(real_range, imag_range)\n"
+        "Returns the inverse FFT from real and imaginary components.  "
+        "Use after filtering in frequency domain to reconstruct the "
+        "time/space signal.",
+    "FFT.POWER":
+        "FFT.POWER(y_range)\n"
+        "Returns the power spectral density — the squared magnitude "
+        "of each FFT bin, normalised by N.",
+
+    # ── Data Analysis — Interpolation & resampling ──────────────
+    "INTERP.LINEAR":
+        "INTERP.LINEAR(y_range, x_range, new_x_range)\n"
+        "Interpolates y onto new x-values using linear interpolation.",
+    "INTERP.SPLINE":
+        "INTERP.SPLINE(y_range, x_range, new_x_range)\n"
+        "Interpolates y onto new x-values using cubic spline "
+        "(scipy.interpolate.CubicSpline).",
+    "INTERP.AKIMA":
+        "INTERP.AKIMA(y_range, x_range, new_x_range)\n"
+        "Interpolates y onto new x-values using Akima spline — "
+        "less prone to overshoot than cubic spline near sharp changes.",
+    "RESAMPLE":
+        "RESAMPLE(y_range, x_range, n_points)\n"
+        "Resamples y onto n_points equally spaced x-values spanning "
+        "the original x range.  Returns the resampled y-values.",
+
+    # ── Data Analysis — Peak detection ──────────────────────────
+    "FIND.PEAKS":
+        "FIND.PEAKS(y_range, [prominence], [distance])\n"
+        "Returns the row indices (1-based) of detected peaks using "
+        "scipy.signal.find_peaks.  Optional prominence and minimum "
+        "distance thresholds filter weak or closely spaced peaks.",
+    "FIND.PEAKS.X":
+        "FIND.PEAKS.X(y_range, x_range, [prominence], [distance])\n"
+        "Returns the x-positions of detected peaks.",
+    "FIND.PEAKS.Y":
+        "FIND.PEAKS.Y(y_range, [prominence], [distance])\n"
+        "Returns the y-values (heights) of detected peaks.",
+
+    # ── Data Analysis — Baseline ────────────────────────────────
+    "BASELINE.POLY":
+        "BASELINE.POLY(y_range, x_range, [degree])\n"
+        "Fits a polynomial baseline to the data and returns it.  "
+        "Subtract the result from y to get baseline-corrected data.  "
+        "Default degree = 3.",
+    "BASELINE.ALS":
+        "BASELINE.ALS(y_range, [lam], [p])\n"
+        "Estimates the baseline using asymmetric least-squares "
+        "smoothing (Eilers & Boelens 2005).  lam controls smoothness "
+        "(default 1e6), p controls asymmetry (default 0.01).  "
+        "Excellent for broad baselines in spectroscopy.",
 }
 
 
