@@ -144,7 +144,9 @@ def _is_3d(d):
 
 
 def collect_charts(workbook):
-    """Return ``[(title, dict), ...]`` for every chart across all sheets.
+    """Return ``[(title, dict, sheet, chart), ...]`` for every chart across
+    all sheets, carrying the source sheet widget and chart object so the
+    layout can navigate back to them.
 
     Titles fall back to ``"<sheet> · plot N"`` when a chart has no
     title set, so list entries stay distinguishable.
@@ -162,7 +164,7 @@ def collect_charts(workbook):
             except Exception:
                 continue
             title = d.get("title") or f"{sheet_name} · plot {ci + 1}"
-            out.append((title, d))
+            out.append((title, d, w, chart))
     return out
 
 
@@ -818,23 +820,27 @@ class _BaseLayoutTab(QWidget):
         from collections import defaultdict
         collected = collect_charts(self._workbook)
         buckets = defaultdict(list)
-        for t, d in collected:
-            buckets[t].append(d)
+        for t, d, sheet, chart in collected:
+            buckets[t].append((d, sheet, chart))
         consumed = defaultdict(int)
         new_items = []
+
+        def _item(title, entry, visible):
+            d, sheet, chart = entry
+            return {"title": title, "dict": d, "visible": visible,
+                    "sheet": sheet, "chart": chart}
+
         # Preserve the user's existing order / visibility where titles match.
         for it in self._items:
             t = it["title"]
             lst = buckets.get(t, [])
             if consumed[t] < len(lst):
-                new_items.append({"title": t, "dict": lst[consumed[t]],
-                                  "visible": it["visible"]})
+                new_items.append(_item(t, lst[consumed[t]], it["visible"]))
                 consumed[t] += 1
         # Append any newly-created charts.
         for t, lst in buckets.items():
             while consumed[t] < len(lst):
-                new_items.append({"title": t, "dict": lst[consumed[t]],
-                                  "visible": True})
+                new_items.append(_item(t, lst[consumed[t]], True))
                 consumed[t] += 1
         self._items = new_items
         self._apply_pending_plots()
@@ -935,7 +941,36 @@ class CombinedLayoutTab(_BaseLayoutTab):
         scroll.setAlignment(Qt.AlignCenter)
         scroll.setWidget(self._canvas)
         self._scroll = scroll
+        # Double-clicking a subplot jumps to its source sheet + chart.
+        self._ax_items = {}
+        self._canvas.mpl_connect("button_press_event", self._on_plot_click)
         return scroll
+
+    def _on_plot_click(self, event):
+        if not getattr(event, "dblclick", False):
+            return
+        it = self._ax_items.get(event.inaxes)
+        if it is not None:
+            self._open_source_plot(it)
+
+    def _open_source_plot(self, item):
+        """Switch to the chart's source sheet and select it."""
+        sheet = item.get("sheet")
+        chart = item.get("chart")
+        wb = self._workbook
+        if sheet is not None and wb.tabs.indexOf(sheet) >= 0:
+            wb.tabs.setCurrentWidget(sheet)
+        if chart is None or sheet is None:
+            return
+        if chart not in getattr(sheet, "_charts", []):
+            return  # stale (chart was deleted) — Refresh will fix it
+        for c in getattr(sheet, "_charts", []):
+            if getattr(c, "_selected", False) and c is not chart:
+                c._selected = False
+                c.update()
+        chart._selected = True
+        chart.raise_()
+        chart.update()
 
     def eventFilter(self, obj, ev):
         from PyQt5.QtCore import QEvent
@@ -950,6 +985,7 @@ class CombinedLayoutTab(_BaseLayoutTab):
             return
         fig = self._figure
         fig.clear()
+        self._ax_items = {}
         items = self._visible_items()
         w_in, h_in = self._figsize_in()
         fig.set_size_inches(w_in, h_in)
@@ -977,6 +1013,7 @@ class CombinedLayoutTab(_BaseLayoutTab):
                 pos = i + 1
             kw = {"projection": "3d"} if _is_3d(d) else {}
             ax = fig.add_subplot(rows, cols, pos, **kw)
+            self._ax_items[ax] = it
             try:
                 render_chart(fig, ax, d)
             except Exception:
