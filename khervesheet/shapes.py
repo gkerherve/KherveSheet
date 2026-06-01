@@ -34,6 +34,13 @@ _HANDLE = 6
 _PAD = 3        # inset so outline + handles stay inside the widget
 _ROT_OFFSET = 18  # distance of rotation handle above the top edge
 _ROT_R = 5      # rotation-handle radius
+_SEG_MARGIN = 12  # padding around a line/arrow's endpoints (for handles)
+_EP_R = 5       # endpoint-handle radius for line/arrow objects
+
+
+# Line/arrow types drawn as free two-endpoint segments (drag each end to
+# set angle + length), rather than boxed shapes.
+_SEGMENT_TYPES = ("line", "arrow", "double_arrow")
 
 
 def _is_closed(shape_type) -> bool:
@@ -217,13 +224,59 @@ class EmbeddedShape(QWidget):
         self._rot_start_angle = 0.0
         self._rot_start_value = 0.0
 
+        # Endpoints (widget-local) for segment line/arrow objects.
+        self._lp1 = QPointF(0, 0)
+        self._lp2 = QPointF(0, 0)
+        self._drag_ep = None
+
         self.setMinimumSize(24, 16)
         # Lines/arrows behave like slim line objects, not boxed shapes.
         if _is_closed(shape_type):
             self.resize(160, 90)
         else:
             self.resize(220, 24)
+        if self._is_segment():
+            self._default_segment_endpoints()
         self.show()
+
+    def _is_segment(self):
+        return self._shape_type in _SEGMENT_TYPES
+
+    def _default_segment_endpoints(self):
+        m = _SEG_MARGIN
+        self._lp1 = QPointF(m, self.height() / 2)
+        self._lp2 = QPointF(self.width() - m, self.height() / 2)
+
+    # ── Segment (line/arrow) endpoint geometry ────────────────────────
+    def _endpoint_parent(self, i):
+        """Endpoint *i* (0 or 1) in parent coordinates."""
+        lp = self._lp1 if i == 0 else self._lp2
+        return QPoint(self.x() + int(round(lp.x())),
+                      self.y() + int(round(lp.y())))
+
+    def _set_endpoints_parent(self, p1, p2):
+        """Resize/move the widget to bound parent-coord endpoints *p1*,*p2*
+        (with margin) and store their widget-local positions."""
+        m = _SEG_MARGIN
+        x0 = min(p1.x(), p2.x()) - m
+        y0 = min(p1.y(), p2.y()) - m
+        x1 = max(p1.x(), p2.x()) + m
+        y1 = max(p1.y(), p2.y()) + m
+        w = max(int(x1 - x0), 2 * m)
+        h = max(int(y1 - y0), 2 * m)
+        self.setGeometry(int(x0), int(y0), w, h)
+        self._lp1 = QPointF(p1.x() - x0, p1.y() - y0)
+        self._lp2 = QPointF(p2.x() - x0, p2.y() - y0)
+        self.update()
+
+    def _endpoint_hit(self, pos):
+        """Index of the endpoint handle under *pos* (widget coords), else
+        None."""
+        for i, lp in enumerate((self._lp1, self._lp2)):
+            dx, dy = pos.x() - lp.x(), pos.y() - lp.y()
+            if dx * dx + dy * dy <= (_EP_R + 5) ** 2:
+                return i
+        return None
 
     # ── Style snapshot (for undo + persistence) ───────────────────────
 
@@ -283,6 +336,9 @@ class EmbeddedShape(QWidget):
         return QRectF(c.x() - nw / 2, c.y() - nh / 2, nw, nh)
 
     def paintEvent(self, event):
+        if self._is_segment():
+            self._paint_segment()
+            return
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
         inner = self._content_rect()
@@ -346,6 +402,35 @@ class EmbeddedShape(QWidget):
         r = self.rect()
         cy = r.height() // 2
         return [(_PAD, cy), (r.width() - _PAD, cy)]
+
+    def _paint_segment(self):
+        """Draw a line/arrow as a free segment between its two endpoints,
+        with circular endpoint handles when selected (no bounding box)."""
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+        lp1, lp2 = self._lp1, self._lp2
+        lw = float(self._outline_width) if self._outline_width else 1.6
+        pen = QPen(QColor(self._outline_color), max(0.6, lw),
+                   Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        p.setPen(pen)
+        p.drawLine(lp1, lp2)
+        head = 9 + lw * 2
+        if self._shape_type in ("arrow", "double_arrow"):
+            shape_defs._draw_arrowhead(p, lp1, lp2, head)
+        if self._shape_type == "double_arrow":
+            shape_defs._draw_arrowhead(p, lp2, lp1, head)
+        # Optional text near the midpoint.
+        if (self._html or self._text) and self._inline_editor is None:
+            mid = QRectF((lp1.x() + lp2.x()) / 2 - 40,
+                         (lp1.y() + lp2.y()) / 2 - 18, 80, 16)
+            self._draw_text(p, mid, False)
+        # Endpoint handles (hollow circles) when selected.
+        if self._selected:
+            p.setPen(QPen(QColor("#3078c6"), 1.4))
+            p.setBrush(QColor("#ffffff"))
+            for lp in (lp1, lp2):
+                p.drawEllipse(lp, _EP_R, _EP_R)
+        p.end()
 
     def _rot_handle_pos(self):
         return self.rect().width() // 2, _PAD + _ROT_R
@@ -438,6 +523,13 @@ class EmbeddedShape(QWidget):
         overlay.handle_select_on_press(
             self, bool(ev.modifiers() & Qt.ControlModifier))
         self.update()
+        if self._is_segment():
+            self._drag_ep = self._endpoint_hit(ev.pos())
+            self._drag_origin = ev.globalPos()
+            if self._drag_ep is None:
+                self._drag_widget_pos = self.pos()
+                self._group_drag = overlay.begin_group_drag(self)
+            return
         if self._on_rot_handle(ev.pos()):
             self._rotating = True
             self._rot_before = self._style_dict()
@@ -456,6 +548,9 @@ class EmbeddedShape(QWidget):
             self._group_drag = overlay.begin_group_drag(self)
 
     def mouseMoveEvent(self, ev):
+        if self._is_segment():
+            self._segment_mouse_move(ev)
+            return
         if self._rotating:
             ang = self._angle_to(ev.pos())
             new = self._rot_start_value + (ang - self._rot_start_angle)
@@ -492,6 +587,30 @@ class EmbeddedShape(QWidget):
                 self.setCursor(self._cursor_for_edge(edge) if edge
                                else Qt.SizeAllCursor)
 
+    def _segment_mouse_move(self, ev):
+        # Dragging one endpoint redefines the segment's angle + length.
+        if self._drag_ep is not None and self._drag_origin:
+            parent = self.parentWidget()
+            new_pt = (parent.mapFromGlobal(ev.globalPos()) if parent
+                      else ev.globalPos())
+            other = self._endpoint_parent(1 - self._drag_ep)
+            if self._drag_ep == 0:
+                self._set_endpoints_parent(new_pt, other)
+            else:
+                self._set_endpoints_parent(other, new_pt)
+            return
+        if self._drag_origin:                       # move whole segment
+            delta = ev.globalPos() - self._drag_origin
+            if self._group_drag and len(self._group_drag) > 1:
+                overlay.drag_group(self._group_drag, delta)
+            else:
+                self.move(self._drag_widget_pos + delta)
+            return
+        if self._selected and self._endpoint_hit(ev.pos()) is not None:
+            self.setCursor(Qt.CrossCursor)
+        else:
+            self.setCursor(Qt.SizeAllCursor)
+
     def mouseReleaseEvent(self, ev):
         if self._rotating:
             self._rotating = False
@@ -502,6 +621,7 @@ class EmbeddedShape(QWidget):
         self._group_drag = None
         self._resizing = False
         self._resize_edge = None
+        self._drag_ep = None
 
     def mouseDoubleClickEvent(self, ev):
         self._begin_inline_edit()
@@ -672,6 +792,9 @@ class EmbeddedShape(QWidget):
             "width": self.width(), "height": self.height(),
             "group_id": self._group_id,
         })
+        if self._is_segment():
+            d["lp1"] = [self._lp1.x(), self._lp1.y()]
+            d["lp2"] = [self._lp2.x(), self._lp2.y()]
         return d
 
     @classmethod
@@ -681,6 +804,12 @@ class EmbeddedShape(QWidget):
         sh.move(int(d.get("pos_x", 40)), int(d.get("pos_y", 40)))
         sh.resize(int(d.get("width", 160)), int(d.get("height", 90)))
         sh._group_id = d.get("group_id")
+        if sh._is_segment():
+            if "lp1" in d and "lp2" in d:
+                sh._lp1 = QPointF(*d["lp1"])
+                sh._lp2 = QPointF(*d["lp2"])
+            else:
+                sh._default_segment_endpoints()
         return sh
 
 

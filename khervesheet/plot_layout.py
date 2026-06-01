@@ -1052,7 +1052,23 @@ def _bake_shapes(fig, canvas, shapes):
                 cx, cy, -float(sh._rotation)) + fig.transFigure
 
         artists = []
-        if shape_defs.is_line(st):
+        if getattr(sh, "_is_segment", lambda: False)():
+            # Free two-endpoint line/arrow: map its actual endpoints.
+            e1x = (sh.x() + sh._lp1.x()) / W
+            e1y = 1.0 - (sh.y() + sh._lp1.y()) / H
+            e2x = (sh.x() + sh._lp2.x()) / W
+            e2y = 1.0 - (sh.y() + sh._lp2.y()) / H
+            if st in ("arrow", "double_arrow"):
+                style = "<|-|>" if st == "double_arrow" else "-|>"
+                artists.append(patches.FancyArrowPatch(
+                    (e1x, e1y), (e2x, e2y), transform=fig.transFigure,
+                    arrowstyle=style, mutation_scale=14,
+                    color=edge, lw=lw, shrinkA=0, shrinkB=0))
+            else:
+                artists.append(lines.Line2D(
+                    [e1x, e2x], [e1y, e2y], transform=fig.transFigure,
+                    color=edge, lw=lw))
+        elif shape_defs.is_line(st):
             if st == "arrow":
                 artists.append(patches.FancyArrowPatch(
                     (x0, cy), (x1, cy), transform=tf,
