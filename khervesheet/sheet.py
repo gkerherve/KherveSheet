@@ -3876,15 +3876,32 @@ class SheetWidget(QWidget):
                 break
 
     def _on_inline_editor_text(self, text):
-        """Track inline editor text for click-to-insert-ref."""
+        """Track inline editor text for click-to-insert-ref.
+
+        When the text starts with '=', close the inline cell editor and
+        redirect to the formula bar so that range-picking works reliably.
+        """
         r = self.table.currentRow()
         c = self.table.currentColumn()
         if r >= 0 and c >= 0 and text.startswith("="):
-            self._inline_formula_cell = (r, c)
-            self._inline_formula_text = text
+            # Close the inline editor without committing …
             editor = self._find_inline_editor()
-            self._inline_formula_pos = (
-                editor.cursorPosition() if editor else len(text))
+            if editor is not None:
+                self.table.closeEditor(
+                    editor, QAbstractItemDelegate.RevertModelData)
+            # … and redirect to the formula bar.
+            self._inline_formula_cell = None
+            self._inline_formula_text = None
+            self._inline_formula_pos = None
+            self._formula_entry_cell = (r, c)
+            self._formula_bar.blockSignals(True)
+            self._formula_bar.setText(text)
+            self._formula_bar.blockSignals(False)
+            self._formula_bar.setFocus()
+            self._formula_bar.setCursorPosition(len(text))
+            wb = self._workbook()
+            if wb is not None:
+                wb.set_active_formula(self)
             self._update_ref_highlights(text)
         else:
             self._inline_formula_cell = None
