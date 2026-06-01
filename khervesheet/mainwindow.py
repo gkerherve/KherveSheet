@@ -381,6 +381,13 @@ class MainWindow(QMainWindow):
         data_menu.addAction("Sort A → Z", self._sort_asc)
         data_menu.addAction("Sort Z → A", self._sort_desc)
 
+        # ── Science ──────────────────────────────────────────────────
+        science_menu = mb.addMenu("&Science")
+        from .science import TOOLS as _SCIENCE_TOOLS
+        for label, cls in _SCIENCE_TOOLS:
+            science_menu.addAction(
+                label, lambda _=False, c=cls: self._open_science_tool(c))
+
         # ── Tools ────────────────────────────────────────────────────
         tools_menu = mb.addMenu("&Tools")
         tools_menu.addAction("Spelling\u2026\tF7", self._spell_check)
@@ -3751,6 +3758,15 @@ class MainWindow(QMainWindow):
         dlg.setAttribute(Qt.WA_DeleteOnClose)
         dlg.show()
 
+    def _open_science_tool(self, dialog_cls):
+        """Open a Science data-analysis tool dialog (non-modal)."""
+        s = self._active_sheet()
+        if s is None:
+            return
+        dlg = dialog_cls(s, self)
+        dlg.setAttribute(Qt.WA_DeleteOnClose)
+        dlg.show()
+
     # ── View modes ───────────────────────────────────────────────────
     def _set_view_mode(self, mode: str):
         """Switch between Normal and Page Layout view."""
@@ -3852,19 +3868,12 @@ class MainWindow(QMainWindow):
         preview.exec_()
 
     def _render_sheet_to_printer(self, printer, sheet):
-        """Render sheet grid (and embedded charts) to the given QPrinter.
-
-        The table widget measures are in screen pixels while
-        QPrinter.HighResolution reports its page rect in device dots
-        (e.g. 1200 DPI).  We must convert to a common coordinate
-        system before computing the fit-to-page scale.
-        """
-        from PyQt5.QtGui import QPainter as _P
-        from PyQt5.QtCore import QRect, QRectF, QPoint
-        painter = _P(printer)
+        """Render the used cell region to the printer, scaled to fit."""
+        from PyQt5.QtGui import QPainter as _P, QPixmap
+        from PyQt5.QtCore import QRect, QPoint
         table = sheet.table
 
-        # ── Determine the used cell region ───────────────────────
+        # ── Find the used cell region ────────────────────────────
         max_row = max_col = 0
         for r in range(table.rowCount()):
             for c in range(table.columnCount()):
@@ -3872,46 +3881,31 @@ class MainWindow(QMainWindow):
                 if it and it.text():
                     max_row = max(max_row, r)
                     max_col = max(max_col, c)
-        # Include at least one row/col beyond the data for padding.
         max_row = min(max_row + 1, table.rowCount() - 1)
         max_col = min(max_col + 1, table.columnCount() - 1)
 
-        # Widen the region to include any embedded charts that extend
-        # beyond the data range.
-        charts = getattr(sheet, '_charts', [])
-        for ch in charts:
-            w = getattr(ch, '_widget', ch)
-            if hasattr(w, 'geometry'):
-                g = w.geometry()
-                max_col = max(max_col, table.columnAt(g.right()))
-                max_row = max(max_row, table.rowAt(g.bottom()))
-
-        # Source rectangle in screen pixels.
         src_w = sum(table.columnWidth(c) for c in range(max_col + 1))
         src_h = sum(table.rowHeight(r) for r in range(max_row + 1))
-        src_rect = QRect(0, 0, max(src_w, 1), max(src_h, 1))
+        if src_w <= 0 or src_h <= 0:
+            return
 
-        # ── Page rectangle in screen-pixel-equivalent units ──────
-        page_rect = printer.pageRect()       # device dots
-        dpi_x = max(printer.logicalDpiX(), 1)
-        dpi_y = max(printer.logicalDpiY(), 1)
-        screen_dpi = 96.0
-        page_w_px = page_rect.width() * screen_dpi / dpi_x
-        page_h_px = page_rect.height() * screen_dpi / dpi_y
+        # ── Render table to an off-screen pixmap ─────────────────
+        pixmap = QPixmap(src_w, src_h)
+        pixmap.fill(Qt.white)
+        pix_painter = _P(pixmap)
+        table.render(pix_painter, QPoint(0, 0),
+                     QRect(0, 0, src_w, src_h))
+        pix_painter.end()
 
-        # Scale to fit the used region onto the page (allow scaling up).
-        sx = page_w_px / max(src_w, 1)
-        sy = page_h_px / max(src_h, 1)
+        # ── Draw the pixmap onto the printer page, scaled to fit ─
+        painter = _P(printer)
+        page = printer.pageRect()
+        sx = page.width() / src_w
+        sy = page.height() / src_h
         scale = min(sx, sy)
-
-        # Convert scale back to printer device coordinates.
-        device_scale_x = scale * dpi_x / screen_dpi
-        device_scale_y = scale * dpi_y / screen_dpi
-        painter.scale(device_scale_x, device_scale_y)
-
-        # Render only the used region of the table.
-        table.render(painter, QPoint(0, 0), table.rect().intersected(
-            QRect(0, 0, src_w, src_h)))
+        dest_w = int(src_w * scale)
+        dest_h = int(src_h * scale)
+        painter.drawPixmap(QRect(0, 0, dest_w, dest_h), pixmap)
         painter.end()
 
     # ── Data operations ──────────────────────────────────────────────
