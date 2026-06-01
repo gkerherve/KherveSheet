@@ -2443,7 +2443,7 @@ class SheetWidget(QWidget):
                 w = np.ones(n)
                 for _ in range(10):
                     W = sparse.spdiags(w, 0, n, n)
-                    Z = W + float(lam) * D.dot(D.T)
+                    Z = W + float(lam) * D.T.dot(D)
                     z = spsolve(Z, w * ya)
                     w = float(p) * (ya > z) + (1 - float(p)) * (ya <= z)
                 return z.tolist()
