@@ -7,3 +7,4 @@ pygit2>=1.12
 pyspellchecker>=0.7
 scipy>=1.10
 lmfit>=1.2
+qtawesome>=1.2
