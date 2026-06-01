@@ -489,6 +489,9 @@ class _BaseLayoutTab(QWidget):
         export.clicked.connect(self._export)
         v.addWidget(export, alignment=Qt.AlignHCenter)
 
+        # Show every panel by default (pinned in the two columns).
+        self._pin_btn.setChecked(True)
+
         return strip
 
     def _make_card(self, title, panel):
@@ -570,6 +573,11 @@ class _BaseLayoutTab(QWidget):
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
+        if getattr(self, "_show_all", False):
+            self._position_pinned_cards()
+
+    def showEvent(self, ev):
+        super().showEvent(ev)
         if getattr(self, "_show_all", False):
             self._position_pinned_cards()
 

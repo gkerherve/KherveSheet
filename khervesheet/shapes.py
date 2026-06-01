@@ -218,7 +218,11 @@ class EmbeddedShape(QWidget):
         self._rot_start_value = 0.0
 
         self.setMinimumSize(24, 16)
-        self.resize(160, 90)
+        # Lines/arrows behave like slim line objects, not boxed shapes.
+        if _is_closed(shape_type):
+            self.resize(160, 90)
+        else:
+            self.resize(220, 24)
         self.show()
 
     # ── Style snapshot (for undo + persistence) ───────────────────────
@@ -309,15 +313,24 @@ class EmbeddedShape(QWidget):
             self._draw_text(p, inner.adjusted(4, 4, -4, -4), closed)
         p.restore()
 
-        # Selection border + handles (axis-aligned, never rotated).
+        # Selection (axis-aligned, never rotated).  Closed shapes show a
+        # dashed bounding box with eight resize handles; lines/arrows are
+        # line objects, so they show only their two endpoint handles — no
+        # rectangle around them.
         if self._selected:
-            sp = QPen(QColor("#3078c6"), 1, Qt.DashLine)
-            p.setPen(sp)
-            p.setBrush(Qt.NoBrush)
-            p.drawRect(self.rect().adjusted(0, 0, -1, -1))
             p.setPen(Qt.NoPen)
             p.setBrush(QColor("#3078c6"))
-            for hx, hy in self._handle_positions():
+            if closed:
+                sp = QPen(QColor("#3078c6"), 1, Qt.DashLine)
+                p.setPen(sp)
+                p.setBrush(Qt.NoBrush)
+                p.drawRect(self.rect().adjusted(0, 0, -1, -1))
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor("#3078c6"))
+                handles = self._handle_positions()
+            else:
+                handles = self._endpoint_positions()
+            for hx, hy in handles:
                 p.drawRect(hx - _HANDLE // 2, hy - _HANDLE // 2,
                            _HANDLE, _HANDLE)
             # Rotation handle: green circle just inside the top-centre.
@@ -326,6 +339,13 @@ class EmbeddedShape(QWidget):
             p.setBrush(QColor("#2d8a4e"))
             p.drawEllipse(QPoint(rx, ry), _ROT_R, _ROT_R)
         p.end()
+
+    def _endpoint_positions(self):
+        """The two ends of a line/arrow (left-centre and right-centre of
+        the drawn content), used as its only selection handles."""
+        r = self.rect()
+        cy = r.height() // 2
+        return [(_PAD, cy), (r.width() - _PAD, cy)]
 
     def _rot_handle_pos(self):
         return self.rect().width() // 2, _PAD + _ROT_R
