@@ -243,6 +243,12 @@ class FormatCellsCmd(QUndoCommand):
         sheet.table.viewport().update()
 
 
+# Cross-sheet cell clipboard: holds the per-cell metadata (formatting,
+# checkbox/dropdown/note/sparkline state) of the last in-app copy, keyed
+# to the clipboard text so an external copy never inherits stale meta.
+_CELL_CLIPBOARD = None
+
+
 def _snapshot_format(cf):
     """Deep-copy a CellFormat for undo snapshots."""
     from .cellformat import CellFormat, BorderSpec
@@ -2500,9 +2506,13 @@ class SheetWidget(QWidget):
                 if cell_meta:
                     meta[(dr, dc)] = cell_meta
             rows.append("\t".join(row_data))
-        QApplication.clipboard().setText("\n".join(rows))
+        clip_text = "\n".join(rows)
+        QApplication.clipboard().setText(clip_text)
         self._copied_meta = meta
         self._copy_origin = (s.topRow(), s.leftColumn())
+        # Share the metadata across sheets, tied to this clipboard text.
+        global _CELL_CLIPBOARD
+        _CELL_CLIPBOARD = {"text": clip_text, "meta": meta}
         # Start marching ants around copied range.
         self._start_marching_ants(s)
 
@@ -2624,6 +2634,12 @@ class SheetWidget(QWidget):
         col = self.table.currentColumn()
         if row < 0 or col < 0:
             return
+        # Use the shared in-app metadata only if it matches the clipboard
+        # text (so it follows a copy across sheets, but an external paste
+        # doesn't pick up stale formatting).
+        meta = {}
+        if _CELL_CLIPBOARD and _CELL_CLIPBOARD.get("text") == text:
+            meta = _CELL_CLIPBOARD.get("meta") or {}
         changes = []
         old_fmts = {}
         new_fmts = {}
@@ -2669,8 +2685,8 @@ class SheetWidget(QWidget):
                         if old != val:
                             changes.append((r, c, old, val))
                     # Restore metadata from copy
-                    if self._copied_meta:
-                        dm = self._copied_meta.get((dr, dc))
+                    if meta:
+                        dm = meta.get((dr, dc))
                         if dm:
                             if "checkbox" in dm:
                                 it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
