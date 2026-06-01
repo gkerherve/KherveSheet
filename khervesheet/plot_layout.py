@@ -401,6 +401,7 @@ class _BaseLayoutTab(QWidget):
         super().__init__()
         self._workbook = workbook
         self._items = []          # [{title, dict, visible}]
+        self._pending_plots = []  # deferred visibility from apply_settings
         self._suspend = False     # block re-render while repopulating
         self._shapes = []         # EmbeddedShapes drawn over the panel
         self._undo_stack = None   # set by MainWindow._wire_undo_to_sheets
@@ -767,17 +768,10 @@ class _BaseLayoutTab(QWidget):
         finally:
             self._suspend = False
         self._restore_shapes(st.get("shapes", []))
-        # Restore plot visibility and order.
-        saved_plots = st.get("plots", [])
-        if saved_plots:
-            lookup = {p["title"]: p["visible"] for p in saved_plots}
-            order = {p["title"]: i for i, p in enumerate(saved_plots)}
-            for it in self._items:
-                if it["title"] in lookup:
-                    it["visible"] = lookup[it["title"]]
-            self._items.sort(
-                key=lambda it: order.get(it["title"], len(order)))
-            self._repopulate_list()
+        # Defer plot visibility/order — _items is empty until the first
+        # rebuild_from_workbook() call (triggered when the tab is shown).
+        self._pending_plots = st.get("plots", [])
+        self._apply_pending_plots()
         self._render()
 
     def _restore_shapes(self, shape_dicts):
@@ -794,6 +788,21 @@ class _BaseLayoutTab(QWidget):
                 continue
             shp.show()
             self._shapes.append(shp)
+
+    def _apply_pending_plots(self):
+        """Apply deferred plot visibility/order if items exist."""
+        pending = getattr(self, "_pending_plots", [])
+        if not pending or not self._items:
+            return
+        lookup = {p["title"]: p["visible"] for p in pending}
+        order = {p["title"]: i for i, p in enumerate(pending)}
+        for it in self._items:
+            if it["title"] in lookup:
+                it["visible"] = lookup[it["title"]]
+        self._items.sort(
+            key=lambda it: order.get(it["title"], len(order)))
+        self._repopulate_list()
+        self._pending_plots = []
 
     # ── Plot list model ─────────────────────────────────────────────
     def rebuild_from_workbook(self):
@@ -819,6 +828,7 @@ class _BaseLayoutTab(QWidget):
                                   "visible": True})
                 consumed[t] += 1
         self._items = new_items
+        self._apply_pending_plots()
         self._repopulate_list()
         self._render()
 
