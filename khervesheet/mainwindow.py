@@ -133,7 +133,13 @@ class MainWindow(QMainWindow):
         exp.addAction("Excel…", self._export_excel)
 
         file_menu.addSeparator()
-        file_menu.addAction("Print Preview…", self._print_sheet, "Ctrl+P")
+        file_menu.addAction("&Print…", self._print_direct, "Ctrl+P")
+        file_menu.addAction("Print Pre&view…", self._print_preview)
+        file_menu.addAction("Page Set&up…", self._page_setup)
+        file_menu.addAction("Print &Selection…", self._print_selection)
+        file_menu.addAction("Set Print &Area", self._set_print_area)
+        file_menu.addAction("Clear Print A&rea", self._clear_print_area)
+        exp.addAction("PDF…", self._export_pdf)
 
         file_menu.addSeparator()
         self._recent_menu = file_menu.addMenu("Recent Files")
@@ -3863,106 +3869,77 @@ class MainWindow(QMainWindow):
         self._status_msg(f"Page size: {name} ({w:.0f} × {h:.0f} mm)",
                          2000)
 
-    def _print_sheet(self):
-        """Print the active sheet via QPrintPreviewDialog."""
+    def _print_kwargs(self):
+        """Gather current page-setup state for the printing module."""
+        ps = getattr(self, '_page_setup_state', {})
+        wb = self._wb
+        name = wb.tabText(wb.currentIndex()) if wb else "Sheet1"
+        return {
+            "orientation": ps.get("orientation", "portrait"),
+            "paper_key": ps.get("paper_key", "A4"),
+            "margins_mm": ps.get("margins"),
+            "scale_percent": ps.get("scale_percent", 100),
+            "fit_to_page": ps.get("fit_to_page", False),
+            "sheet_name": name,
+        }
+
+    def _print_direct(self):
         s = self._active_sheet()
         if not s:
             return
-        try:
-            from PyQt5.QtPrintSupport import (QPrinter,
-                                              QPrintPreviewDialog)
-        except ImportError:
-            QMessageBox.warning(
-                self, "Print",
-                "Printing requires PyQt5 print support module.")
+        from khervesheet.printing import print_direct
+        print_direct(self, s, **self._print_kwargs())
+
+    def _print_preview(self):
+        s = self._active_sheet()
+        if not s:
             return
-        printer = QPrinter(QPrinter.HighResolution)
-        orient = getattr(self, '_page_orientation', 'portrait')
-        if orient == 'landscape':
-            printer.setOrientation(QPrinter.Landscape)
-        else:
-            printer.setOrientation(QPrinter.Portrait)
-        preview = QPrintPreviewDialog(printer, self)
-        preview.paintRequested.connect(
-            lambda p: self._render_sheet_to_printer(p, s))
-        preview.exec_()
+        from khervesheet.printing import print_preview
+        print_preview(self, s, **self._print_kwargs())
 
-    def _render_sheet_to_printer(self, printer, sheet):
-        """Paint cells manually onto the printer, scaled to fit page."""
-        from PyQt5.QtGui import QPainter, QFont, QColor, QPen
-        from PyQt5.QtCore import QRectF
-        table = sheet.table
+    def _page_setup(self):
+        from khervesheet.printing import page_setup
+        ps = getattr(self, '_page_setup_state', {})
+        result = page_setup(
+            self,
+            margins=ps.get("margins"),
+            orientation=ps.get("orientation", "portrait"),
+            paper_key=ps.get("paper_key", "A4"),
+            scale_percent=ps.get("scale_percent", 100),
+            fit_to_page=ps.get("fit_to_page", False),
+        )
+        if result:
+            self._page_setup_state = result
 
-        # ── Find the used cell region ────────────────────────────
-        max_row = max_col = 0
-        for r in range(table.rowCount()):
-            for c in range(table.columnCount()):
-                it = table.item(r, c)
-                if it and it.text():
-                    max_row = max(max_row, r)
-                    max_col = max(max_col, c)
-        max_row = min(max_row + 1, table.rowCount() - 1)
-        max_col = min(max_col + 1, table.columnCount() - 1)
-
-        col_ws = [table.columnWidth(c) for c in range(max_col + 1)]
-        row_hs = [table.rowHeight(r) for r in range(max_row + 1)]
-        src_w = sum(col_ws)
-        src_h = sum(row_hs)
-        if src_w <= 0 or src_h <= 0:
+    def _print_selection(self):
+        s = self._active_sheet()
+        if not s:
             return
+        from khervesheet.printing import print_selection
+        print_selection(self, s, **self._print_kwargs())
 
-        # ── Compute scale to fit page ────────────────────────────
-        page = printer.pageRect()
-        dpi_x = max(printer.logicalDpiX(), 1)
-        dpi_y = max(printer.logicalDpiY(), 1)
-        screen_dpi = 96.0
-        page_w = page.width() * screen_dpi / dpi_x
-        page_h = page.height() * screen_dpi / dpi_y
-        scale = min(page_w / src_w, page_h / src_h)
-        dev_sx = scale * dpi_x / screen_dpi
-        dev_sy = scale * dpi_y / screen_dpi
+    def _set_print_area(self):
+        s = self._active_sheet()
+        if not s:
+            return
+        from khervesheet.printing import set_print_area
+        set_print_area(s, s._undo_stack)
 
-        painter = QPainter(printer)
-        painter.scale(dev_sx, dev_sy)
-        painter.setRenderHint(QPainter.TextAntialiasing)
+    def _clear_print_area(self):
+        s = self._active_sheet()
+        if not s:
+            return
+        from khervesheet.printing import clear_print_area
+        clear_print_area(s, s._undo_stack)
 
-        grid_pen = QPen(QColor(180, 180, 180), 0.5)
-        default_font = QFont("Segoe UI", 9)
-
-        y = 0.0
-        for r in range(max_row + 1):
-            x = 0.0
-            rh = row_hs[r]
-            for c in range(max_col + 1):
-                cw = col_ws[c]
-                cell_rect = QRectF(x, y, cw, rh)
-
-                # Fill colour.
-                fmt = sheet._cell_formats.get((r, c))
-                if fmt and fmt.bg_color:
-                    painter.fillRect(cell_rect, QColor(fmt.bg_color))
-
-                # Grid lines.
-                painter.setPen(grid_pen)
-                painter.drawRect(cell_rect)
-
-                # Cell text.
-                it = table.item(r, c)
-                if it and it.text():
-                    font = it.font() if it.font().family() else default_font
-                    painter.setFont(font)
-                    fg = it.foreground().color() if it.foreground().style() else QColor(0, 0, 0)
-                    painter.setPen(fg)
-                    align = (it.textAlignment()
-                             if it.textAlignment()
-                             else int(Qt.AlignLeft | Qt.AlignVCenter))
-                    text_rect = cell_rect.adjusted(3, 1, -3, -1)
-                    painter.drawText(text_rect, align, it.text())
-
-                x += cw
-            y += rh
-
-        painter.end()
+    def _export_pdf(self):
+        s = self._active_sheet()
+        if not s:
+            return
+        from khervesheet.printing import export_pdf
+        path = export_pdf(self, s, **self._print_kwargs())
+        if path:
+            self._status_msg(f"Exported to {path}", 5000)
 
     # ── Data operations ──────────────────────────────────────────────
     def _set_designation(self, desig: str):
