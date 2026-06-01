@@ -443,6 +443,12 @@ class MainWindow(QMainWindow):
         self._solver_btn.clicked.connect(self._open_solver)
         std.addWidget(self._solver_btn)
 
+        self._fitting_btn = QToolButton()
+        self._fitting_btn.setIcon(icons.fitting_icon(28))
+        self._fitting_btn.setToolTip("Curve Fitting")
+        self._fitting_btn.clicked.connect(self._open_fitting)
+        std.addWidget(self._fitting_btn)
+
         fx_btn = QToolButton()
         fx_btn.setText("f(x)")
         fx_btn.setStyleSheet(
@@ -450,12 +456,6 @@ class MainWindow(QMainWindow):
         fx_btn.setToolTip("Insert Function (Shift+F3)")
         fx_btn.clicked.connect(self._open_insert_function_dialog)
         std.addWidget(fx_btn)
-
-        self._fitting_btn = QToolButton()
-        self._fitting_btn.setIcon(icons.fitting_icon(28))
-        self._fitting_btn.setToolTip("Curve Fitting")
-        self._fitting_btn.clicked.connect(self._open_fitting)
-        std.addWidget(self._fitting_btn)
 
         # Font toolbar
         fmt = self.addToolBar("Font")
