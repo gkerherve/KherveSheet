@@ -1836,9 +1836,30 @@ class SheetWidget(QWidget):
             if code is False:
                 return "#ERROR"
             result = eval(code, self._build_eval_ns())  # noqa: S307
+            # Array spill: if the formula returns a list, write the
+            # remaining elements into the cells below and return the
+            # first element for the formula cell itself.
+            if isinstance(result, list) and len(result) > 1:
+                self._spill_array(result, row, col)
+                return _format_number(result[0], decimals)
+            if isinstance(result, list) and len(result) == 1:
+                return _format_number(result[0], decimals)
             return _format_number(result, decimals)
         except Exception:
             return "#ERROR"
+
+    def _spill_array(self, values, row, col):
+        """Write spill values into the cells below (row+1 …) silently."""
+        for i, v in enumerate(values[1:], start=1):
+            r = row + i
+            if r >= self.table.rowCount():
+                self.table.setRowCount(r + 1)
+            item = self.table.item(r, col)
+            if item is None:
+                from PyQt5.QtWidgets import QTableWidgetItem
+                item = QTableWidgetItem()
+                self.table.setItem(r, col, item)
+            item.setData(Qt.EditRole, _format_number(v))
 
     def _build_eval_ns(self):
         """Build the evaluation namespace once and cache it on self."""
@@ -2110,6 +2131,244 @@ class SheetWidget(QWidget):
             def _RADIANS(d):
                 return math.radians(float(d))
 
+            # ── Data Analysis functions ──────────────────────────────
+            def _DERIV(y, x):
+                ya, xa = np.array(_nums([y]), float), np.array(_nums([x]), float)
+                return np.gradient(ya, xa).tolist()
+
+            def _DERIV2(y, x):
+                ya, xa = np.array(_nums([y]), float), np.array(_nums([x]), float)
+                return np.gradient(np.gradient(ya, xa), xa).tolist()
+
+            def _DERIV_SMOOTH(y, x, window=7, poly=3):
+                from scipy.signal import savgol_filter
+                ya = np.array(_nums([y]), float)
+                xa = np.array(_nums([x]), float)
+                dx = np.gradient(xa)
+                dy = savgol_filter(ya, int(window), int(poly), deriv=1)
+                return (dy / dx).tolist()
+
+            def _TRAPZ(y, x):
+                return float(np.trapz(
+                    np.array(_nums([y]), float),
+                    np.array(_nums([x]), float)))
+
+            def _CUMTRAPZ(y, x):
+                from scipy.integrate import cumulative_trapezoid
+                ya, xa = np.array(_nums([y]), float), np.array(_nums([x]), float)
+                ct = cumulative_trapezoid(ya, xa, initial=0)
+                return ct.tolist()
+
+            def _SIMPS(y, x):
+                from scipy.integrate import simpson
+                return float(simpson(
+                    np.array(_nums([y]), float),
+                    x=np.array(_nums([x]), float)))
+
+            def _SAVGOL(y, window=7, poly=3):
+                from scipy.signal import savgol_filter
+                return savgol_filter(
+                    np.array(_nums([y]), float),
+                    int(window), int(poly)).tolist()
+
+            def _MOVAVG(y, window=5):
+                ya = np.array(_nums([y]), float)
+                w = int(window)
+                kernel = np.ones(w) / w
+                smoothed = np.convolve(ya, kernel, mode='same')
+                return smoothed.tolist()
+
+            def _EWMA(y, alpha=0.3):
+                ya = np.array(_nums([y]), float)
+                a = float(alpha)
+                out = np.empty_like(ya)
+                out[0] = ya[0]
+                for i in range(1, len(ya)):
+                    out[i] = a * ya[i] + (1 - a) * out[i - 1]
+                return out.tolist()
+
+            def _LOWPASS(y, x, cutoff):
+                from scipy.signal import butter, sosfiltfilt
+                xa = np.array(_nums([x]), float)
+                fs = 1.0 / np.mean(np.abs(np.diff(xa)))
+                sos = butter(4, float(cutoff), 'low', fs=fs, output='sos')
+                return sosfiltfilt(
+                    sos, np.array(_nums([y]), float)).tolist()
+
+            def _HIGHPASS(y, x, cutoff):
+                from scipy.signal import butter, sosfiltfilt
+                xa = np.array(_nums([x]), float)
+                fs = 1.0 / np.mean(np.abs(np.diff(xa)))
+                sos = butter(4, float(cutoff), 'high', fs=fs, output='sos')
+                return sosfiltfilt(
+                    sos, np.array(_nums([y]), float)).tolist()
+
+            def _BANDPASS(y, x, lo, hi):
+                from scipy.signal import butter, sosfiltfilt
+                xa = np.array(_nums([x]), float)
+                fs = 1.0 / np.mean(np.abs(np.diff(xa)))
+                sos = butter(4, [float(lo), float(hi)], 'band',
+                             fs=fs, output='sos')
+                return sosfiltfilt(
+                    sos, np.array(_nums([y]), float)).tolist()
+
+            def _MEDIAN_FILTER(y, kernel=5):
+                from scipy.signal import medfilt
+                return medfilt(
+                    np.array(_nums([y]), float),
+                    int(kernel)).tolist()
+
+            def _NORM_MAX(y):
+                ya = np.array(_nums([y]), float)
+                return (ya / np.max(np.abs(ya))).tolist()
+
+            def _NORM_AREA(y, x):
+                ya = np.array(_nums([y]), float)
+                xa = np.array(_nums([x]), float)
+                return (ya / np.trapz(ya, xa)).tolist()
+
+            def _NORM_MINMAX(y):
+                ya = np.array(_nums([y]), float)
+                lo, hi = ya.min(), ya.max()
+                return ((ya - lo) / (hi - lo) if hi != lo
+                        else np.zeros_like(ya)).tolist()
+
+            def _NORM_ZSCORE(y):
+                ya = np.array(_nums([y]), float)
+                m, s = ya.mean(), ya.std()
+                return ((ya - m) / s if s != 0
+                        else np.zeros_like(ya)).tolist()
+
+            def _NORM_PEAK(y, x, x_ref):
+                ya = np.array(_nums([y]), float)
+                xa = np.array(_nums([x]), float)
+                idx = np.argmin(np.abs(xa - float(x_ref)))
+                ref = ya[idx] if ya[idx] != 0 else 1.0
+                return (ya / ref).tolist()
+
+            def _NORM_RANGE(y, new_min, new_max):
+                ya = np.array(_nums([y]), float)
+                lo, hi = ya.min(), ya.max()
+                if hi == lo:
+                    return np.full_like(ya, float(new_min)).tolist()
+                scaled = (ya - lo) / (hi - lo)
+                return (scaled * (float(new_max) - float(new_min))
+                        + float(new_min)).tolist()
+
+            def _FFT_MAG(y):
+                ya = np.array(_nums([y]), float)
+                ft = np.fft.rfft(ya)
+                return np.abs(ft).tolist()
+
+            def _FFT_PHASE(y):
+                ya = np.array(_nums([y]), float)
+                return np.angle(np.fft.rfft(ya)).tolist()
+
+            def _FFT_FREQ(y, x):
+                ya = np.array(_nums([y]), float)
+                xa = np.array(_nums([x]), float)
+                dt = np.mean(np.abs(np.diff(xa)))
+                return np.fft.rfftfreq(len(ya), d=dt).tolist()
+
+            def _FFT_REAL(y):
+                return np.fft.rfft(
+                    np.array(_nums([y]), float)).real.tolist()
+
+            def _FFT_IMAG(y):
+                return np.fft.rfft(
+                    np.array(_nums([y]), float)).imag.tolist()
+
+            def _IFFT(real, imag):
+                r = np.array(_nums([real]), float)
+                i = np.array(_nums([imag]), float)
+                return np.fft.irfft(r + 1j * i).tolist()
+
+            def _FFT_POWER(y):
+                ya = np.array(_nums([y]), float)
+                ft = np.fft.rfft(ya)
+                return (np.abs(ft) ** 2 / len(ya)).tolist()
+
+            def _INTERP_LINEAR(y, x, new_x):
+                return np.interp(
+                    np.array(_nums([new_x]), float),
+                    np.array(_nums([x]), float),
+                    np.array(_nums([y]), float)).tolist()
+
+            def _INTERP_SPLINE(y, x, new_x):
+                from scipy.interpolate import CubicSpline
+                cs = CubicSpline(
+                    np.array(_nums([x]), float),
+                    np.array(_nums([y]), float))
+                return cs(np.array(_nums([new_x]), float)).tolist()
+
+            def _INTERP_AKIMA(y, x, new_x):
+                from scipy.interpolate import Akima1DInterpolator
+                ak = Akima1DInterpolator(
+                    np.array(_nums([x]), float),
+                    np.array(_nums([y]), float))
+                return ak(np.array(_nums([new_x]), float)).tolist()
+
+            def _RESAMPLE(y, x, n):
+                xa = np.array(_nums([x]), float)
+                ya = np.array(_nums([y]), float)
+                new_x = np.linspace(xa.min(), xa.max(), int(n))
+                return np.interp(new_x, xa, ya).tolist()
+
+            def _FIND_PEAKS(y, prominence=None, distance=None):
+                from scipy.signal import find_peaks as _fp
+                ya = np.array(_nums([y]), float)
+                kw = {}
+                if prominence is not None:
+                    kw["prominence"] = float(prominence)
+                if distance is not None:
+                    kw["distance"] = int(distance)
+                idx, _ = _fp(ya, **kw)
+                return (idx + 1).tolist()  # 1-based
+
+            def _FIND_PEAKS_X(y, x, prominence=None, distance=None):
+                from scipy.signal import find_peaks as _fp
+                ya = np.array(_nums([y]), float)
+                xa = np.array(_nums([x]), float)
+                kw = {}
+                if prominence is not None:
+                    kw["prominence"] = float(prominence)
+                if distance is not None:
+                    kw["distance"] = int(distance)
+                idx, _ = _fp(ya, **kw)
+                return xa[idx].tolist()
+
+            def _FIND_PEAKS_Y(y, prominence=None, distance=None):
+                from scipy.signal import find_peaks as _fp
+                ya = np.array(_nums([y]), float)
+                kw = {}
+                if prominence is not None:
+                    kw["prominence"] = float(prominence)
+                if distance is not None:
+                    kw["distance"] = int(distance)
+                idx, _ = _fp(ya, **kw)
+                return ya[idx].tolist()
+
+            def _BASELINE_POLY(y, x, degree=3):
+                ya = np.array(_nums([y]), float)
+                xa = np.array(_nums([x]), float)
+                coeffs = np.polyfit(xa, ya, int(degree))
+                return np.polyval(coeffs, xa).tolist()
+
+            def _BASELINE_ALS(y, lam=1e6, p=0.01):
+                from scipy import sparse
+                from scipy.sparse.linalg import spsolve
+                ya = np.array(_nums([y]), float)
+                n = len(ya)
+                D = sparse.diags([1, -2, 1], [0, -1, -2],
+                                 shape=(n, n - 2)).T
+                w = np.ones(n)
+                for _ in range(10):
+                    W = sparse.spdiags(w, 0, n, n)
+                    Z = W + float(lam) * D.dot(D.T)
+                    z = spsolve(Z, w * ya)
+                    w = float(p) * (ya > z) + (1 - float(p)) * (ya <= z)
+                return z.tolist()
+
             ns = {"__builtins__": {}, "math": math, "np": np,
                   "abs": abs, "round": round, "int": int, "float": float,
                   "sum": _SUM, "min": _MINF, "max": _MAXF, "len": len,
@@ -2164,6 +2423,32 @@ class SheetWidget(QWidget):
                   "TRUNC": _TRUNC, "COMBIN": _COMBIN,
                   "DEGREES": _DEGREES, "RADIANS": _RADIANS,
                   "LN": math.log, "PRODUCT": _PRODUCT,
+                  # Data Analysis (dots rewritten to underscores).
+                  "DERIV": _DERIV, "DERIV2": _DERIV2,
+                  "DERIV_SMOOTH": _DERIV_SMOOTH,
+                  "TRAPZ": _TRAPZ, "CUMTRAPZ": _CUMTRAPZ,
+                  "SIMPS": _SIMPS,
+                  "SAVGOL": _SAVGOL, "MOVAVG": _MOVAVG, "EWMA": _EWMA,
+                  "LOWPASS": _LOWPASS, "HIGHPASS": _HIGHPASS,
+                  "BANDPASS": _BANDPASS,
+                  "MEDIAN_FILTER": _MEDIAN_FILTER,
+                  "NORM_MAX": _NORM_MAX, "NORM_AREA": _NORM_AREA,
+                  "NORM_MINMAX": _NORM_MINMAX,
+                  "NORM_ZSCORE": _NORM_ZSCORE,
+                  "NORM_PEAK": _NORM_PEAK, "NORM_RANGE": _NORM_RANGE,
+                  "FFT_MAG": _FFT_MAG, "FFT_PHASE": _FFT_PHASE,
+                  "FFT_FREQ": _FFT_FREQ, "FFT_REAL": _FFT_REAL,
+                  "FFT_IMAG": _FFT_IMAG, "IFFT": _IFFT,
+                  "FFT_POWER": _FFT_POWER,
+                  "INTERP_LINEAR": _INTERP_LINEAR,
+                  "INTERP_SPLINE": _INTERP_SPLINE,
+                  "INTERP_AKIMA": _INTERP_AKIMA,
+                  "RESAMPLE": _RESAMPLE,
+                  "FIND_PEAKS": _FIND_PEAKS,
+                  "FIND_PEAKS_X": _FIND_PEAKS_X,
+                  "FIND_PEAKS_Y": _FIND_PEAKS_Y,
+                  "BASELINE_POLY": _BASELINE_POLY,
+                  "BASELINE_ALS": _BASELINE_ALS,
                   # Compiled-formula runtime helpers (read live values).
                   "_C": self._cell_val,
                   "_AGG": self._agg_range,
@@ -2194,7 +2479,19 @@ class SheetWidget(QWidget):
         "false", "mod", "power", "quotient", "sign", "even", "odd",
         "fact", "gcd", "lcm", "rand", "randbetween", "rounddown",
         "roundup", "trunc", "combin", "degrees", "radians", "ln",
-        "product", "counta", "sumsq"})
+        "product", "counta", "sumsq",
+        # Data Analysis (underscore forms after dot rewrite).
+        "deriv", "deriv2", "deriv_smooth",
+        "trapz", "cumtrapz", "simps",
+        "savgol", "movavg", "ewma",
+        "lowpass", "highpass", "bandpass", "median_filter",
+        "norm_max", "norm_area", "norm_minmax", "norm_zscore",
+        "norm_peak", "norm_range",
+        "fft_mag", "fft_phase", "fft_freq", "fft_real", "fft_imag",
+        "ifft", "fft_power",
+        "interp_linear", "interp_spline", "interp_akima", "resample",
+        "find_peaks", "find_peaks_x", "find_peaks_y",
+        "baseline_poly", "baseline_als"})
 
     def _compile_formula(self, formula):
         """Parse a formula and compile it to a reusable code object.
@@ -2226,6 +2523,16 @@ class SheetWidget(QWidget):
             return token
 
         expr = _XREF_PATTERN.sub(_mask_xref, expr)
+
+        # Rewrite dotted function names (NORM.MINMAX, FFT.MAG, …) into
+        # underscore equivalents that are valid Python identifiers.
+        expr = re.sub(
+            r'\b([A-Za-z]+(?:\.[A-Za-z]+)+)\s*\(',
+            lambda m: m.group(1).replace(".", "_") + "("
+            if m.group(1).replace(".", "_").upper() in ns
+            or ns_lower.get(m.group(1).replace(".", "_").lower())
+            else m.group(0),
+            expr)
 
         def _normalise_func(m):
             word = m.group(1)
