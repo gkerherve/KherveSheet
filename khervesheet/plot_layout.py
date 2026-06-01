@@ -32,7 +32,7 @@ from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor, QPen
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QFrame, QLabel,
     QListWidget, QListWidgetItem, QPushButton, QSpinBox, QDoubleSpinBox,
-    QComboBox, QScrollArea, QFileDialog, QToolButton, QStackedWidget,
+    QComboBox, QScrollArea, QFileDialog, QToolButton,
 )
 
 
@@ -121,6 +121,18 @@ def _glyph_icon(kind, size=24):
         p.setPen(pen)
         p.drawLine(QPointF(s * 0.24, s * 0.28), QPointF(s * 0.76, s * 0.28))
         p.drawLine(QPointF(s * 0.50, s * 0.28), QPointF(s * 0.50, s * 0.74))
+    elif kind == "dashboard":        # outer frame + four corner tiles
+        fpen = QPen(c, max(1.0, pw * 0.7))
+        p.setPen(fpen)
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(QRectF(s * 0.12, s * 0.12, s * 0.76, s * 0.76))
+        p.setPen(Qt.NoPen)
+        p.setBrush(c)
+        side = s * 0.22
+        for fx in (0.18, 0.60):
+            for fy in (0.18, 0.60):
+                p.drawRoundedRect(
+                    QRectF(s * fx, s * fy, side, side), 1.5, 1.5)
 
     p.end()
     return QIcon(pm)
@@ -399,13 +411,23 @@ class _BaseLayoutTab(QWidget):
         row.addWidget(self._build_controls())
         row.addWidget(self._build_content(), stretch=1)
 
+    # Cards pinned one-per-corner in "show all" mode.
+    _CORNERS = {"plots": "tl", "arrange": "bl", "size": "tr", "margins": "br"}
+    _GROUP_KEYS = ("plots", "arrange", "size", "margins")
+    _CARD_W = 200             # panel width (px)
+    _STRIP_W = 56
+
     # ── Controls: a vertical icon strip with ribbon-style flyouts ─────
     def _build_controls(self):
         from . import icons
+        self._show_all = False
+        self._cards = {}        # key -> floating QFrame
+        self._buttons = {}      # key -> QToolButton
+
         strip = QFrame()
         strip.setObjectName("layoutToolStrip")
         strip.setFrameShape(QFrame.NoFrame)
-        strip.setFixedWidth(56)
+        strip.setFixedWidth(self._STRIP_W)
         strip.setStyleSheet(
             "#layoutToolStrip { background:#f3f3f3;"
             " border-right:1px solid #d0d0d0; }")
@@ -413,50 +435,48 @@ class _BaseLayoutTab(QWidget):
         v.setContentsMargins(6, 8, 6, 8)
         v.setSpacing(6)
 
-        # Floating panel anchored beside the strip; holds one group at a
-        # time.  An ordinary child widget (not a menu/popup), so the combo
-        # boxes and spin boxes inside it behave normally.
-        self._flyout = QFrame(self)
-        self._flyout.setObjectName("layoutFlyout")
-        self._flyout.setStyleSheet(
-            "#layoutFlyout { background:#ffffff;"
-            " border:1px solid #c0c0c0; border-radius:4px; }")
-        self._flyout.setFixedWidth(280)
-        fv = QVBoxLayout(self._flyout)
-        fv.setContentsMargins(10, 8, 10, 10)
-        fv.setSpacing(6)
-        self._flyout_title = QLabel()
-        self._flyout_title.setStyleSheet("font-weight:bold; color:#444;")
-        fv.addWidget(self._flyout_title)
-        self._flyout_stack = QStackedWidget()
-        fv.addWidget(self._flyout_stack)
-        self._flyout.hide()
-
-        self._tool_buttons = []
-        specs = [
-            (_glyph_icon("plots"), "Plots",
+        # One reusable card per group: a floating child widget (not a
+        # menu/popup) so the combo and spin boxes inside behave normally.
+        # Used both as a single anchored flyout and pinned in a corner.
+        group_specs = [
+            ("plots", _glyph_icon("plots"), "Plots",
              self._build_plots_panel()),
-            (_glyph_icon("grid"), "Arrangement",
+            ("arrange", _glyph_icon("grid"), "Arrangement",
              self._build_arrange_panel()),
-            (_glyph_icon("margins"), "Outer margins",
+            ("margins", _glyph_icon("margins"), "Outer margins",
              self._build_margins_panel()),
-            (_glyph_icon("size"), self._size_group_label,
+            ("size", _glyph_icon("size"), self._size_group_label,
              self._build_size_panel()),
-            (None, None, None),   # separator
-            (icons.shapes_button_icon(24), "Insert shape",
-             self._build_insert_panel()),
         ]
-        for icon, title, panel in specs:
-            if icon is None:
-                line = QFrame()
-                line.setFrameShape(QFrame.HLine)
-                line.setStyleSheet("color:#d0d0d0;")
-                v.addWidget(line)
-                continue
-            idx = self._flyout_stack.addWidget(panel)
-            btn = self._flyout_button(icon, title, idx)
+        for key, icon, title, panel in group_specs:
+            self._cards[key] = self._make_card(title, panel)
+            btn = self._flyout_button(icon, title, key)
+            self._buttons[key] = btn
             v.addWidget(btn, alignment=Qt.AlignHCenter)
-            self._tool_buttons.append(btn)
+
+        # "Show all" pin toggle — pins the four group cards in the corners.
+        self._pin_btn = QToolButton()
+        self._pin_btn.setIcon(_glyph_icon("dashboard"))
+        self._pin_btn.setIconSize(QSize(24, 24))
+        self._pin_btn.setFixedSize(44, 44)
+        self._pin_btn.setAutoRaise(True)
+        self._pin_btn.setCheckable(True)
+        self._pin_btn.setToolTip("Show all panels (pinned in the corners)")
+        self._pin_btn.toggled.connect(self._set_show_all)
+        v.addWidget(self._pin_btn, alignment=Qt.AlignHCenter)
+
+        line = QFrame()
+        line.setFrameShape(QFrame.HLine)
+        line.setStyleSheet("color:#d0d0d0;")
+        v.addWidget(line)
+
+        # Insert card (single flyout only; not part of the corner set).
+        self._cards["insert"] = self._make_card(
+            "Insert shape", self._build_insert_panel())
+        ins_btn = self._flyout_button(
+            icons.shapes_button_icon(24), "Insert shape", "insert")
+        self._buttons["insert"] = ins_btn
+        v.addWidget(ins_btn, alignment=Qt.AlignHCenter)
 
         v.addStretch(1)
 
@@ -471,7 +491,24 @@ class _BaseLayoutTab(QWidget):
 
         return strip
 
-    def _flyout_button(self, icon, title, page_idx):
+    def _make_card(self, title, panel):
+        card = QFrame(self)
+        card.setObjectName("layoutFlyout")
+        card.setStyleSheet(
+            "#layoutFlyout { background:#ffffff;"
+            " border:1px solid #c0c0c0; border-radius:4px; }")
+        card.setFixedWidth(self._CARD_W)
+        cv = QVBoxLayout(card)
+        cv.setContentsMargins(10, 8, 10, 10)
+        cv.setSpacing(6)
+        lbl = QLabel(title)
+        lbl.setStyleSheet("font-weight:bold; color:#444;")
+        cv.addWidget(lbl)
+        cv.addWidget(panel)
+        card.hide()
+        return card
+
+    def _flyout_button(self, icon, title, key):
         btn = QToolButton()
         btn.setIcon(icon)
         btn.setIconSize(QSize(24, 24))
@@ -480,30 +517,74 @@ class _BaseLayoutTab(QWidget):
         btn.setCheckable(True)
         btn.setToolTip(title)
         btn.clicked.connect(
-            lambda _=False, b=btn, i=page_idx, t=title:
-            self._toggle_flyout(b, i, t))
+            lambda _=False, b=btn, k=key: self._toggle_card(b, k))
         return btn
 
-    def _toggle_flyout(self, btn, page_idx, title):
+    def _toggle_card(self, btn, key):
+        # Leaving "show all" pinned mode if the user opens a single flyout.
+        if self._show_all and key in self._cards and key != "insert":
+            self._pin_btn.setChecked(False)
+        card = self._cards[key]
         if not btn.isChecked():
-            self._flyout.hide()
+            card.hide()
             return
-        for b in self._tool_buttons:
-            if b is not btn:
+        for k, b in self._buttons.items():
+            if b is not btn and b is not self._pin_btn:
                 b.setChecked(False)
-        self._flyout_title.setText(title)
-        self._flyout_stack.setCurrentIndex(page_idx)
-        self._flyout.adjustSize()
-        self._flyout.move(60, 8)
-        self._flyout.show()
-        self._flyout.raise_()
+        for k, c in self._cards.items():
+            if c is card:
+                continue
+            if self._show_all and k in self._GROUP_KEYS:
+                continue   # keep the pinned corner cards visible
+            c.hide()
+        card.adjustSize()
+        card.move(self._STRIP_W + 8, 8)
+        card.show()
+        card.raise_()
+
+    def _set_show_all(self, on):
+        self._show_all = on
+        for key in self._GROUP_KEYS:
+            self._buttons[key].setEnabled(not on)
+            if on:
+                self._buttons[key].setChecked(False)
+        if on:
+            # Drop any single flyout, then pin the four group cards.
+            self._cards["insert"].hide()
+            self._buttons["insert"].setChecked(False)
+            self._position_corner_cards()
+            for key in self._GROUP_KEYS:
+                self._cards[key].show()
+                self._cards[key].raise_()
+        else:
+            for key in self._GROUP_KEYS:
+                self._cards[key].hide()
+
+    def _position_corner_cards(self):
+        if not getattr(self, "_cards", None):
+            return
+        w, h = self.width(), self.height()
+        m = 8
+        left = self._STRIP_W + m
+        for key in self._GROUP_KEYS:
+            card = self._cards[key]
+            card.adjustSize()
+            corner = self._CORNERS[key]
+            x = left if corner in ("tl", "bl") else w - card.width() - m
+            y = m if corner in ("tl", "tr") else h - card.height() - m
+            card.move(x, max(m, y))
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        if getattr(self, "_show_all", False):
+            self._position_corner_cards()
 
     def _build_plots_panel(self):
         panel = QWidget()
-        panel.setMinimumWidth(240)
         lv = QVBoxLayout(panel)
         lv.setContentsMargins(0, 0, 0, 0)
         self._list = QListWidget()
+        self._list.setMaximumHeight(180)
         self._list.itemChanged.connect(self._on_item_changed)
         lv.addWidget(self._list)
         row = QHBoxLayout()
