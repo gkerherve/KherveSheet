@@ -1785,36 +1785,74 @@ class SheetWidget(QWidget):
             return False
         tok = toks[idx]
         self._ref_drag = {
-            "target": target,
+            "is_bar": target is self._formula_bar,
+            "cell": (self.table.currentRow(), self.table.currentColumn()),
             "text0": target.text(),
             "span0": tok["span"],
             "token0": tok["text"],
             "press": (cell.row(), cell.column()),
+            "last_text": target.text(),
         }
         self.table.viewport().setCursor(Qt.SizeAllCursor)
         return True
+
+    def _set_inline_cell_formula(self, r, c, text):
+        """Apply a live formula to a cell directly — used when the in-cell
+        editor was destroyed by the drag's mouse press."""
+        self._cell_formulas[(r, c)] = text
+        self._register_deps(r, c, text)
+        dec = self._cell_decimals(r, c)
+        res = self._apply_cell_number_format(
+            str(self._evaluate_formula(text, r, c, dec)), r, c)
+        self._set_cell_quiet(r, c, res)
 
     def _ref_drag_move(self, event):
         d = self._ref_drag
         cell = self.table.indexAt(event.pos())
         if not cell.isValid():
             return
-        pr, pc = d["press"]
-        drow = cell.row() - pr
-        dcol = cell.column() - pc
-        new_tok = shift_formula(d["token0"], drow, dcol)
+        new_tok = shift_formula(
+            d["token0"], cell.row() - d["press"][0],
+            cell.column() - d["press"][1])
         s, e = d["span0"]
         new_text = d["text0"][:s] + new_tok + d["text0"][e:]
-        target = d["target"]
-        target.blockSignals(True)
-        target.setText(new_text)
-        target.setCursorPosition(min(len(new_text), s + len(new_tok)))
-        target.blockSignals(False)
+        d["last_text"] = new_text
+        cur = min(len(new_text), s + len(new_tok))
+        if d["is_bar"]:
+            bar = self._formula_bar
+            bar.blockSignals(True)
+            bar.setText(new_text)
+            bar.setCursorPosition(cur)
+            bar.blockSignals(False)
+        else:
+            ed = self._find_inline_editor()
+            if ed is not None:
+                ed.blockSignals(True)
+                ed.setText(new_text)
+                ed.setCursorPosition(cur)
+                ed.blockSignals(False)
+                ed.setFocus()          # keep the editor alive during drag
+            else:
+                # Editor was destroyed by the press — drive the cell live.
+                r, c = d["cell"]
+                self._set_inline_cell_formula(r, c, new_text)
         self._update_ref_highlights(new_text)
 
     def _end_ref_drag(self):
+        d = self._ref_drag
         self._ref_drag = None
         self.table.viewport().unsetCursor()
+        if not d or d["is_bar"]:
+            return  # the bar keeps the text; Enter commits as usual
+        if self._find_inline_editor() is not None:
+            return  # still editing in-cell; Enter commits as usual
+        # The in-cell editor closed during the drag — commit the moved
+        # formula to the cell and recalc dependents.
+        r, c = d["cell"]
+        self._set_inline_cell_formula(r, c, d["last_text"])
+        self._recalc_dependents(r, c)
+        self._refresh_cross_sheet()
+        self._clear_ref_highlights()
 
     # ── Formula evaluation (basic) ───────────────────────────────────
     def _evaluate_formula(self, formula: str, row: int, col: int,
