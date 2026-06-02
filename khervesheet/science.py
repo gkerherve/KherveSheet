@@ -514,3 +514,6 @@ TOOLS = [
     ("Interpolation…", InterpolateDialog),
     ("Find Peaks…", FindPeaksDialog),
 ]
+
+from .science_extra import EXTRA_TOOLS  # noqa: E402
+TOOLS += EXTRA_TOOLS

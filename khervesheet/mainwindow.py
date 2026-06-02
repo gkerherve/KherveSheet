@@ -393,7 +393,9 @@ class MainWindow(QMainWindow):
         # ── Science ──────────────────────────────────────────────────
         science_menu = mb.addMenu("&Science")
         from .science import TOOLS as _SCIENCE_TOOLS
-        for label, cls in _SCIENCE_TOOLS:
+        for i, (label, cls) in enumerate(_SCIENCE_TOOLS):
+            if i == 7:                       # separator before wave-2 tools
+                science_menu.addSeparator()
             science_menu.addAction(
                 label, lambda _=False, c=cls: self._open_science_tool(c))
 
