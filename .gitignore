@@ -17,3 +17,7 @@ env/
 *~
 .DS_Store
 Thumbs.db
+
+# Per-document version-history repos created at runtime
+.ksheet_versions/
+**/.ksheet_versions/
