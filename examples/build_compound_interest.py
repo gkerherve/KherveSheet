@@ -8,6 +8,16 @@ and instructive yellow sticky notes.
 
 Run:  python examples/build_compound_interest.py
 
+Formula semantics (matching cell refs exactly):
+  Year 1:  B = =$B$5        (principal)
+           C = =B{R1}*$B$6/100   (interest on starting balance)
+           D = =$B$8        (annual contribution)
+           E = =B{R1}+C{R1}+D{R1}
+  Year k>1: B = =E{prev}
+             C = =B{r}*$B$6/100
+             D = =$B$8
+             E = =B{r}+C{r}+D{r}
+
 Copyright (C) 2026 Gwilherm Kerherve — GPL-3.0-or-later.
 """
 
@@ -21,24 +31,29 @@ from ksheet_author import Workbook, Series, PALETTE
 PRINCIPAL       = 10_000.0   # £ starting lump sum
 RATE_PCT        = 6.0        # annual interest rate, %
 YEARS           = 20         # investment horizon
-ANNUAL_CONTRIB  = 1_200.0    # £ added at the start of each year
+ANNUAL_CONTRIB  = 1_200.0    # £ added at end of each year (after interest)
 
 
 def _compute_table(principal, rate_pct, years, contrib):
-    """Return (year_arr, start_arr, interest_arr, contrib_arr, end_arr)."""
+    """Return (year_arr, start_arr, interest_arr, contrib_arr, end_arr).
+
+    Matches the formula semantics exactly:
+      C = start * rate/100   (interest on starting balance)
+      D = contrib            (fixed contribution)
+      E = start + interest + contrib
+    """
     r = rate_pct / 100.0
     starts, interests, contribs, ends = [], [], [], []
     balance = principal
-    for yr in range(1, years + 1):
-        start = balance
-        # Contribution added at the beginning of the year (before interest).
-        balance += contrib
-        interest = balance * r
-        balance += interest
+    for _yr in range(1, years + 1):
+        start    = balance
+        interest = start * r
+        end      = start + interest + contrib
+        balance  = end
         starts.append(start)
         interests.append(interest)
         contribs.append(contrib)
-        ends.append(balance)
+        ends.append(end)
     year_arr     = np.arange(1, years + 1, dtype=float)
     start_arr    = np.array(starts,    dtype=float)
     interest_arr = np.array(interests, dtype=float)
@@ -61,7 +76,7 @@ def build() -> str:
 
     # ── Input panel ──────────────────────────────────────────────────
     # Labels in col A (0), values in col B (1).
-    # 0-based rows 3..6; 1-based sheet refs B4..B7.
+    # 0-based rows 4..7  →  1-based sheet refs B5, B6, B7, B8.
     s.set(3, 0, "Inputs")
     s.fmt(3, 0, bold=True, font_color=PALETTE["accent"], font_size=11)
 
@@ -95,43 +110,41 @@ def build() -> str:
     # Inputs live at 1-based: B5=Principal, B6=Rate%, B7=Years, B8=Contrib.
     #
     # Column layout (0-based cols 0..4 = A..E):
-    #   A  Year
-    #   B  Starting Balance
-    #   C  Interest Earned
-    #   D  Annual Contribution
-    #   E  Ending Balance
-    #
-    # Formulas use absolute refs $B$5..$B$8 for inputs.
-    # Year 1 starting balance = $B$5 (principal).
-    # Year k>1 starting balance = previous ending balance (E row above).
-    # Interest = (starting + contribution) * rate / 100.
-    # Ending   = starting + contribution + interest.
+    #   A  Year                (literal integer)
+    #   B  Starting Balance    (formula)
+    #   C  Interest Earned     (formula: =B{r}*$B$6/100)
+    #   D  Annual Contribution (formula: =$B$8)
+    #   E  Ending Balance      (formula: =B{r}+C{r}+D{r})
 
-    TABLE_START = 9   # 0-based row of header
+    TABLE_START = 9   # 0-based row of table header
 
     s.set(8, 0, "Year-by-Year Growth")
     s.fmt(8, 0, bold=True, font_color=PALETTE["header"], font_size=11)
 
     table_rows = []
     for k in range(YEARS):
-        rr = TABLE_START + 2 + k   # 1-based sheet row of this data row
+        # 1-based sheet row of this data row.
+        # Header is at sheet row TABLE_START+1 = 10, first data at 11.
+        rr = TABLE_START + 2 + k   # 11, 12, 13, …, 30
 
         if k == 0:
-            start_formula = "=$B$5"
+            # Year 1: starting balance is the principal input.
+            b_formula = "=$B$5"
         else:
-            prev_e = TABLE_START + 2 + (k - 1)   # 1-based sheet row above
-            start_formula = f"=E{prev_e}"
+            # Year k>1: starting balance is the previous row's ending balance.
+            prev_rr = TABLE_START + 2 + (k - 1)   # rr - 1
+            b_formula = f"=E{prev_rr}"
 
-        interest_formula = f"=(B{rr}+$B$8)*$B$6/100"
-        contrib_formula  = "=$B$8"
-        end_formula      = f"=B{rr}+D{rr}+C{rr}"
+        c_formula = f"=B{rr}*$B$6/100"         # interest on starting balance
+        d_formula = "=$B$8"                     # fixed annual contribution
+        e_formula = f"=B{rr}+C{rr}+D{rr}"      # ending balance
 
         table_rows.append([
-            k + 1,           # Year (literal integer — no formula needed)
-            start_formula,
-            interest_formula,
-            contrib_formula,
-            end_formula,
+            k + 1,       # Year — literal integer, no formula needed
+            b_formula,
+            c_formula,
+            d_formula,
+            e_formula,
         ])
 
     s.table(TABLE_START, 0,
@@ -147,27 +160,22 @@ def build() -> str:
     s.col_width(3, 175)   # Annual Contribution
     s.col_width(4, 155)   # Ending Balance
 
-    # Designate X and Y columns.
-    s.designate(0, "X")   # Year
-    s.designate(4, "Y")   # Ending Balance
+    # Designate X and Y columns for live chart binding.
+    s.designate(0, "X")   # Year (col A, 0-based index 0)
+    s.designate(4, "Y")   # Ending Balance (col E, 0-based index 4)
 
     # Note 2: explain the contribution timing.
     s.note(TABLE_START, 3,
-           "The annual contribution is added at the START\n"
-           "of each year (before interest is applied),\n"
-           "maximising compounding benefit.",
+           "The annual contribution is added at the END\n"
+           "of each year (after interest is applied).\n"
+           "Interest is earned on the starting balance only.",
            kind="note")
 
     # ── Summary panel ────────────────────────────────────────────────
     # 0-based rows 9..13 on cols 6..7 (G..H).
-    # 1-based data range runs from sheet row (TABLE_START+2) to
-    # sheet row (TABLE_START+1+YEARS).
-    first_data = TABLE_START + 2           # 1-based sheet row, first data
-    last_data  = TABLE_START + 1 + YEARS   # 1-based sheet row, last data
-
-    final_balance    = end_arr[-1]
-    total_interest   = float(np.sum(interest_arr))
-    total_contribs   = ANNUAL_CONTRIB * YEARS
+    # 1-based data range: sheet row 11 (first) to sheet row 30 (last).
+    first_data = TABLE_START + 2            # = 11  (1-based sheet row)
+    last_data  = TABLE_START + 1 + YEARS   # = 30  (1-based sheet row)
 
     s.set(8, 6, "Summary")
     s.fmt(8, 6, bold=True, font_color=PALETTE["header"], font_size=11)
@@ -210,8 +218,8 @@ def build() -> str:
 
     # ── Chart (live-bound to Year col A and Ending Balance col E) ─────
     # 0-based data rows: TABLE_START+1 .. TABLE_START+YEARS
-    r0 = TABLE_START + 1            # 0-based, first data row
-    r1 = TABLE_START + YEARS        # 0-based, last data row
+    r0 = TABLE_START + 1            # 0-based, first data row  (= 10)
+    r1 = TABLE_START + YEARS        # 0-based, last data row   (= 29)
 
     s.chart(
         [Series(
@@ -237,8 +245,8 @@ def build() -> str:
     )
 
     # ── LaTeX equation ────────────────────────────────────────────────
-    # A_n = (P + C) * (1+r)^n  +  C * [(1+r)^n - 1] / r  -  C
-    # Simplified form: A_n = P(1+r)^n + C * [(1+r)^n - 1] / r
+    # A_n = P(1+r)^n + C * [(1+r)^n - 1] / r
+    # (closed-form for interest-first compounding; contributions at year end)
     s.equation(
         r"A_n = P\,(1+r)^n + C\,\frac{(1+r)^n - 1}{r}",
         at=(540, 360),

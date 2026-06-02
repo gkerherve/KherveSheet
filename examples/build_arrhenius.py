@@ -143,7 +143,8 @@ def build() -> str:
         ("k at 500 K (s⁻¹)",
          "=$B$5*EXP(-$B$6/($B$7*500))",  PALETTE["good"]),
         ("Ratio k(500 K)/k(298 K)",
-         "=G7/G6",                 PALETTE["accent"]),
+         "=($B$5*EXP(-$B$6/($B$7*500)))/($B$5*EXP(-$B$6/($B$7*298)))",
+         PALETTE["accent"]),
     ]
     for i, (lbl, expr, bg) in enumerate(summ_items):
         r = 4 + i

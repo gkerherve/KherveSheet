@@ -19,7 +19,7 @@ from ksheet_author import Workbook, Series, PALETTE
 
 # ── Loan parameters (must match what the formulas compute) ─────────────
 LOAN_AMOUNT    = 15_000.0   # principal ($)
-ANNUAL_RATE    = 6.0        # annual interest rate (%) — chosen so r = 0.005 exactly
+ANNUAL_RATE    = 6.0        # annual interest rate (%)
 TERM_YEARS     = 2          # loan term (years)
 PERIODS_YEAR   = 12         # payments per year (monthly)
 
@@ -29,7 +29,7 @@ r_periodic  = (ANNUAL_RATE / 100) / PERIODS_YEAR  # 0.005 exactly
 # Amortized periodic payment: P = L*r / (1 - (1+r)^(-n))
 pmt = LOAN_AMOUNT * r_periodic / (1 - (1 + r_periodic) ** (-n_periods))
 
-# Build amortization schedule in Python (matches formula results)
+# Build amortization schedule in Python (must match formula results)
 balance     = np.zeros(n_periods + 1)
 interest_v  = np.zeros(n_periods)
 principal_v = np.zeros(n_periods)
@@ -102,27 +102,20 @@ def build() -> str:
            "summary recalculate automatically.",
            kind="note")
 
-    # Absolute cell references for the four inputs
-    R_AMT  = "$B$4"   # loan amount L
-    R_RATE = "$B$5"   # annual rate % (not divided)
-    R_TERM = "$B$6"   # term years
-    R_PPYR = "$B$7"   # payments per year
-
-    # Inline formulas for the two derived scalars (avoids rounding via helper cell)
-    # Periodic rate r  = B5/100/B7
-    # Total periods n  = B6*B7
-    # Payment P        = B4*(B5/100/B7) / (1 - POWER(1 + B5/100/B7, -B6*B7))
-    RATE_EXPR = f"{R_RATE}/100/{R_PPYR}"           # r inline
-    NPER_EXPR = f"{R_TERM}*{R_PPYR}"               # n inline
-    PAY_EXPR  = (f"{R_AMT}*({RATE_EXPR})/"
+    # ── Payment formula pieces ────────────────────────────────────────
+    # Periodic rate  r = B5/100/B7   (inline in every formula)
+    # Total periods  n = B6*B7       (inline in payment formula)
+    # Payment P = B4*(B5/100/B7)/(1-POWER(1+B5/100/B7,-B6*B7))
+    # NOTE: PMT() is in the catalog but unimplemented — use closed form.
+    RATE_EXPR = "$B$5/100/$B$7"
+    NPER_EXPR = "$B$6*$B$7"
+    PAY_EXPR  = (f"$B$4*({RATE_EXPR})/"
                  f"(1-POWER(1+({RATE_EXPR}),-({NPER_EXPR})))")
 
     # ── Helper display cells (rows 8–10, cols G/H = indices 6/7) ──────
-    # These are DISPLAY ONLY — not referenced by table formulas.
-    # They show the user the computed scalars for transparency.
-    TBL_START   = 14
-    data_row1   = TBL_START + 2           # 1-based sheet row of first data row
-    data_row_n  = TBL_START + 1 + n_periods
+    TBL_START  = 14
+    data_row1  = TBL_START + 2      # 1-based sheet row of first data row (= 16)
+    data_row_n = TBL_START + 1 + n_periods  # 1-based last data row (= 39)
 
     s.set(7, 6, "Derived Values (read-only)")
     s.fmt(7, 6, bold=True, font_color=PALETTE["header"])
@@ -154,7 +147,7 @@ def build() -> str:
          f"={PAY_EXPR}",
          PALETTE["good"]),
         ("Total Paid ($)",
-         f"={PAY_EXPR}*({NPER_EXPR})",
+         f"=SUM(B{data_row1}:B{data_row_n})",
          PALETTE["band"]),
         ("Total Interest ($)",
          f"=SUM(C{data_row1}:C{data_row_n})",
@@ -181,41 +174,40 @@ def build() -> str:
 
     # ── Amortization table ────────────────────────────────────────────
     # Columns (0-based): 0=Period  1=Payment  2=Interest  3=Principal  4=Balance
-    # Header at row index TBL_START → sheet row TBL_START+1.
-    # First data row at index TBL_START+1 → sheet row TBL_START+2 = data_row1.
+    # Header at 0-based row TBL_START (=14) → 1-based sheet row 15.
+    # First data row at 0-based row TBL_START+1 → 1-based sheet row data_row1=16.
     #
-    # All formula rows compute inline (no helper-cell refs) so there is
-    # no cascading rounding issue.
-    #
-    # Payment:    = L*r/(1-(1+r)^(-n))   [same every row]
-    # Interest_k: = opening_balance * r
-    # Principal_k = Payment - Interest_k
-    # Balance_k   = opening_balance - Principal_k
-    #
-    # Opening balance for period 1 = B4; for period k>1 = E{prev_sheet_row}
+    # Formula layout per the spec:
+    #   B  = closed-form payment (same every row, no PMT function)
+    #   C1 = $B$4 * ($B$5/100/$B$7)          [first period: interest on full principal]
+    #   Cr = E{prev} * ($B$5/100/$B$7)        [subsequent: interest on remaining balance]
+    #   D  = B{r} - C{r}                      [principal repaid this period]
+    #   E1 = $B$4 - D{r1}                     [first period: balance = L - principal]
+    #   Er = E{prev} - D{r}                   [subsequent: balance reduced by principal]
 
     table_rows = []
     for k in range(n_periods):
-        sheet_row = TBL_START + 2 + k   # 1-based sheet row
+        # 1-based sheet row for this data row
+        sheet_row = data_row1 + k   # 16, 17, 18, ..., 39
+
+        B_f = f"={PAY_EXPR}"
 
         if k == 0:
-            bal_open = R_AMT
+            C_f = f"=$B$4*({RATE_EXPR})"
+            D_f = f"=B{sheet_row}-C{sheet_row}"
+            E_f = f"=$B$4-D{sheet_row}"
         else:
-            bal_open = f"E{sheet_row - 1}"
-
-        r_expr = RATE_EXPR   # inline rate expression
-        pay_e  = PAY_EXPR    # inline payment expression
-
-        interest_f  = f"={bal_open}*({r_expr})"
-        principal_f = f"=({pay_e})-{bal_open}*({r_expr})"
-        balance_f   = f"={bal_open}-(({pay_e})-{bal_open}*({r_expr}))"
+            prev = sheet_row - 1
+            C_f = f"=E{prev}*({RATE_EXPR})"
+            D_f = f"=B{sheet_row}-C{sheet_row}"
+            E_f = f"=E{prev}-D{sheet_row}"
 
         table_rows.append([
-            k + 1,
-            f"={pay_e}",
-            interest_f,
-            principal_f,
-            balance_f,
+            k + 1,   # Period (literal integer)
+            B_f,
+            C_f,
+            D_f,
+            E_f,
         ])
 
     s.table(
@@ -249,6 +241,7 @@ def build() -> str:
            kind="note")
 
     # ── Chart: Balance & Interest per Period (live-bound) ─────────────
+    # 0-based row bounds: first data row = TBL_START+1, last = TBL_START+n_periods
     r0 = TBL_START + 1
     r1 = TBL_START + n_periods
 

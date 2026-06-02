@@ -6,8 +6,8 @@ product P*V remains constant (= nRT).
 
 Features shown:
   - Title block, editable input panel (n, T, R, V range)
-  - Banded data table with formulas for P and P*V
-  - Summary panel (nRT product, min/max P)
+  - Banded data table with formulas for V, P and P*V (all live)
+  - Summary panel (nRT product, min/max P, mean P·V)
   - Live-bound chart: Pressure vs Volume (hyperbolic curve)
   - Two LaTeX equations (PV = nRT and P = nRT/V)
   - Three yellow sticky notes
@@ -54,7 +54,7 @@ def build() -> str:
                   "(volume in L, pressure in kPa)")
 
     # ── Input panel ──────────────────────────────────────────────────
-    # Cells B5..B9 (0-based: row 4..8, col 1) hold editable inputs.
+    # Cells B5..B9 (0-based: row 4..8, col 1) hold editable literals.
     # Sheet refs (1-based):  B5=n  B6=T  B7=R  B8=V_start  B9=V_end
     s.set(3, 0, "Inputs")
     s.fmt(3, 0, bold=True, font_color=PALETTE["accent"], font_size=11)
@@ -85,36 +85,37 @@ def build() -> str:
            kind="note")
 
     # ── Data table ───────────────────────────────────────────────────
-    # Volume values are computed by Python (linspace) and written as
-    # literals; P and P*V columns use formulas that reference the inputs.
+    # Header at sheet row 10 (0-based row 9 = table_start).
+    # First data row at sheet row 11 (0-based row 10, 1-based row = table_start+2).
+    # Last  data row at sheet row 30 (0-based row 29).
     #
-    # Header at sheet row 10 (0-based row 9).
-    # First data row at sheet row 11 (0-based row 10).
-    # Last data row  at sheet row 30 (0-based row 29).
+    # Column D (col 3): Volume formula uses embedded fraction literal so that
+    #   editing V_start (B8) or V_end (B9) reshapes the entire volume column.
+    #   For the i-th of N rows (i=0..N-1):
+    #       D{rr} = =$B$8+($B$9-$B$8)*{fraction}
+    #   where fraction = i/(N-1) is baked in as a plain decimal.
     #
-    # Formula cell refs (1-based):
-    #   V column  → D{rr}   (col 3, 0-based)
-    #   P formula → =($B$5*$B$6*$B$7)/(D{rr}*0.001)/1000   (kPa)
-    #   PV product→ =E{rr}*D{rr}
+    # Column E (col 4): P in kPa
+    #       E{rr} = =($B$5*$B$6*$B$7)/(D{rr}*0.001)/1000
     #
-    # P = n R T / V_m3   where V_m3 = V_L * 0.001
-    # P_Pa = n R T / (V_L * 0.001)
-    # P_kPa = P_Pa / 1000
+    # Column F (col 5): P·V product
+    #       F{rr} = =E{rr}*D{rr}
 
     table_start = 9      # 0-based row of header
-    vols = np.linspace(V_MIN, V_MAX, N_PTS)
 
     s.set(8, 3, "Boyle's Law — Pressure vs Volume")
     s.fmt(8, 3, bold=True, font_color=PALETTE["header"], font_size=11)
     s.merge(8, 3, 1, 3)
 
     rows = []
-    for k, v in enumerate(vols):
+    for k in range(N_PTS):
         rr = table_start + 2 + k   # 1-based sheet row of this data row
+        fraction = k / (N_PTS - 1) if N_PTS > 1 else 0.0
+        # All three cells are formulas — none are precomputed literals.
         rows.append([
-            round(float(v), 4),
-            f"=($B$5*$B$6*$B$7)/(D{rr}*0.001)/1000",   # P in kPa  (n*R*T / V_m3 / 1000)
-            f"=E{rr}*D{rr}",                             # P*V
+            f"=$B$8+($B$9-$B$8)*{fraction}",             # Volume (L)
+            f"=($B$5*$B$6*$B$7)/(D{rr}*0.001)/1000",    # Pressure (kPa)
+            f"=E{rr}*D{rr}",                              # P·V (kPa·L)
         ])
 
     s.table(table_start, 3,
@@ -127,22 +128,20 @@ def build() -> str:
 
     # ── Summary panel ────────────────────────────────────────────────
     # Placed to the right of the table, starting at row 4.
-    # Sheet refs for the table data rows: E11:E30  (P column, 1-based)
+    # Sheet refs for the table data rows: 1-based rows first_data_row..last_data_row.
     first_data_row = table_start + 2          # = 11  (1-based)
     last_data_row  = table_start + 1 + N_PTS  # = 30  (1-based)
 
     s.set(3, 7, "Summary")
     s.fmt(3, 7, bold=True, font_color=PALETTE["accent"], font_size=11)
 
-    # nRT in kPa·L: n*R*T [J] = n*R*T [Pa·m³] = n*R*T [kPa·L]
-    # (since 1 Pa·m³ = 1 kPa · 0.001 m³ = 1 kPa·L when V is in litres)
     summ_rows = [
-        ("nRT  (kPa·L)",   "=$B$5*$B$6*$B$7",                           PALETTE["good"]),
-        ("Min pressure (kPa)", f"=MIN(E{first_data_row}:E{last_data_row})", PALETTE["band"]),
-        ("Max pressure (kPa)", f"=MAX(E{first_data_row}:E{last_data_row})", PALETTE["band"]),
-        ("Min volume (L)",     f"=MIN(D{first_data_row}:D{last_data_row})", PALETTE["band_alt"]),
-        ("Max volume (L)",     f"=MAX(D{first_data_row}:D{last_data_row})", PALETTE["band_alt"]),
-        ("Mean P·V  (kPa·L)",  f"=AVERAGE(F{first_data_row}:F{last_data_row})", PALETTE["good"]),
+        ("nRT  (kPa·L)",       "=$B$5*$B$6*$B$7",                                PALETTE["good"]),
+        ("Min pressure (kPa)", f"=MIN(E{first_data_row}:E{last_data_row})",       PALETTE["band"]),
+        ("Max pressure (kPa)", f"=MAX(E{first_data_row}:E{last_data_row})",       PALETTE["band"]),
+        ("Min volume (L)",     f"=MIN(D{first_data_row}:D{last_data_row})",       PALETTE["band_alt"]),
+        ("Max volume (L)",     f"=MAX(D{first_data_row}:D{last_data_row})",       PALETTE["band_alt"]),
+        ("Mean P·V  (kPa·L)",  f"=AVERAGE(F{first_data_row}:F{last_data_row})",  PALETTE["good"]),
     ]
     for i, (lbl, expr, col) in enumerate(summ_rows):
         r = 4 + i
@@ -160,13 +159,14 @@ def build() -> str:
            kind="note")
 
     # ── Chart: Pressure vs Volume (live-bound) ───────────────────────
-    # numpy arrays that match what the formulas evaluate to:
+    # numpy arrays that match what the formulas evaluate to at default inputs:
+    vols    = np.linspace(V_MIN, V_MAX, N_PTS)
     nRT_J   = N_MOL * R_GAS * T_K          # joules = Pa·m³
     P_kPa   = nRT_J / (vols * 1e-3) / 1e3  # kPa
 
     # 0-based row bounds of the data in the sheet:
-    r0 = table_start + 1    # first data row, 0-based (= 10)
-    r1 = table_start + N_PTS  # last  data row, 0-based (= 29)
+    r0 = table_start + 1       # first data row, 0-based (= 10)
+    r1 = table_start + N_PTS   # last  data row, 0-based (= 29)
 
     s.chart(
         [Series(
