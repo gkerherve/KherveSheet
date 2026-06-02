@@ -1,0 +1,558 @@
+"""AI backend — Claude API client, tool definitions, and threading.
+
+Manages the conversation with Claude using tool-use.  The API call
+runs on a background QThread while tool execution happens on the
+main (GUI) thread so that Qt widgets are always accessed safely.
+
+Copyright (C) 2026 Gwilherm Kerherve
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+"""
+
+from __future__ import annotations
+
+import json
+import traceback
+from typing import Any, Dict, List, Optional
+
+from PyQt5.QtCore import (
+    Qt, QObject, QThread, QMutex, QWaitCondition, pyqtSignal, pyqtSlot,
+)
+from PyQt5.QtWidgets import QApplication
+
+# ── Optional dependency guard ──────────────────────────────────────
+try:
+    import anthropic
+    HAVE_ANTHROPIC = True
+except ImportError:
+    anthropic = None
+    HAVE_ANTHROPIC = False
+
+
+# ── Tool definitions ───────────────────────────────────────────────
+
+TOOLS = [
+    {
+        "name": "get_sheet_info",
+        "description": (
+            "List all sheets in the workbook with their dimensions "
+            "(row and column counts)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+    {
+        "name": "read_cells",
+        "description": (
+            "Read cell values from a rectangular range in a sheet. "
+            "Returns a 2D list of string values."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {
+                    "type": "string",
+                    "description": "Name of the sheet tab.",
+                },
+                "range": {
+                    "type": "string",
+                    "description": (
+                        "A1-notation range, e.g. 'A1:C10' or 'B3' "
+                        "for a single cell."
+                    ),
+                },
+            },
+            "required": ["sheet_name", "range"],
+        },
+    },
+    {
+        "name": "write_cells",
+        "description": (
+            "Write values to a rectangular range.  The values array is "
+            "row-major: [[row1_values], [row2_values], ...]. "
+            "Use '=FORMULA' syntax for formulas."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {
+                    "type": "string",
+                    "description": "Name of the sheet tab.",
+                },
+                "range": {
+                    "type": "string",
+                    "description": (
+                        "Top-left cell of the write area, e.g. 'A1'. "
+                        "The range expands to fit the values array."
+                    ),
+                },
+                "values": {
+                    "type": "array",
+                    "items": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "description": (
+                        "2D array of cell values (strings). "
+                        "Use '=SUM(A1:A5)' syntax for formulas."
+                    ),
+                },
+            },
+            "required": ["sheet_name", "range", "values"],
+        },
+    },
+    {
+        "name": "set_formula",
+        "description": (
+            "Set a formula in a single cell. "
+            "The formula must start with '='."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {
+                    "type": "string",
+                    "description": "Name of the sheet tab.",
+                },
+                "cell": {
+                    "type": "string",
+                    "description": "Cell reference, e.g. 'B5'.",
+                },
+                "formula": {
+                    "type": "string",
+                    "description": (
+                        "Formula string starting with '=', "
+                        "e.g. '=SUM(A1:A10)'."
+                    ),
+                },
+            },
+            "required": ["sheet_name", "cell", "formula"],
+        },
+    },
+    {
+        "name": "format_cells",
+        "description": "Apply visual formatting to a range of cells.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {
+                    "type": "string",
+                    "description": "Name of the sheet tab.",
+                },
+                "range": {
+                    "type": "string",
+                    "description": "A1-notation range, e.g. 'A1:C5'.",
+                },
+                "format_props": {
+                    "type": "object",
+                    "description": "Formatting properties to apply.",
+                    "properties": {
+                        "bg_color": {
+                            "type": "string",
+                            "description": (
+                                "Background colour as hex, "
+                                "e.g. '#FFD700'."
+                            ),
+                        },
+                        "font_color": {
+                            "type": "string",
+                            "description": "Font colour as hex.",
+                        },
+                        "bold": {"type": "boolean"},
+                        "italic": {"type": "boolean"},
+                        "underline": {"type": "boolean"},
+                        "font_family": {"type": "string"},
+                        "font_size": {"type": "number"},
+                        "alignment": {
+                            "type": "string",
+                            "enum": ["left", "center", "right"],
+                        },
+                        "number_format": {
+                            "type": "string",
+                            "enum": [
+                                "General", "0", "0.0", "0.00",
+                                "0.000", "0.0000", "Scientific",
+                                "Percentage", "Currency", "Date",
+                                "Time", "Text",
+                            ],
+                        },
+                    },
+                },
+            },
+            "required": ["sheet_name", "range", "format_props"],
+        },
+    },
+    {
+        "name": "insert_chart",
+        "description": "Create an embedded chart from data in the sheet.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {
+                    "type": "string",
+                    "description": "Sheet containing the data.",
+                },
+                "chart_type": {
+                    "type": "string",
+                    "enum": [
+                        "Line", "Scatter", "Line+Symbol", "Bar",
+                        "Step", "Stem", "Histogram", "Box",
+                        "Heatmap", "3D Surface",
+                    ],
+                },
+                "x_range": {
+                    "type": "string",
+                    "description": (
+                        "A1-notation range for X data, "
+                        "e.g. 'A2:A20'."
+                    ),
+                },
+                "y_range": {
+                    "type": "string",
+                    "description": (
+                        "A1-notation range for Y data, "
+                        "e.g. 'B2:B20'."
+                    ),
+                },
+            },
+            "required": [
+                "sheet_name", "chart_type", "x_range", "y_range",
+            ],
+        },
+    },
+    {
+        "name": "add_sheet",
+        "description": "Add a new sheet tab to the workbook.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name for the new sheet tab.",
+                },
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "read_selection",
+        "description": (
+            "Read the user's current cell selection "
+            "(active sheet, range, and values)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+]
+
+
+# ── System prompt builder ──────────────────────────────────────────
+
+def build_system_prompt(mainwindow) -> str:
+    """Build the system prompt with live workbook context."""
+    wb = mainwindow._workbook
+    sheet_lines = []
+    for s in wb.all_sheets():
+        name = wb.name_of_sheet(s)
+        sheet_lines.append(
+            f"  - {name}: {s.row_count()} rows × {s.column_count()} cols")
+    sheets_info = "\n".join(sheet_lines) or "  (none)"
+    active = mainwindow._active_sheet()
+    active_name = wb.name_of_sheet(active) if active else "(none)"
+    # Current selection.
+    sel_str = "(none)"
+    if active:
+        sel = active.table.selectedRanges()
+        if sel:
+            from .sheet import col_index_to_letter
+            s = sel[0]
+            tl = (f"{col_index_to_letter(s.leftColumn())}"
+                  f"{s.topRow() + 1}")
+            br = (f"{col_index_to_letter(s.rightColumn())}"
+                  f"{s.bottomRow() + 1}")
+            sel_str = tl if tl == br else f"{tl}:{br}"
+    return f"""\
+You are a helpful AI assistant embedded in KherveSheet, a scientific \
+spreadsheet application.  You can directly manipulate the spreadsheet \
+using the tools provided.
+
+Current workbook state:
+- Sheets:
+{sheets_info}
+- Active sheet: {active_name}
+- Current selection: {sel_str}
+
+Guidelines:
+- When the user asks you to create a template or fill data, use \
+write_cells with bulk data.
+- Use set_formula for calculated cells (formulas start with =).
+- Always read_cells first if you need to understand existing data \
+before modifying.
+- Available chart types: Line, Scatter, Line+Symbol, Bar, Step, Stem, \
+Histogram, Box, Heatmap, 3D Surface.
+- format_cells accepts: bg_color (hex), bold, italic, underline, \
+font_family, font_size, font_color (hex), alignment \
+("left"/"center"/"right"), number_format ("General"/"0.00"/ \
+"Scientific"/"Percentage"/"Currency"/"Date"/"Time"/"Text").
+- Cell references use A1 notation.  Ranges use A1:C5 format.
+- Row numbers are 1-based, columns are letters (A, B, … Z, AA, AB, …).
+- All your changes are undoable (Ctrl+Z).
+- Be concise in your replies.  Focus on actions, not explanations."""
+
+
+# ── Sliding-window conversation management ─────────────────────────
+
+_MAX_TURNS = 40  # keep at most this many user+assistant pairs
+
+
+def _trim_messages(messages: List[dict]) -> List[dict]:
+    """Keep only the last *_MAX_TURNS* user/assistant exchanges."""
+    if len(messages) <= _MAX_TURNS * 2:
+        return messages
+    return messages[-_MAX_TURNS * 2:]
+
+
+# ── Worker (runs on QThread) ───────────────────────────────────────
+
+class AiWorker(QObject):
+    """Performs Claude API calls on a background thread.
+
+    Signals are used for all communication with the main thread:
+    - *chunk_ready*: incremental assistant text.
+    - *tool_call*: emitted when the model wants to call a tool;
+      the worker then **blocks** on a QWaitCondition until the main
+      thread posts the result via *post_tool_result()*.
+    - *turn_done*: all tool calls resolved, final text delivered.
+    - *error*: something went wrong.
+    """
+
+    chunk_ready = pyqtSignal(str)       # partial text
+    tool_call = pyqtSignal(str, str, str)  # tool_use_id, name, input_json
+    turn_done = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+        self._cancel = False
+        # Mutex + condition for blocking while main thread runs a tool.
+        self._tool_mutex = QMutex()
+        self._tool_cond = QWaitCondition()
+        self._tool_result: Optional[str] = None  # JSON string
+
+    # Called from main thread to wake the worker after tool execution.
+    def post_tool_result(self, result_json: str):
+        self._tool_mutex.lock()
+        self._tool_result = result_json
+        self._tool_cond.wakeAll()
+        self._tool_mutex.unlock()
+
+    def cancel(self):
+        self._cancel = True
+
+    @pyqtSlot(str, str, str, list)
+    def run_turn(self, api_key: str, model: str,
+                 system_prompt: str, messages: list):
+        """Run the full agentic turn (may loop over tool calls)."""
+        self._cancel = False
+        try:
+            client = anthropic.Anthropic(api_key=api_key)
+            while not self._cancel:
+                # Call the API.
+                response = client.messages.create(
+                    model=model,
+                    max_tokens=4096,
+                    system=system_prompt,
+                    tools=TOOLS,
+                    messages=messages,
+                )
+                # Process the response content blocks.
+                assistant_content = response.content
+                text_parts: List[str] = []
+                tool_uses: List[dict] = []
+                for block in assistant_content:
+                    if block.type == "text":
+                        text_parts.append(block.text)
+                        self.chunk_ready.emit(block.text)
+                    elif block.type == "tool_use":
+                        tool_uses.append({
+                            "id": block.id,
+                            "name": block.name,
+                            "input": block.input,
+                        })
+                # Append the full assistant message to history.
+                messages.append({
+                    "role": "assistant",
+                    "content": [b.model_dump() for b in assistant_content],
+                })
+                if response.stop_reason != "tool_use" or not tool_uses:
+                    break
+                # Execute each tool call via the main thread.
+                tool_results = []
+                for tu in tool_uses:
+                    if self._cancel:
+                        break
+                    self.tool_call.emit(
+                        tu["id"], tu["name"],
+                        json.dumps(tu["input"]))
+                    # Block until main thread posts the result.
+                    self._tool_mutex.lock()
+                    self._tool_result = None
+                    self._tool_cond.wait(self._tool_mutex)
+                    result_json = self._tool_result or '{"error":"cancelled"}'
+                    self._tool_mutex.unlock()
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": tu["id"],
+                        "content": result_json,
+                    })
+                # Append tool results and loop.
+                messages.append({
+                    "role": "user",
+                    "content": tool_results,
+                })
+            self.turn_done.emit()
+        except Exception as exc:
+            tb = traceback.format_exc()
+            # Surface user-friendly message for common errors.
+            msg = str(exc)
+            if anthropic and isinstance(exc, anthropic.AuthenticationError):
+                msg = "Invalid API key. Please check your key in settings."
+            elif anthropic and isinstance(exc, anthropic.RateLimitError):
+                msg = "Rate limit reached. Please wait and try again."
+            elif anthropic and isinstance(
+                    exc, anthropic.APIConnectionError):
+                msg = "Cannot reach the Claude API. Check your connection."
+            self.error.emit(msg)
+
+
+# ── Backend coordinator (lives on main thread) ─────────────────────
+
+class AiBackend(QObject):
+    """Coordinates between the chat UI and the AiWorker thread.
+
+    Public API (called from the chat dock on the main thread):
+    - ``send(text)`` — start a new user turn.
+    - ``cancel()`` — abort the current turn.
+    """
+
+    # Forwarded from worker to UI.
+    chunk_ready = pyqtSignal(str)
+    tool_performed = pyqtSignal(str, str)  # tool_name, summary
+    turn_done = pyqtSignal()
+    error = pyqtSignal(str)
+
+    def __init__(self, mainwindow):
+        super().__init__(mainwindow)
+        self._mw = mainwindow
+        self._messages: List[dict] = []
+        self._macro_open = False
+
+        # Tool executor.
+        from .ai_tools import AiToolExecutor
+        self._executor = AiToolExecutor(mainwindow)
+
+        # Worker + thread.
+        self._thread = QThread(self)
+        self._worker = AiWorker()
+        self._worker.moveToThread(self._thread)
+        # Connect worker signals.
+        self._worker.chunk_ready.connect(self.chunk_ready)
+        self._worker.tool_call.connect(self._on_tool_call)
+        self._worker.turn_done.connect(self._on_turn_done)
+        self._worker.error.connect(self._on_error)
+        self._thread.start()
+
+    def send(self, text: str):
+        """Initiate a new user turn."""
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("KherveSheet", "KherveSheet")
+        api_key = settings.value("ai/api_key", "")
+        model = settings.value("ai/model", "claude-sonnet-4-20250514")
+        if not api_key:
+            self.error.emit(
+                "No API key configured. Click the gear icon to set one.")
+            return
+        self._messages.append({"role": "user", "content": text})
+        self._messages = _trim_messages(self._messages)
+        system = build_system_prompt(self._mw)
+        # Invoke worker on its thread (queued connection).
+        from PyQt5.QtCore import QMetaObject, Q_ARG
+        QMetaObject.invokeMethod(
+            self._worker, "run_turn",
+            Qt.QueuedConnection,
+            Q_ARG(str, api_key),
+            Q_ARG(str, model),
+            Q_ARG(str, system),
+            Q_ARG(list, list(self._messages)),
+        )
+
+    def cancel(self):
+        self._worker.cancel()
+
+    # ── Slots ───────────────────────────────────────────────────
+
+    @pyqtSlot(str, str, str)
+    def _on_tool_call(self, tool_use_id: str, name: str,
+                      input_json: str):
+        """Execute a tool on the main thread, then wake the worker."""
+        inp = json.loads(input_json)
+        # Open undo macro on first tool call of the turn.
+        if not self._macro_open:
+            self._mw._undo_stack.beginMacro("AI Assistant")
+            self._macro_open = True
+        result = self._executor.execute(name, inp)
+        # Build a short summary for the UI.
+        summary = self._summarise(name, inp, result)
+        self.tool_performed.emit(name, summary)
+        result_json = json.dumps(result)
+        self._worker.post_tool_result(result_json)
+
+    def _on_turn_done(self):
+        if self._macro_open:
+            self._mw._undo_stack.endMacro()
+            self._macro_open = False
+        self.turn_done.emit()
+
+    def _on_error(self, msg: str):
+        if self._macro_open:
+            self._mw._undo_stack.endMacro()
+            self._macro_open = False
+        self.error.emit(msg)
+
+    def _summarise(self, name: str, inp: dict, result: dict) -> str:
+        """One-line summary of a tool call for the chat UI."""
+        if "error" in result:
+            return f"Error: {result['error']}"
+        if name == "write_cells":
+            n = result.get("cells_written", 0)
+            return f"Wrote {n} cell{'s' if n != 1 else ''}"
+        if name == "set_formula":
+            return f"Set {inp.get('cell', '?')} = {inp.get('formula', '?')}"
+        if name == "format_cells":
+            n = result.get("cells_formatted", 0)
+            return f"Formatted {n} cell{'s' if n != 1 else ''}"
+        if name == "insert_chart":
+            return f"Created {result.get('chart_type', '')} chart"
+        if name == "add_sheet":
+            return f"Added sheet '{result.get('sheet_name', '')}'"
+        if name == "get_sheet_info":
+            n = len(result.get("sheets", []))
+            return f"Listed {n} sheet{'s' if n != 1 else ''}"
+        if name in ("read_cells", "read_selection"):
+            return "Read data"
+        return name
+
+    def shutdown(self):
+        """Clean up the worker thread."""
+        self._worker.cancel()
+        self._thread.quit()
+        self._thread.wait(3000)

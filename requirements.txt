@@ -8,3 +8,4 @@ pyspellchecker>=0.7
 scipy>=1.10
 lmfit>=1.2
 qtawesome>=1.2
+anthropic>=0.39
