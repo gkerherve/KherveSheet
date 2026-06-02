@@ -21,7 +21,7 @@ from PyQt5.QtWidgets import (
     QComboBox, QLineEdit, QFormLayout, QDialogButtonBox,
     QWidget, QCheckBox, QMenu, QInputDialog, QGroupBox, QSpinBox,
     QSplitter, QTabWidget, QListWidget, QDoubleSpinBox,
-    QColorDialog,
+    QColorDialog, QToolButton, QApplication,
 )
 
 import matplotlib
@@ -1875,6 +1875,118 @@ class _ColorButton(QPushButton):
             self._update_style()
 
 
+class _AddSeriesDialog(QDialog):
+    """Dialog for adding a chart series with mouse-pick support.
+
+    Provides Y-range (required) and X-range (optional) fields, each with
+    a pick button.  When the user clicks a pick button the dialog hides,
+    and the next column-header click in the sheet fills in the range.
+    """
+
+    def __init__(self, sheet, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Series")
+        self._sheet = sheet
+
+        layout = QVBoxLayout(self)
+
+        # ── Y range row ──────────────────────────────────────────
+        y_row = QHBoxLayout()
+        y_row.addWidget(QLabel("Y data range:"))
+        self.y_range = QLineEdit()
+        self.y_range.setPlaceholderText("e.g. C1:C50")
+        y_row.addWidget(self.y_range)
+        y_pick = QToolButton()
+        y_pick.setText("\u2316")            # crosshair
+        y_pick.setToolTip("Pick Y column from the sheet")
+        y_pick.clicked.connect(lambda: self._start_pick(self.y_range))
+        y_row.addWidget(y_pick)
+        layout.addLayout(y_row)
+
+        # ── X range row (optional) ───────────────────────────────
+        x_row = QHBoxLayout()
+        x_row.addWidget(QLabel("X data range:"))
+        self.x_range = QLineEdit()
+        self.x_range.setPlaceholderText("optional — leave empty for row index")
+        x_row.addWidget(self.x_range)
+        x_pick = QToolButton()
+        x_pick.setText("\u2316")
+        x_pick.setToolTip("Pick X column from the sheet")
+        x_pick.clicked.connect(lambda: self._start_pick(self.x_range))
+        x_row.addWidget(x_pick)
+        layout.addLayout(x_row)
+
+        # ── Buttons ──────────────────────────────────────────────
+        btns = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+        self._pick_target = None
+        self._prev_sel_callback = None
+
+    # ── Pick mode ────────────────────────────────────────────────
+    def _start_pick(self, line_edit):
+        """Hide the dialog and wait for a column selection on the sheet."""
+        self._pick_target = line_edit
+        self.hide()
+        table = self._sheet.table
+        # Connect to column header click.
+        hdr = table.horizontalHeader()
+        hdr.sectionClicked.connect(self._on_header_click)
+        # Also allow clicking any cell.
+        self._prev_sel_callback = None
+        table.cellPressed.connect(self._on_cell_click)
+        self._sheet._status_msg(
+            "Click a column header or cell to select the range\u2026")
+
+    def _finish_pick(self, col_idx):
+        """Fill the target field with the full-column range and re-show."""
+        table = self._sheet.table
+        # Disconnect signals.
+        try:
+            table.horizontalHeader().sectionClicked.disconnect(
+                self._on_header_click)
+        except TypeError:
+            pass
+        try:
+            table.cellPressed.disconnect(self._on_cell_click)
+        except TypeError:
+            pass
+        # Build range string (e.g. "B1:B161").
+        # Find last non-empty row in this column.
+        last = 0
+        for r in range(table.rowCount()):
+            it = table.item(r, col_idx)
+            if it and it.text():
+                last = r
+        col_letter = self._col_letter(col_idx)
+        rng = f"{col_letter}1:{col_letter}{last + 1}"
+        if self._pick_target is not None:
+            self._pick_target.setText(rng)
+            self._pick_target = None
+        self._sheet._status_msg("", 0)
+        self.show()
+        self.activateWindow()
+
+    def _on_header_click(self, logical_idx):
+        self._finish_pick(logical_idx)
+
+    def _on_cell_click(self, row, col):
+        self._finish_pick(col)
+
+    @staticmethod
+    def _col_letter(idx):
+        """Convert 0-based column index to Excel letter (A, B, … Z, AA)."""
+        result = ""
+        n = idx + 1
+        while n > 0:
+            n, rem = divmod(n - 1, 26)
+            result = chr(65 + rem) + result
+        return result
+
+
 class PlotDetailsDialog(QDialog):
     """Series Properties — per-series list + property tabs."""
 
@@ -1988,23 +2100,33 @@ class PlotDetailsDialog(QDialog):
         self.done(self.SWITCH_TO_GENERAL)
 
     def _add_series(self):
-        """Add a new series from a column range entered by the user."""
+        """Add a new series via a dialog with mouse-pick buttons."""
         chart = self._chart
         sheet = chart._source_sheet
         if not sheet:
             return
-        rng, ok = QInputDialog.getText(
-            self, "Add Series", "Y data range (e.g. C1:C50):")
-        if not ok or not rng.strip():
+        dlg = _AddSeriesDialog(sheet, self)
+        if dlg.exec_() != QDialog.Accepted:
             return
-        parsed = self._parse_range(rng)
-        if parsed is None:
+        y_rng = dlg.y_range.text().strip()
+        x_rng = dlg.x_range.text().strip()
+        parsed_y = self._parse_range(y_rng)
+        if parsed_y is None:
             return
-        col, r1, r2 = parsed
-        label = self._col_letter(col)
-        y_all = sheet.numeric_column(col)
-        # X data: use chart's existing X column or row index.
-        if chart._x_col is not None:
+        y_col, r1, r2 = parsed_y
+        label = self._col_letter(y_col)
+        y_all = sheet.numeric_column(y_col)
+        # X data: use picked X range, chart's X column, or row index.
+        if x_rng:
+            parsed_x = self._parse_range(x_rng)
+            if parsed_x is not None:
+                x_col, xr1, xr2 = parsed_x
+                x_all = sheet.numeric_column(x_col)
+                r1 = max(r1, xr1)
+                r2 = min(r2, xr2)
+            else:
+                x_all = np.arange(sheet.row_count(), dtype=float)
+        elif chart._x_col is not None:
             x_all = sheet.numeric_column(chart._x_col)
         else:
             x_all = np.arange(sheet.row_count(), dtype=float)
@@ -2014,15 +2136,13 @@ class PlotDetailsDialog(QDialog):
         x, y = x_slice[mask], y_slice[mask]
         if len(x) == 0:
             return
-        chart.add_series(x, y, label, "Line", y_col=col,
+        chart.add_series(x, y, label, "Line", y_col=y_col,
                          row_start=r1, row_end=r2)
-        # Update the series list in the dialog.
         from PyQt5.QtWidgets import QListWidgetItem
         item = QListWidgetItem(label)
         item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
         item.setCheckState(Qt.Checked)
         self._series_list.addItem(item)
-        # Update fill target combo.
         self.fill_target.addItem(label)
         self._series_list.setCurrentRow(self._series_list.count() - 1)
 
