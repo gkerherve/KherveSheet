@@ -217,6 +217,12 @@ class MainWindow(QMainWindow):
             act.triggered.connect(
                 lambda _, n=name: self._apply_theme(n))
 
+        view_menu.addSeparator()
+        self._ai_chat_act = view_menu.addAction("AI Chat Sidebar")
+        self._ai_chat_act.setCheckable(True)
+        self._ai_chat_act.setChecked(False)
+        self._ai_chat_act.toggled.connect(self._toggle_ai_chat)
+
         # ── Page Layout ─────────────────────────────────────────────
         page_menu = mb.addMenu("Page &Layout")
 
@@ -252,6 +258,9 @@ class MainWindow(QMainWindow):
             act = chart_menu.addAction(pt)
             act.triggered.connect(
                 lambda _, t=pt: self._insert_chart(t))
+        chart_menu.addSeparator()
+        chart_menu.addAction("From Template\u2026",
+                             self._insert_chart_from_template)
 
         # Pivot / Transpose.
         insert_menu.addAction("Pivot / Transpose",
@@ -417,6 +426,11 @@ class MainWindow(QMainWindow):
                              self._show_statistics)
         tools_menu.addSeparator()
         tools_menu.addAction("Curve Fitting…", self._open_fitting)
+        tools_menu.addSeparator()
+        ai_act = tools_menu.addAction(
+            "AI Chat\u2026",
+            lambda: self._ai_chat_act.setChecked(True))
+        ai_act.setIcon(icons.themed_icon("mdi.robot"))
 
         # ── Examples (its own top-level menu, before Help) ───────────
         examples_menu = mb.addMenu("&Examples")
@@ -3304,6 +3318,42 @@ class MainWindow(QMainWindow):
         else:
             sheet.merge_selection()
 
+    # ── Chart from template ────────────────────────────────────────────
+
+    def _insert_chart_from_template(self):
+        """Create a chart from a saved plot template + current selection."""
+        from .plot_templates import LoadTemplateDialog
+        from .graph import EmbeddedChart
+        sheet = self._active_sheet()
+        if not sheet:
+            return
+        dlg = LoadTemplateDialog(self)
+        if dlg.exec_() != dlg.Accepted or dlg.selected_template is None:
+            return
+        tpl = dlg.selected_template
+
+        # Use current selection for row range if available.
+        sel = sheet.table.selectedRanges()
+        selection = sel[0] if sel else None
+
+        viewport = sheet.table.viewport()
+        chart = EmbeddedChart.from_template(
+            tpl, sheet, viewport, selection=selection)
+        if chart is None:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "No data",
+                "Could not create chart — no valid data found "
+                "for the template's column mapping.")
+            return
+
+        offset = len(sheet._charts) * 30
+        chart.move(40 + offset, 40 + offset)
+        sheet._charts.append(chart)
+        sheet.data_changed.connect(chart._on_data_changed)
+        chart.show()
+        chart.raise_()
+
     # ── Plot from sheet ──────────────────────────────────────────────
     def plot_from_sheet(self, sheet: SheetWidget, plot_type: str):
         """Create an embedded chart from selected columns."""
@@ -3926,6 +3976,25 @@ class MainWindow(QMainWindow):
         dlg = FittingDialog(s, self)
         dlg.setAttribute(Qt.WA_DeleteOnClose)
         dlg.show()
+
+    def _toggle_ai_chat(self, checked):
+        """Show or hide the AI Chat sidebar dock."""
+        if checked:
+            if not hasattr(self, '_ai_dock'):
+                from .ai_backend import HAVE_ANTHROPIC
+                if not HAVE_ANTHROPIC:
+                    QMessageBox.warning(
+                        self, "Missing Library",
+                        "The anthropic package is required for AI Chat.\n"
+                        "Install with:  pip install anthropic")
+                    self._ai_chat_act.setChecked(False)
+                    return
+                from .ai_chat import AiChatDock
+                self._ai_dock = AiChatDock(self)
+                self.addDockWidget(Qt.RightDockWidgetArea, self._ai_dock)
+            self._ai_dock.show()
+        elif hasattr(self, '_ai_dock'):
+            self._ai_dock.hide()
 
     def _open_science_tool(self, dialog_cls):
         """Open a Science data-analysis tool dialog (non-modal)."""

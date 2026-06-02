@@ -338,6 +338,7 @@ class EmbeddedChart(QWidget):
         """Return a JSON-safe dict capturing chart state."""
         ax = self._ax
         series = []
+        real_idx = 0
         for s in self._series:
             # Trendline series are saved via the trendlines list
             if s.get("is_trendline"):
@@ -419,12 +420,16 @@ class EmbeddedChart(QWidget):
             # Per-series X column (if different from chart default).
             if s.get("x_col") is not None:
                 sd["x_col"] = s["x_col"]
+            # Per-series Y column (for template round-trip).
+            if real_idx < len(self._y_cols):
+                sd["y_col"] = self._y_cols[real_idx]
             # Row range info for data tab persistence.
             for rk in ("x_row_start", "x_row_end",
                         "y_row_start", "y_row_end"):
                 if rk in s:
                     sd[rk] = int(s[rk])
             series.append(sd)
+            real_idx += 1
         d = {
             "series": series,
             "pos_x": self.x(),
@@ -483,6 +488,275 @@ class EmbeddedChart(QWidget):
         if self._trendlines:
             d["trendlines"] = [t.to_dict() for t in self._trendlines]
         return d
+
+    # ── Plot template support ──────────────────────────────────────────
+
+    def to_template(self) -> dict:
+        """Export chart config as a reusable template (no raw data)."""
+        d = self.to_dict()
+        # Strip raw data arrays — keep column mapping and visual props.
+        for s in d.get("series", []):
+            s.pop("x", None)
+            s.pop("y", None)
+        # Strip fitted trendline parameters (model config is kept).
+        for t in d.get("trendlines", []):
+            t.pop("params", None)
+            t.pop("equation", None)
+            t.pop("gof", None)
+        # Strip absolute position — templates shouldn't fix placement.
+        d.pop("pos_x", None)
+        d.pop("pos_y", None)
+        return d
+
+    @classmethod
+    def from_template(cls, tpl: dict, source_sheet, parent,
+                      selection=None):
+        """Create a chart from a template, pulling live data from *sheet*.
+
+        *selection* is an optional ``QTableWidgetSelectionRange``.  If
+        provided the row range is taken from it; otherwise the template's
+        stored row range is used.
+        """
+        import numpy as np
+        series_defs = tpl.get("series", [])
+        if not series_defs:
+            return None
+
+        chart_x_col = tpl.get("x_col")
+
+        def _col_data(sheet, col, r0, r1):
+            arr = sheet.numeric_column(col)
+            return arr[r0:r1 + 1] if arr is not None else np.array([])
+
+        chart = None
+        for i, sd in enumerate(series_defs):
+            x_col = sd.get("x_col", chart_x_col)
+            y_col = sd.get("y_col")
+            if y_col is None:
+                continue
+
+            if selection is not None:
+                r0, r1 = selection.topRow(), selection.bottomRow()
+            else:
+                r0 = sd.get("x_row_start", sd.get("y_row_start", 0))
+                r1 = sd.get("x_row_end", sd.get("y_row_end", 99))
+
+            if x_col is not None:
+                x = _col_data(source_sheet, x_col, r0, r1)
+            else:
+                x = np.arange(r1 - r0 + 1, dtype=float)
+            y = _col_data(source_sheet, y_col, r0, r1)
+
+            # Mask NaN.
+            mask = ~(np.isnan(x) | np.isnan(y))
+            x, y = x[mask], y[mask]
+            if len(x) == 0:
+                continue
+
+            label = sd.get("label", f"Series {i + 1}")
+            pt = sd.get("plot_type", "Line")
+
+            if chart is None:
+                chart = cls(x, y, label, pt, source_sheet, parent,
+                            x_col=x_col, y_col=y_col,
+                            row_start=r0, row_end=r1)
+            else:
+                chart.add_series(x, y, label, pt,
+                                 x_col=x_col, y_col=y_col,
+                                 row_start=r0, row_end=r1)
+
+        if chart is None:
+            return None
+
+        # Apply size.
+        w = tpl.get("width", 480)
+        h = tpl.get("height", 320)
+        chart.resize(w, h)
+        if tpl.get("keep_ratio"):
+            chart._keep_ratio = True
+            chart._aspect_ratio = w / max(h, 1)
+
+        # Tight layout / subplot margins.
+        if tpl.get("tight_layout") is True:
+            chart._tight_layout = True
+        elif tpl.get("tight_layout") is False:
+            chart._tight_layout = False
+            try:
+                chart._figure.set_layout_engine("none")
+            except Exception:
+                pass
+            margins = tpl.get("subplot_margins")
+            if margins:
+                chart._figure.subplots_adjust(**margins)
+
+        ax = chart._ax
+        ax.set_title(tpl.get("title", ""))
+        ax.set_xlabel(tpl.get("xlabel", "X"))
+        ax.set_ylabel(tpl.get("ylabel", "Y"))
+
+        # Secondary labels.
+        for side, key in (("top", "top_label"), ("right", "right_label")):
+            lbl = tpl.get(key, "")
+            if lbl:
+                setattr(chart, f'_{side}_label_text', lbl)
+                from .axis_dialog import AxisPropertiesDialog
+                AxisPropertiesDialog._set_secondary_label(
+                    chart, side, lbl, {"fontsize": 10})
+
+        # Axis properties.
+        axis_props = tpl.get("axis_props")
+        if axis_props:
+            chart._axis_props = axis_props
+            from .axis_dialog import AxisPropertiesDialog
+            for direction, st in axis_props.items():
+                AxisPropertiesDialog._apply_dir_static(chart, direction, st)
+        else:
+            try:
+                ax.set_xscale(tpl.get("xscale", "linear"))
+                ax.set_yscale(tpl.get("yscale", "linear"))
+            except ValueError:
+                pass
+            ax.grid(tpl.get("grid", False))
+
+        # Column mapping.
+        chart._x_col = chart_x_col
+        chart._y_cols = tpl.get("y_cols", [])
+        if chart._source_sheet and chart._y_cols:
+            chart._source_sheet.data_changed.connect(
+                chart._on_data_changed)
+
+        # Visual properties per series (reuse from_dict logic).
+        from matplotlib.collections import PathCollection
+        for idx, sd in enumerate(series_defs):
+            if idx >= len(chart._series):
+                break
+            artist = chart._series[idx].get("artist")
+            if artist is not None:
+                is_scatter = isinstance(artist, PathCollection)
+                if is_scatter:
+                    if "color" in sd or "markerfacecolor" in sd:
+                        c = sd.get("markerfacecolor", sd.get("color"))
+                        try:
+                            artist.set_facecolors(c)
+                        except Exception:
+                            pass
+                    if "markeredgecolor" in sd:
+                        try:
+                            artist.set_edgecolors(sd["markeredgecolor"])
+                        except Exception:
+                            pass
+                    if "markersize" in sd:
+                        try:
+                            artist.set_sizes([sd["markersize"] ** 2])
+                        except Exception:
+                            pass
+                    if "marker" in sd:
+                        mk = sd["marker"]
+                        chart._series[idx]["marker"] = mk
+                        if mk != "None":
+                            from matplotlib.markers import MarkerStyle
+                            marker = MarkerStyle(mk)
+                            path = marker.get_path().transformed(
+                                marker.get_transform())
+                            artist.set_paths([path])
+                else:
+                    if "linestyle" in sd and hasattr(artist, 'set_linestyle'):
+                        artist.set_linestyle(sd["linestyle"])
+                    if "linewidth" in sd and hasattr(artist, 'set_linewidth'):
+                        artist.set_linewidth(sd["linewidth"])
+                    if "color" in sd and hasattr(artist, 'set_color'):
+                        artist.set_color(sd["color"])
+                    if "marker" in sd and hasattr(artist, 'set_marker'):
+                        mk = sd["marker"]
+                        artist.set_marker(mk if mk != "None" else "")
+                    if "markersize" in sd and hasattr(
+                            artist, 'set_markersize'):
+                        artist.set_markersize(sd["markersize"])
+                    if "markerfacecolor" in sd and hasattr(
+                            artist, 'set_markerfacecolor'):
+                        artist.set_markerfacecolor(sd["markerfacecolor"])
+                    if "markeredgecolor" in sd and hasattr(
+                            artist, 'set_markeredgecolor'):
+                        artist.set_markeredgecolor(sd["markeredgecolor"])
+                if sd.get("visible") is False:
+                    if hasattr(artist, 'set_visible'):
+                        artist.set_visible(False)
+            # Fill properties.
+            fm = sd.get("fill_mode", "none")
+            if fm != "none":
+                chart.apply_fill(
+                    idx, fm, sd.get("fill_target", 0),
+                    sd.get("fill_color", "#1f77b4"),
+                    sd.get("fill_alpha", 0.3))
+
+        # Header mode.
+        chart._header_row = bool(tpl.get("header_row", False))
+        if chart._header_row:
+            chart._apply_header_labels(refresh_legend=False)
+
+        # Legend.
+        leg_font = tpl.get("legend_font")
+        leg_size = tpl.get("legend_size", 8)
+        leg_visible = tpl.get("legend_visible", True)
+        lp = tpl.get("legend_props", {})
+        if leg_visible:
+            prop = {"family": leg_font or "sans-serif", "size": leg_size}
+            if lp.get("bold"):
+                prop["weight"] = "bold"
+            if lp.get("italic"):
+                prop["style"] = "italic"
+            kw = {
+                "loc": "best",
+                "prop": prop,
+                "frameon": lp.get("frame_on", True),
+                "framealpha": lp.get("frame_alpha", 0.8),
+                "shadow": lp.get("shadow", False),
+                "fancybox": lp.get("fancybox", True),
+                "ncol": lp.get("ncol", 1),
+                "markerscale": lp.get("markerscale", 1.0),
+                "labelspacing": lp.get("labelspacing", 0.5),
+                "columnspacing": lp.get("columnspacing", 2.0),
+                "handlelength": lp.get("handlelength", 2.0),
+                "handletextpad": lp.get("handletextpad", 0.8),
+                "borderpad": lp.get("borderpad", 0.4),
+            }
+            title = lp.get("title")
+            if title:
+                kw["title"] = title
+            leg = ax.legend(**kw)
+            if leg:
+                leg.set_draggable(True)
+                lc = lp.get("label_color", "#000000")
+                for t in leg.get_texts():
+                    t.set_color(lc)
+                fp = leg.get_frame()
+                if fp:
+                    fp.set_edgecolor(lp.get("edge_color", "#cccccc"))
+                    fp.set_facecolor(lp.get("face_color", "#ffffff"))
+            if lp:
+                chart._legend_props = dict(lp)
+        else:
+            leg = ax.get_legend()
+            if leg:
+                leg.remove()
+
+        # Trendlines — re-fit from data (template doesn't store params).
+        tl_list = tpl.get("trendlines", [])
+        if tl_list:
+            from .trendline import TrendlineInfo, restore_trendline
+            for td in tl_list:
+                info = TrendlineInfo.from_dict(td)
+                restore_trendline(chart, info)
+                chart._trendlines.append(info)
+
+        # General properties last (sketch effect needs all artists).
+        gp = tpl.get("general_props")
+        if gp:
+            from .general_properties import apply_general_state
+            apply_general_state(chart, gp)
+
+        chart._canvas.draw_idle()
+        return chart
 
     @classmethod
     def from_dict(cls, d, source_sheet, parent):
@@ -689,6 +963,120 @@ class EmbeddedChart(QWidget):
             apply_general_state(chart, gp)
         chart._canvas.draw_idle()
         return chart
+
+    # ── Plot template actions ──────────────────────────────────────────
+
+    def _save_as_template(self):
+        from .plot_templates import SaveTemplateDialog, save_template
+        title = self._ax.get_title() or "Untitled"
+        dlg = SaveTemplateDialog(self, default_name=title)
+        if dlg.exec_() != dlg.Accepted:
+            return
+        tpl = self.to_template()
+        if dlg.description:
+            tpl["description"] = dlg.description
+        save_template(dlg.template_name, tpl)
+
+    def _apply_template(self):
+        """Re-style this chart from a saved template (keeps data)."""
+        from .plot_templates import LoadTemplateDialog
+        dlg = LoadTemplateDialog(self)
+        if dlg.exec_() != dlg.Accepted or dlg.selected_template is None:
+            return
+        tpl = dlg.selected_template
+        ax = self._ax
+
+        # Apply axis labels and title.
+        ax.set_title(tpl.get("title", ax.get_title()))
+        ax.set_xlabel(tpl.get("xlabel", ax.get_xlabel()))
+        ax.set_ylabel(tpl.get("ylabel", ax.get_ylabel()))
+
+        # Axis properties.
+        axis_props = tpl.get("axis_props")
+        if axis_props:
+            self._axis_props = axis_props
+            from .axis_dialog import AxisPropertiesDialog
+            for direction, st in axis_props.items():
+                AxisPropertiesDialog._apply_dir_static(self, direction, st)
+
+        # General properties.
+        gp = tpl.get("general_props")
+        if gp:
+            from .general_properties import apply_general_state
+            apply_general_state(self, gp)
+
+        # Legend properties.
+        lp = tpl.get("legend_props", {})
+        leg_visible = tpl.get("legend_visible", True)
+        if leg_visible and lp:
+            leg_font = tpl.get("legend_font", "sans-serif")
+            leg_size = tpl.get("legend_size", 8)
+            prop = {"family": leg_font, "size": leg_size}
+            if lp.get("bold"):
+                prop["weight"] = "bold"
+            if lp.get("italic"):
+                prop["style"] = "italic"
+            kw = {
+                "loc": "best", "prop": prop,
+                "frameon": lp.get("frame_on", True),
+                "framealpha": lp.get("frame_alpha", 0.8),
+                "shadow": lp.get("shadow", False),
+                "fancybox": lp.get("fancybox", True),
+                "ncol": lp.get("ncol", 1),
+            }
+            leg = ax.legend(**kw)
+            if leg:
+                leg.set_draggable(True)
+            self._legend_props = dict(lp)
+
+        # Apply visual properties to existing series.
+        from matplotlib.collections import PathCollection
+        tpl_series = tpl.get("series", [])
+        for idx, sd in enumerate(tpl_series):
+            if idx >= len(self._series):
+                break
+            artist = self._series[idx].get("artist")
+            if artist is None:
+                continue
+            is_scatter = isinstance(artist, PathCollection)
+            if is_scatter:
+                if "color" in sd or "markerfacecolor" in sd:
+                    c = sd.get("markerfacecolor", sd.get("color"))
+                    try:
+                        artist.set_facecolors(c)
+                    except Exception:
+                        pass
+                if "markeredgecolor" in sd:
+                    try:
+                        artist.set_edgecolors(sd["markeredgecolor"])
+                    except Exception:
+                        pass
+            else:
+                if "linestyle" in sd and hasattr(artist, 'set_linestyle'):
+                    artist.set_linestyle(sd["linestyle"])
+                if "linewidth" in sd and hasattr(artist, 'set_linewidth'):
+                    artist.set_linewidth(sd["linewidth"])
+                if "color" in sd and hasattr(artist, 'set_color'):
+                    artist.set_color(sd["color"])
+                if "marker" in sd and hasattr(artist, 'set_marker'):
+                    mk = sd["marker"]
+                    artist.set_marker(mk if mk != "None" else "")
+                if "markersize" in sd and hasattr(artist, 'set_markersize'):
+                    artist.set_markersize(sd["markersize"])
+                if "markerfacecolor" in sd and hasattr(
+                        artist, 'set_markerfacecolor'):
+                    artist.set_markerfacecolor(sd["markerfacecolor"])
+                if "markeredgecolor" in sd and hasattr(
+                        artist, 'set_markeredgecolor'):
+                    artist.set_markeredgecolor(sd["markeredgecolor"])
+
+        # Size.
+        w = tpl.get("width")
+        h = tpl.get("height")
+        if w and h:
+            self.resize(w, h)
+
+        self._canvas.draw_idle()
 
     # ── Close ───────────────────────────────────────────────────────
     def _close_chart(self):
@@ -1307,6 +1695,13 @@ class EmbeddedChart(QWidget):
                               lambda: self._export_image("pdf"))
         export_menu.addAction("Save as SVG\u2026",
                               lambda: self._export_image("svg"))
+
+        # Plot templates
+        menu.addSeparator()
+        menu.addAction("Save as Plot Template\u2026",
+                        self._save_as_template)
+        menu.addAction("Apply Plot Template\u2026",
+                        self._apply_template)
 
         menu.addSeparator()
         menu.addAction("Update Plot", self._refresh_data)
