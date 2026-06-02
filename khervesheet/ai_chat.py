@@ -150,25 +150,104 @@ class _TypingIndicator(QLabel):
 # ── Send-on-enter text edit ───────────────────────────────────────
 
 class _ChatInput(QPlainTextEdit):
-    """Text input that emits *submit* on Enter (Ctrl+Enter for newline)."""
+    """Text input that emits *submit* on Enter (Ctrl+Enter for newline).
+
+    Up/Down arrows recall previously sent messages, shell-style.  The
+    history is persisted to QSettings so it survives restarts.  Arrow
+    navigation only kicks in at the first/last line so multi-line
+    drafts can still be edited normally.
+    """
 
     submit = pyqtSignal()
+
+    _MAX_HISTORY = 100
+    _SETTINGS_KEY = "ai/input_history"
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setPlaceholderText("Ask Claude to edit the spreadsheet…")
         self.setMaximumHeight(80)
         self.setTabChangesFocus(True)
+        # Sent-message history (oldest first), loaded from settings.
+        s = QSettings("KherveSheet", "KherveSheet")
+        stored = s.value(self._SETTINGS_KEY, []) or []
+        self._history: list = [str(x) for x in stored]
+        self._hist_index: int | None = None  # None = editing a fresh draft
+        self._draft: str = ""                 # unsent text saved on recall
+
+    def add_history(self, text: str):
+        """Record a sent message and reset navigation state."""
+        text = text.rstrip()
+        if text and (not self._history or self._history[-1] != text):
+            self._history.append(text)
+            if len(self._history) > self._MAX_HISTORY:
+                self._history = self._history[-self._MAX_HISTORY:]
+            s = QSettings("KherveSheet", "KherveSheet")
+            s.setValue(self._SETTINGS_KEY, self._history)
+        self._hist_index = None
+        self._draft = ""
+
+    def clear_history(self):
+        self._history.clear()
+        self._hist_index = None
+        self._draft = ""
+        s = QSettings("KherveSheet", "KherveSheet")
+        s.setValue(self._SETTINGS_KEY, [])
+
+    # ── History navigation ──────────────────────────────────────
+
+    def _on_first_line(self) -> bool:
+        return self.textCursor().blockNumber() == 0
+
+    def _on_last_line(self) -> bool:
+        return (self.textCursor().blockNumber()
+                == self.document().blockCount() - 1)
+
+    def _move_cursor_end(self):
+        cur = self.textCursor()
+        cur.movePosition(cur.End)
+        self.setTextCursor(cur)
+
+    def _history_prev(self):
+        if not self._history:
+            return
+        if self._hist_index is None:
+            # Entering history — stash the current unsent draft.
+            self._draft = self.toPlainText()
+            self._hist_index = len(self._history)
+        if self._hist_index > 0:
+            self._hist_index -= 1
+            self.setPlainText(self._history[self._hist_index])
+            self._move_cursor_end()
+
+    def _history_next(self):
+        if self._hist_index is None:
+            return
+        self._hist_index += 1
+        if self._hist_index >= len(self._history):
+            # Past the newest entry — restore the saved draft.
+            self._hist_index = None
+            self.setPlainText(self._draft)
+        else:
+            self.setPlainText(self._history[self._hist_index])
+        self._move_cursor_end()
 
     def keyPressEvent(self, event):
-        if (event.key() in (Qt.Key_Return, Qt.Key_Enter)
-                and not event.modifiers() & Qt.ControlModifier):
+        key = event.key()
+        ctrl = event.modifiers() & Qt.ControlModifier
+        if key in (Qt.Key_Return, Qt.Key_Enter) and not ctrl:
             self.submit.emit()
             return
         # Ctrl+Enter → insert newline.
-        if (event.key() in (Qt.Key_Return, Qt.Key_Enter)
-                and event.modifiers() & Qt.ControlModifier):
+        if key in (Qt.Key_Return, Qt.Key_Enter) and ctrl:
             self.insertPlainText("\n")
+            return
+        # Up/Down recall history when at the first/last line.
+        if key == Qt.Key_Up and self._on_first_line():
+            self._history_prev()
+            return
+        if key == Qt.Key_Down and self._on_last_line():
+            self._history_next()
             return
         super().keyPressEvent(event)
 
@@ -274,6 +353,7 @@ class AiChatDock(QDockWidget):
         # Show user bubble.
         bubble = ChatBubble("user", text)
         self._msg_layout.addWidget(bubble)
+        self._input.add_history(text)
         self._input.clear()
         self._set_busy(True)
         self._current_bubble = None
