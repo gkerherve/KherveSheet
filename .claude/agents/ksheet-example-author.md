@@ -67,10 +67,20 @@ A complete, correct reference build is `examples/build_projectile_motion.py`
 2. **Only use formula functions KherveSheet supports.** Check
    `khervesheet/formulas.py` for the function list before using one
    (SUM, MAX, MIN, AVERAGE, COS, SIN, RADIANS, DEGREES, IF, etc. exist).
-3. Charts take **literal numeric data** (compute the arrays in Python with
-   numpy) — they do not read cells. Make the chart data match what the
-   formulas compute so the sheet and plot agree.
-4. Keep absolute refs (`$E$5`) for shared inputs the table rows reference.
+3. **Charts MUST be bound to the sheet data — never a static snapshot.**
+   On every `Series`, set `y_col` (and `x_col`, or omit for a row-index
+   X) plus `row_start`/`row_end` (0-based, inclusive) so the curve
+   re-reads those columns when a cell changes. Editing an input should
+   visibly move the plot. Still pass `x`/`y` arrays for the first render,
+   computed in numpy to **match** what the bound columns evaluate to.
+   Either all series in a chart are bound or none (the library enforces
+   this). The bound columns should usually be the ones you `designate`d
+   X/Y.
+4. **Equations are matplotlib *mathtext*, not full LaTeX.** Use `\frac`
+   (NOT `\tfrac`/`\dfrac`), `\mathrm{}` (NOT `\text{}`). The library's
+   `equation()` validates the string and raises on bad markup — fix it,
+   don't ship a blank box. Give the equation a sensible `size=(w, h)`.
+5. Keep absolute refs (`$E$5`) for shared inputs the table rows reference.
 
 ## Workflow for every request
 

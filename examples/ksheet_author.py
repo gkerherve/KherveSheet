@@ -91,16 +91,46 @@ PLOT_TYPES = ("Line", "Scatter", "Line+Symbol", "Bar", "Step", "Stem",
               "Histogram", "Box")
 
 
+def validate_latex(latex: str) -> None:
+    """Raise ``ValueError`` if matplotlib mathtext cannot parse *latex*.
+
+    Mathtext (not full LaTeX) renders the equations, so e.g. ``\\tfrac``
+    is invalid.  Catching it here turns a silent blank render into a
+    clear authoring-time error.  If matplotlib is unavailable the check
+    is skipped.
+    """
+    try:
+        from matplotlib.mathtext import MathTextParser
+    except Exception:
+        return
+    try:
+        MathTextParser("agg").parse(f"${latex}$")
+    except Exception as exc:
+        raise ValueError(
+            f"Invalid mathtext equation {latex!r}: {exc}. "
+            "Mathtext is not full LaTeX — avoid \\tfrac/\\dfrac/\\text; "
+            "use \\frac and \\mathrm{}.") from exc
+
+
 # ── Chart series ─────────────────────────────────────────────────────
 
 @dataclass
 class Series:
     """One data series for a chart.
 
-    *x* / *y* are numeric sequences.  Extra keyword style attributes
-    (``color``, ``linewidth``, ``linestyle``, ``marker``, ``markersize``,
-    ``markerfacecolor``, ``markeredgecolor``) are written to the series
-    ``props`` so they survive a round-trip and style the plot.
+    *x* / *y* are numeric sequences used for the initial render.  Extra
+    keyword style attributes (``color``, ``linewidth``, ``linestyle``,
+    ``marker``, ``markersize``, ``markerfacecolor``, ``markeredgecolor``)
+    are written to the series ``props`` so they survive a round-trip.
+
+    **Bind the series to the sheet so the plot is *live* (not a static
+    snapshot).**  Set ``y_col`` to the 0-based source column holding Y,
+    ``x_col`` to the column holding X (omit for a row-index X), and
+    ``row_start`` / ``row_end`` to the 0-based, inclusive data-row bounds.
+    When every series in a chart is bound this way, the chart re-reads
+    those columns whenever a cell changes — so editing an input updates
+    the curve.  The ``x`` / ``y`` arrays you pass must match what those
+    columns evaluate to, so the first render and the live data agree.
     """
 
     x: Sequence[float]
@@ -114,12 +144,27 @@ class Series:
     markersize: Optional[float] = None
     markerfacecolor: Optional[str] = None
     markeredgecolor: Optional[str] = None
+    # Live data-binding (0-based column / inclusive row indices).
+    x_col: Optional[int] = None
+    y_col: Optional[int] = None
+    row_start: Optional[int] = None
+    row_end: Optional[int] = None
 
     def _props(self) -> dict:
         keys = ("color", "linewidth", "linestyle", "marker", "markersize",
                 "markerfacecolor", "markeredgecolor")
-        return {k: getattr(self, k) for k in keys
-                if getattr(self, k) is not None}
+        props = {k: getattr(self, k) for k in keys
+                 if getattr(self, k) is not None}
+        # Source mapping so the chart can re-read the sheet on edit.
+        if self.x_col is not None:
+            props["x_col"] = int(self.x_col)
+        if self.row_start is not None:
+            props["x_row_start"] = int(self.row_start)
+            props["y_row_start"] = int(self.row_start)
+        if self.row_end is not None:
+            props["x_row_end"] = int(self.row_end)
+            props["y_row_end"] = int(self.row_end)
+        return props
 
 
 # ── Sheet ────────────────────────────────────────────────────────────
@@ -333,31 +378,55 @@ class Sheet:
               size=(420, 300), title="", xlabel="X", ylabel="Y",
               grid=True, legend=True, xscale="linear",
               yscale="linear") -> "Sheet":
-        """Add a matplotlib chart overlay built from *series*."""
+        """Add a matplotlib chart overlay built from *series*.
+
+        If **every** series sets ``y_col`` (see :class:`Series`), the
+        chart is bound to the sheet and updates live when those columns
+        change.  Mixing bound and unbound series is rejected, because the
+        live-update path zips series to ``y_cols`` by position.
+        """
         ser_dicts = []
         for s in series:
-            d = {
+            ser_dicts.append({
                 "x": np.asarray(s.x, dtype=float),
                 "y": np.asarray(s.y, dtype=float),
                 "label": s.label,
                 "plot_type": s.plot_type,
                 "props": s._props(),
-            }
-            ser_dicts.append(d)
-        self._charts.append({
+            })
+        ch = {
             "series": ser_dicts,
             "pos_x": int(at[0]), "pos_y": int(at[1]),
             "width": int(size[0]), "height": int(size[1]),
             "title": title, "xlabel": xlabel, "ylabel": ylabel,
             "xscale": xscale, "yscale": yscale, "grid": bool(grid),
             "legend_visible": bool(legend),
-        })
+        }
+        bound = [s for s in series if s.y_col is not None]
+        if bound:
+            if len(bound) != len(series):
+                raise ValueError(
+                    "chart(): either all series must set y_col (live "
+                    "data-binding) or none.")
+            ch["y_cols"] = [int(s.y_col) for s in series]
+            xcols = {s.x_col for s in series if s.x_col is not None}
+            if len(xcols) == 1:
+                ch["x_col"] = int(next(iter(xcols)))
+        self._charts.append(ch)
         return self
 
     def equation(self, latex: str, *, at=(480, 360), fontsize=20,
                  color="#000000", bg_color=None, border_color=None,
                  border_width=1.0, size=None) -> "Sheet":
-        """Embed a LaTeX equation (rendered with matplotlib mathtext)."""
+        """Embed a LaTeX equation (rendered with matplotlib **mathtext**).
+
+        Note: mathtext is *not* full LaTeX — amsmath commands such as
+        ``\\tfrac`` / ``\\dfrac`` and ``\\text{}`` are unsupported; use
+        ``\\frac`` and ``\\mathrm{}`` instead.  The string is validated
+        here and a ``ValueError`` is raised if mathtext cannot parse it,
+        so bad markup fails at authoring time rather than rendering blank.
+        """
+        validate_latex(latex)
         d = {
             "latex": latex, "fontsize": int(fontsize), "color": color,
             "bg_color": bg_color, "border_color": border_color,
@@ -434,6 +503,11 @@ class Sheet:
             cg.attrs["grid"] = ch["grid"]
             cg.attrs["legend_visible"] = ch["legend_visible"]
             cg.attrs["legend_size"] = 8
+            # Live data-binding to sheet columns.
+            if ch.get("x_col") is not None:
+                cg.attrs["x_col"] = int(ch["x_col"])
+            if ch.get("y_cols"):
+                cg.attrs["y_cols"] = json.dumps(ch["y_cols"])
             cg.attrs["series_count"] = len(ch["series"])
             for ki, s in enumerate(ch["series"]):
                 srg = cg.create_group(f"series_{ki}")
