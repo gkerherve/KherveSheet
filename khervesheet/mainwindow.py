@@ -427,6 +427,8 @@ class MainWindow(QMainWindow):
             for name, builder in cats[cat]:
                 cm.addAction(name,
                              lambda b=builder: self._load_example(b))
+        # Rich .ksheet example files shipped in the examples/ folder.
+        self._build_example_files_menu(help_menu)
         help_menu.addSeparator()
         help_menu.addAction("&About", self._show_about)
         help_menu.addAction("GitHub Repository", self._open_github)
@@ -973,6 +975,38 @@ class MainWindow(QMainWindow):
         wb.ensure_layout_tabs()
         wb.tabs.setCurrentIndex(0)
         self._status_msg("Example loaded", 3000)
+
+    def _examples_dir(self):
+        """Return the bundled examples/ folder, or None if absent."""
+        import os
+        d = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "examples")
+        return d if os.path.isdir(d) else None
+
+    def _build_example_files_menu(self, help_menu):
+        """Add a submenu listing the rich .ksheet example files."""
+        import os
+        d = self._examples_dir()
+        if not d:
+            return
+        files = sorted(f for f in os.listdir(d)
+                       if f.lower().endswith(".ksheet"))
+        if not files:
+            return
+        sub = help_menu.addMenu("Example Files")
+        for fn in files:
+            label = os.path.splitext(fn)[0]
+            path = os.path.join(d, fn)
+            sub.addAction(
+                label,
+                lambda _=False, p=path: self._open_example_file(p))
+
+    def _open_example_file(self, path: str):
+        """Open a shipped .ksheet example (guards unsaved changes)."""
+        if not self._maybe_save_changes():
+            return
+        self._open_path(path)
 
     # Extensions accepted by the open dialog and drag-and-drop.
     _OPENABLE_EXTS = (".ksheet", ".csv", ".xlsx", ".xlsm")
