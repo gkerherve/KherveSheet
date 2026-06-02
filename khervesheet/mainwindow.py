@@ -3887,8 +3887,8 @@ class MainWindow(QMainWindow):
     def _print_kwargs(self):
         """Gather current page-setup state for the printing module."""
         ps = getattr(self, '_page_setup_state', {})
-        wb = self._wb
-        name = wb.tabText(wb.currentIndex()) if wb else "Sheet1"
+        wb = self._workbook
+        name = wb.tabs.tabText(wb.tabs.currentIndex()) if wb else "Sheet1"
         return {
             "orientation": ps.get("orientation", "portrait"),
             "paper_key": ps.get("paper_key", "A4"),
