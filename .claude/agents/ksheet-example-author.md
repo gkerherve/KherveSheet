@@ -100,6 +100,23 @@ A complete, correct reference build is `examples/build_projectile_motion.py`
    - On edit, numeric results are re-formatted to ~3 decimals, so a
      value below ~5e-4 rounds to `0`. Store tiny constants in scaled
      units (e.g. a CTE as `12` ppm, not `1.2e-5`) so chained refs survive.
+   - Inside formulas, equality is `==` and there is **no** `<>` operator
+     (`=A1=1` fails; use `=A1==1`, and `NOT(A1==B1)` for not-equal).
+   - `CHOOSE` and `EOMONTH` are **unimplemented**. `COUNT`/`COUNTA`/
+     `COUNTIF` only count **numeric** cells (text entries are ignored, so
+     you cannot COUNTA a column of words). `TEXT(date,"dddd")` does NOT
+     give a weekday name (Python format codes, not Excel's). `WEEKDAY(
+     DATE(y,m,1))` works and returns 1=Mon…7=Sun — fine for Mon-start
+     calendars; compute days-in-month with nested `IF` + a leap-year
+     `MOD` test rather than `EOMONTH`.
+
+For **templates** (planners, trackers, blank forms the user fills):
+rule 0 is relaxed — most entry cells are intentionally blank. Make the
+layout genuinely polished (filled header rows, banding, boxed sections,
+sensible column widths, dropdowns for status fields), and reserve
+formulas for the few live cells (dates, totals, % complete, chart
+summaries). Verification then only requires: loads, zero `#ERROR`, the
+few formulas evaluate, and any chart is data-bound.
 3. **Charts MUST be bound to the sheet data — never a static snapshot.**
    On every `Series`, set `y_col` (and `x_col`, or omit for a row-index
    X) plus `row_start`/`row_end` (0-based, inclusive) so the curve
