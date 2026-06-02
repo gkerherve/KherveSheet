@@ -240,7 +240,7 @@ class MainWindow(QMainWindow):
                 lambda n=name, ww=w, hh=h: self._set_page_size(
                     n, ww, hh))
         page_menu.addSeparator()
-        page_menu.addAction("Print\u2026", self._print_sheet, "Ctrl+P")
+        page_menu.addAction("Print\u2026", self._print_preview, "Ctrl+P")
 
         # ── Insert ───────────────────────────────────────────────────
         insert_menu = mb.addMenu("&Insert")
@@ -476,9 +476,9 @@ class MainWindow(QMainWindow):
         self._print_btn.setIcon(icons.print_icon(_ICO))
         self._print_btn.setToolTip("Print Preview (Ctrl+P)")
         self._print_btn.setPopupMode(QToolButton.MenuButtonPopup)
-        self._print_btn.clicked.connect(self._print_sheet)
+        self._print_btn.clicked.connect(self._print_preview)
         print_menu = QMenu(self._print_btn)
-        print_menu.addAction("Print Preview\u2026", self._print_sheet)
+        print_menu.addAction("Print Preview\u2026", self._print_preview)
         print_menu.addSeparator()
         print_menu.addAction("Margins\u2026", self._page_margins)
         pm_orient = print_menu.addMenu("Orientation")
