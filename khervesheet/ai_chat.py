@@ -66,11 +66,15 @@ class ApiKeyDialog(QDialog):
         self.setMinimumWidth(440)
         layout = QFormLayout(self)
 
-        # Provider selector.
+        # Provider selector — annotate any whose SDK isn't installed.
+        from .ai_providers import is_available
         self._provider_combo = QComboBox()
         self._provider_keys = list(PROVIDERS.keys())
         for key in self._provider_keys:
-            self._provider_combo.addItem(PROVIDERS[key]["label"], key)
+            label = PROVIDERS[key]["label"]
+            if not is_available(key):
+                label += "  — not installed"
+            self._provider_combo.addItem(label, key)
         layout.addRow("Provider:", self._provider_combo)
 
         # Model (editable so local/custom names can be typed).

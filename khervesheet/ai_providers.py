@@ -34,6 +34,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 PROVIDERS: Dict[str, dict] = {
     "anthropic": {
         "label": "Anthropic (Claude)",
+        "module": "anthropic",
+        "pip": "anthropic",
         "needs_key": True,
         "needs_host": False,
         "models": [
@@ -45,6 +47,8 @@ PROVIDERS: Dict[str, dict] = {
     },
     "mistral": {
         "label": "Mistral AI",
+        "module": "mistralai",
+        "pip": "mistralai",
         "needs_key": True,
         "needs_host": False,
         "models": [
@@ -57,6 +61,8 @@ PROVIDERS: Dict[str, dict] = {
     },
     "ollama": {
         "label": "Ollama (local)",
+        "module": "ollama",
+        "pip": "ollama",
         "needs_key": False,
         "needs_host": True,
         "models": [
@@ -73,6 +79,18 @@ PROVIDERS: Dict[str, dict] = {
 DEFAULT_HOST = "http://localhost:11434"
 
 _MAX_TOKENS = 4096
+
+
+def is_available(provider_name: str) -> bool:
+    """True if the provider's Python SDK is importable in this env."""
+    import importlib.util
+    spec = PROVIDERS.get(provider_name)
+    if not spec:
+        return False
+    try:
+        return importlib.util.find_spec(spec["module"]) is not None
+    except (ImportError, ValueError):
+        return False
 
 
 # ── Format converters ──────────────────────────────────────────────
