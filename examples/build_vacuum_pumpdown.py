@@ -177,30 +177,31 @@ def build() -> str:
     #   Formulas reference:
     #     $B$5 = V,  $B$6 = S,  $B$7 = P0,  $B$8 = P_ult
     #
-    #   t_k = 5*(V/S) * k/(N-1)  for k=0..N-1
-    #   P_k = P_ult + (P0 - P_ult)*EXP(-5*k/(N-1))
+    #   The time column is a FIXED grid of literal seconds (independent
+    #   of V/S).  P references the time cell AND the inputs:
+    #     P_k = P_ult + (P0 - P_ult) * EXP(-t_k / (V/S))
+    #   so changing V or S moves the curve at each fixed time — which is
+    #   the physically meaningful behaviour and what the solver needs.
+    #   (If t itself were scaled by tau, t/tau would cancel and P would
+    #   be independent of V and S — the bug this layout avoids.)
     #
     #   NOTE: scientific notation literals such as 1E-15 MUST be avoided
     #   in formulas — the formula engine regex treats 'E' as a column
     #   letter.  Use a plain decimal 0.0000001 as the LOG10 guard.
 
     TABLE_START  = 10                  # 0-based index of table header row
-    first_data_0 = TABLE_START + 1     # 0-based first data row
-    first_data_1 = first_data_0 + 1    # 1-based sheet row of first data row
 
     s.set(9, 3, "Pump-Down Data")
     s.fmt(9, 3, bold=True, font_color=PALETTE["header"], font_size=11)
 
     table_rows = []
     for k in range(n_steps):
-        frac = k / (n_steps - 1)       # 0 .. 1 along 0..5*tau
-        # t formula: 5*(V/S)*frac — embed the Python float directly
-        t_formula = f"=5*($B$5/$B$6)*{frac}"
-        # P formula: P_ult + (P0-P_ult)*EXP(-5*frac)
-        p_formula = f"=$B$8+($B$7-$B$8)*EXP(-5*{frac})"
-        # log10(P) with tiny guard to keep LOG10 domain safe
-        log_formula = f"=LOG10(MAX($B$8+($B$7-$B$8)*EXP(-5*{frac}),0.0000001))"
-        table_rows.append([t_formula, p_formula, log_formula])
+        sr = TABLE_START + 2 + k       # 1-based sheet row of this data row
+        # Fixed literal time value; P/log reference the time & input cells.
+        t_value = round(float(times[k]), 3)
+        p_formula = f"=$B$8+($B$7-$B$8)*EXP(-D{sr}/($B$5/$B$6))"
+        log_formula = f"=LOG10(MAX(E{sr},0.0000001))"
+        table_rows.append([t_value, p_formula, log_formula])
 
     s.table(
         TABLE_START, 3,
@@ -211,7 +212,7 @@ def build() -> str:
     )
     # Override t column to plain decimal; log10 column to plain 3 d.p.
     for k in range(n_steps):
-        dr = first_data_0 + 1 + k      # 0-based data row (table adds 1 for header)
+        dr = TABLE_START + 1 + k       # 0-based data row (header at TABLE_START)
         s.fmt(dr, 3, number_format="0.00")
         s.fmt(dr, 5, number_format="0.000")
 
@@ -223,8 +224,8 @@ def build() -> str:
     #   table() inserts a header row at TABLE_START (0-based 10), so the
     #   0-based data rows run from first_data_0+1 (11) to
     #   first_data_0+n_steps (50).
-    chart_r0 = first_data_0 + 1         # inclusive start (0-based)
-    chart_r1 = first_data_0 + n_steps   # inclusive end   (0-based)
+    chart_r0 = TABLE_START + 1            # inclusive start (0-based)
+    chart_r1 = TABLE_START + n_steps      # inclusive end   (0-based)
 
     s.chart(
         [Series(

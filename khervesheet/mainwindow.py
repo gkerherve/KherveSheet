@@ -1771,7 +1771,14 @@ class MainWindow(QMainWindow):
                             if it:
                                 it.setText(str(result))
                             sheet._shadow[(r, c)] = str(result)
-                    sheet.table.blockSignals(False)
+                    # NB: keep table signals blocked through the
+                    # designation / insert-ops / cell-format restore
+                    # below.  Those steps mutate items (setBackground,
+                    # setFont, link styling), and an unblocked
+                    # itemChanged would fire _on_cell_changed, which
+                    # deletes the formula of any cell whose displayed
+                    # text is a computed value — silently wiping every
+                    # formatted formula cell.  Unblock only afterwards.
 
                     # Column designations.
                     desig_json = sg.attrs.get('col_designations', '')
@@ -1834,6 +1841,10 @@ class MainWindow(QMainWindow):
                                 flags |= Qt.TextWordWrap
                                 it.setFlags(flags)
                                 sheet.table.resizeRowToContents(fr)
+
+                    # Item mutations (formulas eval + format restore) are
+                    # done; safe to re-enable change signals now.
+                    sheet.table.blockSignals(False)
 
                     # Column widths.
                     if "col_widths" in sg:

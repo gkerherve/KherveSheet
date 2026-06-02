@@ -58,6 +58,23 @@ A complete, correct reference build is `examples/build_projectile_motion.py`
 
 ## Critical correctness rules
 
+0. **Derived cells MUST be live formulas, never pre-computed literals.**
+   This is the most important rule. Only two things are literals: the
+   editable **input** cells, and the **independent-variable grid** (the
+   x / time / temperature column). *Every* other value — every table
+   output, every summary number — must be a formula string starting with
+   `=` that references the input cells (absolute `$B$5` refs) and/or the
+   independent-variable cell in its row. Do **not** compute a value in
+   Python and `set()` it into an output cell; that produces a dead sheet
+   where editing inputs changes nothing and the solver has no chain to
+   optimise. Pass the numpy arrays only as the chart's initial render
+   data; the cells themselves must be formulas. Equivalently: editing
+   any input must visibly change the table, summary, and chart.
+   Beware algebraic self-cancellation: if you parameterise the
+   independent variable in terms of an input (e.g. `t = 5·τ·frac`), then
+   `EXP(-t/τ)` cancels τ and the output stops depending on the input —
+   keep the independent grid as fixed literals and reference it.
+
 1. **Row/column indices are 0-based** in the API. **Formula cell
    references are 1-based A1 strings.** This mismatch is the #1 bug
    source. A value written at `set(r, c, …)` lives at spreadsheet cell
@@ -120,8 +137,12 @@ A complete, correct reference build is `examples/build_projectile_motion.py`
    `_cell_formats`, `_cell_notes`, `_charts`, `_equations`. **Scan EVERY
    cell** for `#ERROR` (loop all rows × cols of the loaded sheet) — not
    just the few you spot-check — and fail loudly if any are found.
-   Confirm the chart's `_x_col`/`_y_cols` are set and formula results are
-   numerically correct. Delete the throwaway script when done.
+   **Assert `len(sheet._cell_formulas) > 0`** (a sheet that loads with
+   zero retained formulas means you wrote literals, not equations — see
+   rule 0). **Prove live behaviour**: set a new value into an input cell,
+   call `sheet._on_cell_changed(r, c)`, and confirm a charted output cell
+   actually changes. Confirm the chart's `_x_col`/`_y_cols` are set and
+   results are numerically correct. Delete the throwaway script when done.
 7. Report what you built: the topic, the features used, and the verified
    key results. The Help ▸ Example Files menu auto-discovers any
    `*.ksheet` in `examples/`, so no menu wiring is needed.
