@@ -573,8 +573,8 @@ class AiBackend(QObject):
         self._worker.error.connect(self._on_error)
         self._thread.start()
 
-    def send(self, text: str):
-        """Initiate a new user turn."""
+    def send(self, text: str, images: list = None):
+        """Initiate a new user turn, optionally with pasted images."""
         from PyQt5.QtCore import QSettings
         from .ai_providers import PROVIDERS, DEFAULT_HOST
         settings = QSettings("KherveSheet", "KherveSheet")
@@ -592,7 +592,10 @@ class AiBackend(QObject):
                 f"No API key configured for {spec['label']}. "
                 "Click the gear icon to set one.")
             return
-        self._messages.append({"role": "user", "text": text})
+        user_turn = {"role": "user", "text": text}
+        if images:
+            user_turn["images"] = images
+        self._messages.append(user_turn)
         self._messages = _trim_messages(self._messages)
         system = build_system_prompt(self._mw)
         # Invoke worker on its thread (queued connection).

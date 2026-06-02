@@ -109,7 +109,21 @@ def _anthropic_messages(history: List[dict]) -> List[dict]:
     for turn in history:
         role = turn["role"]
         if role == "user":
-            msgs.append({"role": "user", "content": turn["text"]})
+            imgs = turn.get("images") or []
+            if imgs:
+                content = [{
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": im.get("media_type", "image/png"),
+                        "data": im["data"],
+                    },
+                } for im in imgs]
+                content.append({"type": "text",
+                                "text": turn.get("text") or "."})
+                msgs.append({"role": "user", "content": content})
+            else:
+                msgs.append({"role": "user", "content": turn["text"]})
         elif role == "assistant":
             content: List[dict] = []
             if turn.get("text"):
@@ -139,7 +153,20 @@ def _openai_messages(system: str, history: List[dict]) -> List[dict]:
     for turn in history:
         role = turn["role"]
         if role == "user":
-            msgs.append({"role": "user", "content": turn["text"]})
+            imgs = turn.get("images") or []
+            if imgs:
+                content = [{"type": "text", "text": turn.get("text") or ""}]
+                for im in imgs:
+                    mt = im.get("media_type", "image/png")
+                    content.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mt};base64,{im['data']}",
+                        },
+                    })
+                msgs.append({"role": "user", "content": content})
+            else:
+                msgs.append({"role": "user", "content": turn["text"]})
         elif role == "assistant":
             m: dict = {"role": "assistant",
                        "content": turn.get("text") or ""}
@@ -170,7 +197,11 @@ def _ollama_messages(system: str, history: List[dict]) -> List[dict]:
     for turn in history:
         role = turn["role"]
         if role == "user":
-            msgs.append({"role": "user", "content": turn["text"]})
+            m = {"role": "user", "content": turn.get("text") or ""}
+            imgs = turn.get("images") or []
+            if imgs:
+                m["images"] = [im["data"] for im in imgs]
+            msgs.append(m)
         elif role == "assistant":
             m: dict = {"role": "assistant",
                        "content": turn.get("text") or ""}

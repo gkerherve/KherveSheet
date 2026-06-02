@@ -13,8 +13,12 @@ the Free Software Foundation, either version 3 of the License, or
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt, QTimer, QSettings, pyqtSignal
-from PyQt5.QtGui import QColor, QKeySequence
+import base64
+
+from PyQt5.QtCore import (
+    Qt, QTimer, QSettings, QBuffer, QByteArray, pyqtSignal,
+)
+from PyQt5.QtGui import QColor, QKeySequence, QImage, QPixmap
 from PyQt5.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPlainTextEdit, QToolButton, QScrollArea, QFrame,
@@ -28,6 +32,23 @@ from . import icons
 
 # ── Re-export the guard so mainwindow can check without extra import.
 __all__ = ["AiChatDock", "HAVE_ANTHROPIC"]
+
+
+# Cap pasted images so payloads stay reasonable for the vision APIs.
+_MAX_IMG_DIM = 1400
+
+
+def _qimage_to_b64_png(img: QImage) -> str:
+    """Encode a QImage as base64 PNG, downscaling very large images."""
+    if max(img.width(), img.height()) > _MAX_IMG_DIM:
+        img = img.scaled(_MAX_IMG_DIM, _MAX_IMG_DIM,
+                         Qt.KeepAspectRatio, Qt.SmoothTransformation)
+    ba = QByteArray()
+    buf = QBuffer(ba)
+    buf.open(QBuffer.WriteOnly)
+    img.save(buf, "PNG")
+    buf.close()
+    return base64.b64encode(bytes(ba)).decode("ascii")
 
 
 # ── API key / settings dialog ─────────────────────────────────────
@@ -176,6 +197,20 @@ class ChatBubble(QFrame):
     def set_text(self, text: str):
         self._label.setText(text)
 
+    def add_image_b64(self, b64: str):
+        """Show a base64-PNG thumbnail inside the bubble."""
+        pm = QPixmap()
+        try:
+            pm.loadFromData(base64.b64decode(b64))
+        except Exception:
+            return
+        if pm.isNull():
+            return
+        lbl = QLabel()
+        lbl.setPixmap(pm.scaledToWidth(
+            min(220, pm.width()), Qt.SmoothTransformation))
+        self.layout().addWidget(lbl)
+
 
 # ── Typing indicator ──────────────────────────────────────────────
 
@@ -219,6 +254,7 @@ class _ChatInput(QPlainTextEdit):
     """
 
     submit = pyqtSignal()
+    image_pasted = pyqtSignal(object)  # QImage
 
     _MAX_HISTORY = 100
     _SETTINGS_KEY = "ai/input_history"
@@ -311,6 +347,24 @@ class _ChatInput(QPlainTextEdit):
             return
         super().keyPressEvent(event)
 
+    # ── Image paste ─────────────────────────────────────────────
+
+    def canInsertFromMimeData(self, source):
+        if source.hasImage():
+            return True
+        return super().canInsertFromMimeData(source)
+
+    def insertFromMimeData(self, source):
+        """Intercept pasted images; let everything else paste as text."""
+        if source.hasImage():
+            img = source.imageData()
+            if not isinstance(img, QImage):
+                img = QImage(img)
+            if img is not None and not img.isNull():
+                self.image_pasted.emit(img)
+                return
+        super().insertFromMimeData(source)
+
 
 # ── Chat dock widget ──────────────────────────────────────────────
 
@@ -379,10 +433,23 @@ class AiChatDock(QDockWidget):
         self._typing = _TypingIndicator()
         main_layout.addWidget(self._typing)
 
+        # Pending-image attachment strip (hidden until an image is pasted).
+        self._pending_images: list = []  # [{"media_type","data","chip"}]
+        self._attach_bar = QWidget()
+        self._attach_layout = QHBoxLayout(self._attach_bar)
+        self._attach_layout.setContentsMargins(2, 2, 2, 2)
+        self._attach_layout.setSpacing(4)
+        self._attach_layout.addStretch()
+        self._attach_bar.hide()
+        main_layout.addWidget(self._attach_bar)
+
         # Input area.
         input_row = QHBoxLayout()
         self._input = _ChatInput()
         self._input.submit.connect(self._send)
+        self._input.image_pasted.connect(self._on_image_pasted)
+        self._input.setToolTip(
+            "Paste an image or screenshot (Ctrl+V) to attach it")
         input_row.addWidget(self._input, stretch=1)
 
         btn_col = QVBoxLayout()
@@ -414,7 +481,9 @@ class AiChatDock(QDockWidget):
         welcome = ChatBubble("assistant",
                              "Hello! I can help you edit your spreadsheet. "
                              "Try asking me to create a template, fill data, "
-                             "format cells, or insert a chart.\n"
+                             "format cells, or insert a chart. You can also "
+                             "paste a screenshot or image (Ctrl+V) for me to "
+                             "look at.\n"
                              "Set your provider (Anthropic, Mistral, or "
                              "Ollama) and API key via the gear icon.",
                              font_pt=self._font_pt)
@@ -454,16 +523,68 @@ class AiChatDock(QDockWidget):
 
     def _send(self):
         text = self._input.toPlainText().strip()
-        if not text or self._busy:
+        if (not text and not self._pending_images) or self._busy:
             return
-        # Show user bubble.
+        images = [{"media_type": im["media_type"], "data": im["data"]}
+                  for im in self._pending_images]
+        # Show user bubble (text + any attached image thumbnails).
         bubble = ChatBubble("user", text, font_pt=self._font_pt)
+        for im in images:
+            bubble.add_image_b64(im["data"])
         self._msg_layout.addWidget(bubble)
-        self._input.add_history(text)
+        if text:
+            self._input.add_history(text)
         self._input.clear()
+        self._clear_attachments()
         self._set_busy(True)
         self._current_bubble = None
-        self._backend.send(text)
+        self._backend.send(text, images or None)
+
+    # ── Image attachments ───────────────────────────────────────
+
+    def _on_image_pasted(self, qimage):
+        """Attach a pasted image as a removable thumbnail chip."""
+        try:
+            data = _qimage_to_b64_png(qimage)
+        except Exception:
+            return
+        chip = QFrame()
+        chip.setStyleSheet(
+            "QFrame { background: #E8E8E8; border-radius: 4px; }")
+        row = QHBoxLayout(chip)
+        row.setContentsMargins(4, 2, 2, 2)
+        row.setSpacing(2)
+        thumb = QLabel()
+        pm = QPixmap()
+        pm.loadFromData(base64.b64decode(data))
+        thumb.setPixmap(pm.scaledToHeight(28, Qt.SmoothTransformation))
+        row.addWidget(thumb)
+        entry = {"media_type": "image/png", "data": data, "chip": chip}
+        remove = QToolButton()
+        remove.setText("✕")
+        remove.setToolTip("Remove image")
+        remove.clicked.connect(lambda: self._remove_attachment(entry))
+        row.addWidget(remove)
+        # Insert before the trailing stretch.
+        self._attach_layout.insertWidget(
+            self._attach_layout.count() - 1, chip)
+        self._pending_images.append(entry)
+        self._attach_bar.show()
+
+    def _remove_attachment(self, entry):
+        if entry in self._pending_images:
+            self._pending_images.remove(entry)
+        entry["chip"].setParent(None)
+        entry["chip"].deleteLater()
+        if not self._pending_images:
+            self._attach_bar.hide()
+
+    def _clear_attachments(self):
+        for entry in list(self._pending_images):
+            entry["chip"].setParent(None)
+            entry["chip"].deleteLater()
+        self._pending_images.clear()
+        self._attach_bar.hide()
 
     def _cancel(self):
         self._backend.cancel()
