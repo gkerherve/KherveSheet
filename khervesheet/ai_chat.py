@@ -130,7 +130,8 @@ class ApiKeyDialog(QDialog):
 class ChatBubble(QFrame):
     """A single message bubble in the chat history."""
 
-    def __init__(self, role: str, text: str = "", parent=None):
+    def __init__(self, role: str, text: str = "", parent=None,
+                 font_pt: float = 10.0):
         super().__init__(parent)
         self._role = role
         self.setFrameShape(QFrame.StyledPanel)
@@ -147,18 +148,27 @@ class ChatBubble(QFrame):
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._apply_style()
+        self.set_font_pt(font_pt)
 
     def _apply_style(self):
+        # Background only — font size is controlled via set_font_pt so the
+        # dock's zoom buttons take effect (a stylesheet font-size would
+        # override QFont and break zooming).
         if self._role == "user":
             self.setStyleSheet(
                 "ChatBubble { background: #DCE8F7; border-radius: 8px; }")
         elif self._role == "tool":
             self.setStyleSheet(
-                "ChatBubble { background: #E8E8E8; border-radius: 6px; "
-                "font-size: 11px; }")
+                "ChatBubble { background: #E8E8E8; border-radius: 6px; }")
         else:
             self.setStyleSheet(
                 "ChatBubble { background: #F0F0F0; border-radius: 8px; }")
+
+    def set_font_pt(self, pt: float):
+        """Apply a point size; tool 'receipts' render one point smaller."""
+        f = self._label.font()
+        f.setPointSizeF(max(7.0, pt - 1.0) if self._role == "tool" else pt)
+        self._label.setFont(f)
 
     def append_text(self, text: str):
         self._label.setText(self._label.text() + text)
@@ -315,6 +325,9 @@ class AiChatDock(QDockWidget):
         self._mw = mainwindow
         self._current_bubble: ChatBubble | None = None
         self._busy = False
+        # Chat font size (points), persisted across sessions.
+        _s = QSettings("KherveSheet", "KherveSheet")
+        self._font_pt = float(_s.value("ai/chat_font_pt", 10.0))
 
         # ── Container widget ────────────────────────────────────
         container = QWidget()
@@ -327,6 +340,16 @@ class AiChatDock(QDockWidget):
         self._title = QLabel("<b>AI Assistant</b>")
         header.addWidget(self._title)
         header.addStretch()
+        smaller_btn = QToolButton()
+        smaller_btn.setText("A−")  # A−
+        smaller_btn.setToolTip("Decrease text size")
+        smaller_btn.clicked.connect(lambda: self._change_font(-1))
+        header.addWidget(smaller_btn)
+        larger_btn = QToolButton()
+        larger_btn.setText("A+")
+        larger_btn.setToolTip("Increase text size")
+        larger_btn.clicked.connect(lambda: self._change_font(+1))
+        header.addWidget(larger_btn)
         gear_btn = QToolButton()
         gear_btn.setIcon(icons.themed_icon("mdi.cog"))
         gear_btn.setToolTip("AI Chat settings")
@@ -393,11 +416,30 @@ class AiChatDock(QDockWidget):
                              "Try asking me to create a template, fill data, "
                              "format cells, or insert a chart.\n"
                              "Set your provider (Anthropic, Mistral, or "
-                             "Ollama) and API key via the gear icon.")
+                             "Ollama) and API key via the gear icon.",
+                             font_pt=self._font_pt)
         self._msg_layout.addWidget(welcome)
         self._update_title()
+        self._apply_font()
 
     # ── Actions ─────────────────────────────────────────────────
+
+    def _change_font(self, delta: float):
+        """Grow or shrink the chat text, clamped and persisted."""
+        self._font_pt = max(7.0, min(24.0, self._font_pt + delta))
+        QSettings("KherveSheet", "KherveSheet").setValue(
+            "ai/chat_font_pt", self._font_pt)
+        self._apply_font()
+
+    def _apply_font(self):
+        """Apply the current font size to the input and every bubble."""
+        f = self._input.font()
+        f.setPointSizeF(self._font_pt)
+        self._input.setFont(f)
+        for i in range(self._msg_layout.count()):
+            w = self._msg_layout.itemAt(i).widget()
+            if isinstance(w, ChatBubble):
+                w.set_font_pt(self._font_pt)
 
     def _update_title(self):
         """Reflect the active provider/model in the header."""
@@ -415,7 +457,7 @@ class AiChatDock(QDockWidget):
         if not text or self._busy:
             return
         # Show user bubble.
-        bubble = ChatBubble("user", text)
+        bubble = ChatBubble("user", text, font_pt=self._font_pt)
         self._msg_layout.addWidget(bubble)
         self._input.add_history(text)
         self._input.clear()
@@ -443,7 +485,8 @@ class AiChatDock(QDockWidget):
         self._backend._messages.clear()
         # Re-add welcome.
         welcome = ChatBubble("assistant",
-                             "Conversation cleared. How can I help?")
+                             "Conversation cleared. How can I help?",
+                             font_pt=self._font_pt)
         self._msg_layout.addWidget(welcome)
 
     # ── Slots from backend ──────────────────────────────────────
@@ -451,13 +494,14 @@ class AiChatDock(QDockWidget):
     def _on_chunk(self, text: str):
         if self._current_bubble is None:
             self._typing.stop()
-            self._current_bubble = ChatBubble("assistant")
+            self._current_bubble = ChatBubble(
+                "assistant", font_pt=self._font_pt)
             self._msg_layout.addWidget(self._current_bubble)
         self._current_bubble.append_text(text)
         self._scroll_to_bottom()
 
     def _on_tool(self, name: str, summary: str):
-        bubble = ChatBubble("tool", f"⚙ {summary}")
+        bubble = ChatBubble("tool", f"⚙ {summary}", font_pt=self._font_pt)
         self._msg_layout.addWidget(bubble)
         self._scroll_to_bottom()
 
@@ -467,7 +511,7 @@ class AiChatDock(QDockWidget):
 
     def _on_error(self, msg: str):
         self._typing.stop()
-        bubble = ChatBubble("assistant")
+        bubble = ChatBubble("assistant", font_pt=self._font_pt)
         bubble.setStyleSheet(
             "ChatBubble { background: #FDDEDE; border-radius: 8px; }")
         bubble.set_text(f"Error: {msg}")
