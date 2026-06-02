@@ -53,6 +53,10 @@ class MainWindow(QMainWindow):
         self._init_ui()
         # Open files dropped onto the window (grid included).
         self.setAcceptDrops(True)
+        # Show the AI chat sidebar by default (respect saved preference).
+        ai_visible = self._settings.value(
+            "ai/chat_visible", True, type=bool)
+        self._ai_chat_act.setChecked(ai_visible)
 
     # ── UI setup ─────────────────────────────────────────────────────
     def _init_ui(self):
@@ -3978,23 +3982,21 @@ class MainWindow(QMainWindow):
         dlg.show()
 
     def _toggle_ai_chat(self, checked):
-        """Show or hide the AI Chat sidebar dock."""
+        """Show or hide the AI Chat sidebar dock.
+
+        The dock works with any configured provider (Anthropic, Mistral,
+        Ollama); missing-library or missing-key errors surface in the
+        chat when a message is sent, not here.
+        """
         if checked:
             if not hasattr(self, '_ai_dock'):
-                from .ai_backend import HAVE_ANTHROPIC
-                if not HAVE_ANTHROPIC:
-                    QMessageBox.warning(
-                        self, "Missing Library",
-                        "The anthropic package is required for AI Chat.\n"
-                        "Install with:  pip install anthropic")
-                    self._ai_chat_act.setChecked(False)
-                    return
                 from .ai_chat import AiChatDock
                 self._ai_dock = AiChatDock(self)
                 self.addDockWidget(Qt.RightDockWidgetArea, self._ai_dock)
             self._ai_dock.show()
         elif hasattr(self, '_ai_dock'):
             self._ai_dock.hide()
+        self._settings.setValue("ai/chat_visible", checked)
 
     def _open_science_tool(self, dialog_cls):
         """Open a Science data-analysis tool dialog (non-modal)."""

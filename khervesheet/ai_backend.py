@@ -15,7 +15,6 @@ the Free Software Foundation, either version 3 of the License, or
 from __future__ import annotations
 
 import json
-import traceback
 from typing import Any, Dict, List, Optional
 
 from PyQt5.QtCore import (
@@ -311,33 +310,40 @@ font_family, font_size, font_color (hex), alignment \
 
 # ── Sliding-window conversation management ─────────────────────────
 
-_MAX_TURNS = 40  # keep at most this many user+assistant pairs
+_MAX_TURNS = 60  # keep at most this many neutral-history turns
 
 
 def _trim_messages(messages: List[dict]) -> List[dict]:
-    """Keep only the last *_MAX_TURNS* user/assistant exchanges."""
-    if len(messages) <= _MAX_TURNS * 2:
-        return messages
-    return messages[-_MAX_TURNS * 2:]
+    """Keep only the last *_MAX_TURNS* neutral-history turns.
+
+    After truncating, drop any leading turns that are not a plain user
+    turn so the history never starts mid-exchange (a dangling
+    tool_results or assistant turn would be rejected by the APIs).
+    """
+    if len(messages) > _MAX_TURNS:
+        messages = messages[-_MAX_TURNS:]
+    while messages and messages[0].get("role") != "user":
+        messages = messages[1:]
+    return messages
 
 
 # ── Worker (runs on QThread) ───────────────────────────────────────
 
 class AiWorker(QObject):
-    """Performs Claude API calls on a background thread.
+    """Drives a provider's agentic loop on a background thread.
 
     Signals are used for all communication with the main thread:
     - *chunk_ready*: incremental assistant text.
     - *tool_call*: emitted when the model wants to call a tool;
       the worker then **blocks** on a QWaitCondition until the main
       thread posts the result via *post_tool_result()*.
-    - *turn_done*: all tool calls resolved, final text delivered.
+    - *turn_done*: all tool calls resolved, carries the updated history.
     - *error*: something went wrong.
     """
 
-    chunk_ready = pyqtSignal(str)       # partial text
-    tool_call = pyqtSignal(str, str, str)  # tool_use_id, name, input_json
-    turn_done = pyqtSignal()
+    chunk_ready = pyqtSignal(str)        # partial text
+    tool_call = pyqtSignal(str, str)     # name, input_json
+    turn_done = pyqtSignal(list)         # updated neutral history
     error = pyqtSignal(str)
 
     def __init__(self):
@@ -358,80 +364,43 @@ class AiWorker(QObject):
     def cancel(self):
         self._cancel = True
 
-    @pyqtSlot(str, str, str, list)
-    def run_turn(self, api_key: str, model: str,
-                 system_prompt: str, messages: list):
+    def _invoke_tool(self, name: str, input_dict: dict) -> dict:
+        """Emit a tool-call request and block until the main thread
+        posts the result."""
+        self.tool_call.emit(name, json.dumps(input_dict))
+        self._tool_mutex.lock()
+        self._tool_result = None
+        self._tool_cond.wait(self._tool_mutex)
+        result_json = self._tool_result or '{"error":"cancelled"}'
+        self._tool_mutex.unlock()
+        try:
+            return json.loads(result_json)
+        except Exception:
+            return {"error": "malformed tool result"}
+
+    @pyqtSlot(str, str, str, str, str, list)
+    def run_turn(self, provider_name: str, api_key: str, model: str,
+                 host: str, system_prompt: str, history: list):
         """Run the full agentic turn (may loop over tool calls)."""
         self._cancel = False
+        from .ai_providers import make_provider
+        provider = make_provider(provider_name, {
+            "api_key": api_key,
+            "model": model,
+            "host": host,
+        })
         try:
-            client = anthropic.Anthropic(api_key=api_key)
-            while not self._cancel:
-                # Call the API.
-                response = client.messages.create(
-                    model=model,
-                    max_tokens=4096,
-                    system=system_prompt,
-                    tools=TOOLS,
-                    messages=messages,
-                )
-                # Process the response content blocks.
-                assistant_content = response.content
-                text_parts: List[str] = []
-                tool_uses: List[dict] = []
-                for block in assistant_content:
-                    if block.type == "text":
-                        text_parts.append(block.text)
-                        self.chunk_ready.emit(block.text)
-                    elif block.type == "tool_use":
-                        tool_uses.append({
-                            "id": block.id,
-                            "name": block.name,
-                            "input": block.input,
-                        })
-                # Append the full assistant message to history.
-                messages.append({
-                    "role": "assistant",
-                    "content": [b.model_dump() for b in assistant_content],
-                })
-                if response.stop_reason != "tool_use" or not tool_uses:
-                    break
-                # Execute each tool call via the main thread.
-                tool_results = []
-                for tu in tool_uses:
-                    if self._cancel:
-                        break
-                    self.tool_call.emit(
-                        tu["id"], tu["name"],
-                        json.dumps(tu["input"]))
-                    # Block until main thread posts the result.
-                    self._tool_mutex.lock()
-                    self._tool_result = None
-                    self._tool_cond.wait(self._tool_mutex)
-                    result_json = self._tool_result or '{"error":"cancelled"}'
-                    self._tool_mutex.unlock()
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tu["id"],
-                        "content": result_json,
-                    })
-                # Append tool results and loop.
-                messages.append({
-                    "role": "user",
-                    "content": tool_results,
-                })
-            self.turn_done.emit()
+            provider.run_turn(
+                system_prompt,
+                TOOLS,
+                history,
+                emit_text=self.chunk_ready.emit,
+                run_tool=self._invoke_tool,
+                cancelled=lambda: self._cancel,
+            )
+            self.turn_done.emit(history)
         except Exception as exc:
-            tb = traceback.format_exc()
-            # Surface user-friendly message for common errors.
-            msg = str(exc)
-            if anthropic and isinstance(exc, anthropic.AuthenticationError):
-                msg = "Invalid API key. Please check your key in settings."
-            elif anthropic and isinstance(exc, anthropic.RateLimitError):
-                msg = "Rate limit reached. Please wait and try again."
-            elif anthropic and isinstance(
-                    exc, anthropic.APIConnectionError):
-                msg = "Cannot reach the Claude API. Check your connection."
-            self.error.emit(msg)
+            self.error.emit(provider.humanize(exc))
 
 
 # ── Backend coordinator (lives on main thread) ─────────────────────
@@ -474,14 +443,23 @@ class AiBackend(QObject):
     def send(self, text: str):
         """Initiate a new user turn."""
         from PyQt5.QtCore import QSettings
+        from .ai_providers import PROVIDERS, DEFAULT_HOST
         settings = QSettings("KherveSheet", "KherveSheet")
-        api_key = settings.value("ai/api_key", "")
-        model = settings.value("ai/model", "claude-sonnet-4-20250514")
-        if not api_key:
+        provider = settings.value("ai/provider", "anthropic")
+        if provider not in PROVIDERS:
+            provider = "anthropic"
+        spec = PROVIDERS[provider]
+        model = settings.value(
+            f"ai/model_{provider}", spec["default_model"])
+        api_key = settings.value(f"ai/key_{provider}", "")
+        host = settings.value(
+            "ai/ollama_host", spec.get("default_host", DEFAULT_HOST))
+        if spec["needs_key"] and not api_key:
             self.error.emit(
-                "No API key configured. Click the gear icon to set one.")
+                f"No API key configured for {spec['label']}. "
+                "Click the gear icon to set one.")
             return
-        self._messages.append({"role": "user", "content": text})
+        self._messages.append({"role": "user", "text": text})
         self._messages = _trim_messages(self._messages)
         system = build_system_prompt(self._mw)
         # Invoke worker on its thread (queued connection).
@@ -489,8 +467,10 @@ class AiBackend(QObject):
         QMetaObject.invokeMethod(
             self._worker, "run_turn",
             Qt.QueuedConnection,
+            Q_ARG(str, provider),
             Q_ARG(str, api_key),
             Q_ARG(str, model),
+            Q_ARG(str, host),
             Q_ARG(str, system),
             Q_ARG(list, list(self._messages)),
         )
@@ -500,9 +480,8 @@ class AiBackend(QObject):
 
     # ── Slots ───────────────────────────────────────────────────
 
-    @pyqtSlot(str, str, str)
-    def _on_tool_call(self, tool_use_id: str, name: str,
-                      input_json: str):
+    @pyqtSlot(str, str)
+    def _on_tool_call(self, name: str, input_json: str):
         """Execute a tool on the main thread, then wake the worker."""
         inp = json.loads(input_json)
         # Open undo macro on first tool call of the turn.
@@ -516,7 +495,10 @@ class AiBackend(QObject):
         result_json = json.dumps(result)
         self._worker.post_tool_result(result_json)
 
-    def _on_turn_done(self):
+    def _on_turn_done(self, history: list):
+        # Adopt the history the worker built (assistant + tool turns).
+        if history:
+            self._messages = list(history)
         if self._macro_open:
             self._mw._undo_stack.endMacro()
             self._macro_open = False

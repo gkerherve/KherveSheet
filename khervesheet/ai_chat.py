@@ -33,26 +33,41 @@ __all__ = ["AiChatDock", "HAVE_ANTHROPIC"]
 # ── API key / settings dialog ─────────────────────────────────────
 
 class ApiKeyDialog(QDialog):
-    """Small dialog to enter the Claude API key and choose a model."""
+    """Choose an AI provider (Anthropic, Mistral, Ollama) and configure
+    its model, API key, and — for Ollama — the server host."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        from .ai_providers import PROVIDERS, DEFAULT_HOST
+        self._PROVIDERS = PROVIDERS
+        self._DEFAULT_HOST = DEFAULT_HOST
         self.setWindowTitle("AI Chat Settings")
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(440)
         layout = QFormLayout(self)
 
+        # Provider selector.
+        self._provider_combo = QComboBox()
+        self._provider_keys = list(PROVIDERS.keys())
+        for key in self._provider_keys:
+            self._provider_combo.addItem(PROVIDERS[key]["label"], key)
+        layout.addRow("Provider:", self._provider_combo)
+
+        # Model (editable so local/custom names can be typed).
+        self._model_combo = QComboBox()
+        self._model_combo.setEditable(True)
+        layout.addRow("Model:", self._model_combo)
+
+        # API key.
         self._key_edit = QLineEdit()
         self._key_edit.setEchoMode(QLineEdit.Password)
-        self._key_edit.setPlaceholderText("sk-ant-...")
-        layout.addRow("API Key:", self._key_edit)
+        self._key_label = QLabel("API Key:")
+        layout.addRow(self._key_label, self._key_edit)
 
-        self._model_combo = QComboBox()
-        self._model_combo.addItems([
-            "claude-sonnet-4-20250514",
-            "claude-opus-4-20250514",
-            "claude-haiku-4-5-20251001",
-        ])
-        layout.addRow("Model:", self._model_combo)
+        # Ollama host.
+        self._host_edit = QLineEdit()
+        self._host_edit.setPlaceholderText(DEFAULT_HOST)
+        self._host_label = QLabel("Ollama Host:")
+        layout.addRow(self._host_label, self._host_edit)
 
         btns = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -60,18 +75,53 @@ class ApiKeyDialog(QDialog):
         btns.rejected.connect(self.reject)
         layout.addRow(btns)
 
-        # Load saved values.
+        # Load saved values and react to provider changes.
         s = QSettings("KherveSheet", "KherveSheet")
-        self._key_edit.setText(s.value("ai/api_key", ""))
-        saved_model = s.value("ai/model", "claude-sonnet-4-20250514")
-        idx = self._model_combo.findText(saved_model)
-        if idx >= 0:
-            self._model_combo.setCurrentIndex(idx)
+        self._host_edit.setText(s.value("ai/ollama_host", DEFAULT_HOST))
+        saved_provider = s.value("ai/provider", "anthropic")
+        if saved_provider not in PROVIDERS:
+            saved_provider = "anthropic"
+        self._provider_combo.setCurrentIndex(
+            self._provider_keys.index(saved_provider))
+        self._provider_combo.currentIndexChanged.connect(
+            self._on_provider_changed)
+        self._on_provider_changed()  # populate for the initial provider
+
+    def _current_provider(self) -> str:
+        return self._provider_combo.currentData()
+
+    def _on_provider_changed(self):
+        provider = self._current_provider()
+        spec = self._PROVIDERS[provider]
+        s = QSettings("KherveSheet", "KherveSheet")
+        # Repopulate model list, restoring this provider's saved model.
+        self._model_combo.blockSignals(True)
+        self._model_combo.clear()
+        self._model_combo.addItems(spec["models"])
+        saved_model = s.value(
+            f"ai/model_{provider}", spec["default_model"])
+        self._model_combo.setCurrentText(saved_model)
+        self._model_combo.blockSignals(False)
+        # Show/hide key + host fields per provider needs.
+        self._key_label.setVisible(spec["needs_key"])
+        self._key_edit.setVisible(spec["needs_key"])
+        self._key_edit.setText(s.value(f"ai/key_{provider}", ""))
+        self._key_edit.setPlaceholderText(
+            "sk-ant-..." if provider == "anthropic" else "")
+        self._host_label.setVisible(spec["needs_host"])
+        self._host_edit.setVisible(spec["needs_host"])
 
     def accept(self):
+        provider = self._current_provider()
         s = QSettings("KherveSheet", "KherveSheet")
-        s.setValue("ai/api_key", self._key_edit.text().strip())
-        s.setValue("ai/model", self._model_combo.currentText())
+        s.setValue("ai/provider", provider)
+        s.setValue(f"ai/model_{provider}",
+                   self._model_combo.currentText().strip())
+        if self._PROVIDERS[provider]["needs_key"]:
+            s.setValue(f"ai/key_{provider}", self._key_edit.text().strip())
+        if self._PROVIDERS[provider]["needs_host"]:
+            host = self._host_edit.text().strip() or self._DEFAULT_HOST
+            s.setValue("ai/ollama_host", host)
         super().accept()
 
 
@@ -274,8 +324,8 @@ class AiChatDock(QDockWidget):
 
         # Header.
         header = QHBoxLayout()
-        title = QLabel("<b>Claude AI</b>")
-        header.addWidget(title)
+        self._title = QLabel("<b>AI Assistant</b>")
+        header.addWidget(self._title)
         header.addStretch()
         gear_btn = QToolButton()
         gear_btn.setIcon(icons.themed_icon("mdi.cog"))
@@ -341,10 +391,24 @@ class AiChatDock(QDockWidget):
         welcome = ChatBubble("assistant",
                              "Hello! I can help you edit your spreadsheet. "
                              "Try asking me to create a template, fill data, "
-                             "format cells, or insert a chart.")
+                             "format cells, or insert a chart.\n"
+                             "Set your provider (Anthropic, Mistral, or "
+                             "Ollama) and API key via the gear icon.")
         self._msg_layout.addWidget(welcome)
+        self._update_title()
 
     # ── Actions ─────────────────────────────────────────────────
+
+    def _update_title(self):
+        """Reflect the active provider/model in the header."""
+        from .ai_providers import PROVIDERS
+        s = QSettings("KherveSheet", "KherveSheet")
+        provider = s.value("ai/provider", "anthropic")
+        spec = PROVIDERS.get(provider, PROVIDERS["anthropic"])
+        model = s.value(f"ai/model_{provider}", spec["default_model"])
+        self._title.setText(f"<b>AI Assistant</b> <span style='color:#888;"
+                            f"font-size:10px;'>{spec['label']} · "
+                            f"{model}</span>")
 
     def _send(self):
         text = self._input.toPlainText().strip()
@@ -365,7 +429,8 @@ class AiChatDock(QDockWidget):
 
     def _open_settings(self):
         dlg = ApiKeyDialog(self)
-        dlg.exec_()
+        if dlg.exec_():
+            self._update_title()
 
     def _clear_chat(self):
         # Remove all bubbles.
