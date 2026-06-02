@@ -291,6 +291,12 @@ Current workbook state:
 - Current selection: {sel_str}
 
 Guidelines:
+- Do NOT redo work already completed earlier in this conversation. \
+Only make the specific change the user just asked for, and leave \
+existing data, formatting, and charts untouched unless asked.
+- If you are unsure of the current contents of a cell or range \
+(for example at the start of a new conversation), use read_cells to \
+check before writing — do not blindly recreate data.
 - When the user asks you to create a template or fill data, use \
 write_cells with bulk data.
 - Use set_formula for calculated cells (formulas start with =).
