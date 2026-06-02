@@ -414,22 +414,26 @@ class MainWindow(QMainWindow):
         tools_menu.addSeparator()
         tools_menu.addAction("Curve Fitting…", self._open_fitting)
 
-        # ── Help ─────────────────────────────────────────────────────
-        help_menu = mb.addMenu("&Help")
-        # Examples submenu — organized by category.
+        # ── Examples (its own top-level menu, before Help) ───────────
+        examples_menu = mb.addMenu("&Examples")
+        # Rich, ready-to-open worked .ksheet files (examples/ folder).
+        self._build_example_files_menu(examples_menu)
+        # Undergraduate exercises, grouped by UK year of study.
+        self._build_exercises_menu(examples_menu)
+        # Quick data templates (programmatic builders), by category.
         from .examples import EXAMPLES
-        examples_menu = help_menu.addMenu("Examples")
+        templates_menu = examples_menu.addMenu("Templates")
         cats: dict = {}
         for name, cat, builder in EXAMPLES:
             cats.setdefault(cat, []).append((name, builder))
         for cat in cats:
-            cm = examples_menu.addMenu(cat)
+            cm = templates_menu.addMenu(cat)
             for name, builder in cats[cat]:
                 cm.addAction(name,
                              lambda b=builder: self._load_example(b))
-        # Rich .ksheet example files shipped in the examples/ folder.
-        self._build_example_files_menu(help_menu)
-        help_menu.addSeparator()
+
+        # ── Help ─────────────────────────────────────────────────────
+        help_menu = mb.addMenu("&Help")
         help_menu.addAction("&About", self._show_about)
         help_menu.addAction("GitHub Repository", self._open_github)
 
@@ -984,8 +988,8 @@ class MainWindow(QMainWindow):
             "examples")
         return d if os.path.isdir(d) else None
 
-    def _build_example_files_menu(self, help_menu):
-        """Add a submenu listing the rich .ksheet example files."""
+    def _build_example_files_menu(self, parent_menu):
+        """Add a 'Worked Examples' submenu listing the rich .ksheet files."""
         import os
         d = self._examples_dir()
         if not d:
@@ -994,13 +998,47 @@ class MainWindow(QMainWindow):
                        if f.lower().endswith(".ksheet"))
         if not files:
             return
-        sub = help_menu.addMenu("Example Files")
+        sub = parent_menu.addMenu("Worked Examples")
         for fn in files:
             label = os.path.splitext(fn)[0]
             path = os.path.join(d, fn)
             sub.addAction(
                 label,
                 lambda _=False, p=path: self._open_example_file(p))
+
+    def _build_exercises_menu(self, parent_menu):
+        """Add an 'Exercises' submenu grouped by UK undergraduate year.
+
+        Discovers files under examples/exercises/Year N/*.ksheet.
+        """
+        import os
+        base = self._examples_dir()
+        if not base:
+            return
+        ex_dir = os.path.join(base, "exercises")
+        if not os.path.isdir(ex_dir):
+            return
+        # Collect (year_label, [(name, path), ...]) preserving Year order.
+        years = []
+        for yr in ("Year 1", "Year 2", "Year 3", "Year 4"):
+            yd = os.path.join(ex_dir, yr)
+            if not os.path.isdir(yd):
+                continue
+            files = sorted(f for f in os.listdir(yd)
+                           if f.lower().endswith(".ksheet"))
+            if files:
+                years.append((yr, yd, files))
+        if not years:
+            return
+        ex_menu = parent_menu.addMenu("Exercises")
+        for yr, yd, files in years:
+            ym = ex_menu.addMenu(yr)
+            for fn in files:
+                label = os.path.splitext(fn)[0]
+                path = os.path.join(yd, fn)
+                ym.addAction(
+                    label,
+                    lambda _=False, p=path: self._open_example_file(p))
 
     def _open_example_file(self, path: str):
         """Open a shipped .ksheet example (guards unsaved changes)."""
@@ -4081,14 +4119,89 @@ class MainWindow(QMainWindow):
 
     # ── Help ─────────────────────────────────────────────────────────
     def _show_about(self):
+        import sys
+        import matplotlib
+        import numpy
+        try:
+            import scipy
+            scipy_ver = scipy.__version__
+        except ImportError:
+            scipy_ver = "N/A"
+        try:
+            import lmfit
+            lmfit_ver = lmfit.__version__
+        except ImportError:
+            lmfit_ver = "N/A"
+        try:
+            import openpyxl
+            openpyxl_ver = openpyxl.__version__
+        except ImportError:
+            openpyxl_ver = "N/A"
+        try:
+            import h5py
+            h5py_ver = h5py.__version__
+        except ImportError:
+            h5py_ver = "N/A"
+        try:
+            import pygit2
+            pygit2_ver = pygit2.__version__
+        except ImportError:
+            pygit2_ver = "N/A"
+        try:
+            import qtawesome
+            qtawesome_ver = qtawesome.__version__
+        except (ImportError, AttributeError):
+            qtawesome_ver = "N/A"
+
+        from PyQt5.QtCore import QT_VERSION_STR, PYQT_VERSION_STR
+
         QMessageBox.about(
             self, f"About {APP_NAME}",
             f"<h2>{APP_NAME}</h2>"
-            f"<p>Version {__version__}</p>"
-            f"<p>An Excel-inspired spreadsheet workbench built with "
-            f"PyQt5 + matplotlib.</p>"
-            f"<p>Copyright (C) 2026 Gwilherm Kerherve</p>"
-            f"<p>Licensed under GPL-3.0</p>")
+            f"<p><b>Version {__version__}</b></p>"
+            f"<hr>"
+            f"<p>An Excel-inspired spreadsheet workbench designed to mirror "
+            f"the look and workflow of Microsoft Excel. KherveSheet provides "
+            f"a full-featured grid editor with formula support, embedded "
+            f"matplotlib charts, curve fitting, a built-in solver, and "
+            f"per-document Git version control.</p>"
+            f"<p><b>Author:</b> Gwilherm Kerherve<br>"
+            f"<b>Institution:</b> Imperial College London<br>"
+            f"<b>Contact:</b> "
+            f"<a href='https://github.com/gkerherve'>github.com/gkerherve</a></p>"
+            f"<hr>"
+            f"<p><b>Key features:</b></p>"
+            f"<ul>"
+            f"<li>Excel-style grid with formula bar and cell formatting</li>"
+            f"<li>Formula engine with 100+ built-in functions</li>"
+            f"<li>Embedded matplotlib charts (movable &amp; resizable)</li>"
+            f"<li>Curve fitting with 23+ models (lmfit/scipy)</li>"
+            f"<li>Excel Solver-style optimisation (scipy.optimize)</li>"
+            f"<li>Native .ksheet (HDF5) format with full round-trip</li>"
+            f"<li>CSV and Excel (.xlsx) import/export</li>"
+            f"<li>Per-document Git history with branch support</li>"
+            f"<li>Undo/redo for all operations</li>"
+            f"</ul>"
+            f"<hr>"
+            f"<p><b>Built with:</b></p>"
+            f"<table cellpadding='2'>"
+            f"<tr><td>Python</td><td>{sys.version.split()[0]}</td></tr>"
+            f"<tr><td>Qt</td><td>{QT_VERSION_STR}</td></tr>"
+            f"<tr><td>PyQt5</td><td>{PYQT_VERSION_STR}</td></tr>"
+            f"<tr><td>matplotlib</td><td>{matplotlib.__version__}</td></tr>"
+            f"<tr><td>NumPy</td><td>{numpy.__version__}</td></tr>"
+            f"<tr><td>SciPy</td><td>{scipy_ver}</td></tr>"
+            f"<tr><td>lmfit</td><td>{lmfit_ver}</td></tr>"
+            f"<tr><td>openpyxl</td><td>{openpyxl_ver}</td></tr>"
+            f"<tr><td>h5py</td><td>{h5py_ver}</td></tr>"
+            f"<tr><td>pygit2</td><td>{pygit2_ver}</td></tr>"
+            f"<tr><td>QtAwesome</td><td>{qtawesome_ver}</td></tr>"
+            f"</table>"
+            f"<hr>"
+            f"<p>Copyright &copy; 2026 Gwilherm Kerherve</p>"
+            f"<p>Licensed under the "
+            f"<a href='https://www.gnu.org/licenses/gpl-3.0.html'>"
+            f"GNU General Public License v3.0</a></p>")
 
     def _open_github(self):
         from PyQt5.QtGui import QDesktopServices
