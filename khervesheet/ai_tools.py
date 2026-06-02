@@ -91,6 +91,11 @@ class AiToolExecutor:
             "format_cells": self.tool_format_cells,
             "insert_chart": self.tool_insert_chart,
             "add_sheet": self.tool_add_sheet,
+            "search_functions": self.tool_search_functions,
+            "get_function_details": self.tool_get_function_details,
+            "list_charts": self.tool_list_charts,
+            "get_chart_details": self.tool_get_chart_details,
+            "clone_chart": self.tool_clone_chart,
         }
 
     # ── Dispatcher ──────────────────────────────────────────────
@@ -323,3 +328,117 @@ class AiToolExecutor:
         s = wb.add_sheet(name)
         self._mw._wire_undo_to_sheets()
         return {"sheet_name": wb.name_of_sheet(s)}
+
+    # ── Capability database ─────────────────────────────────────
+
+    def tool_search_functions(self, inp: dict) -> dict:
+        from . import ai_catalog
+        query = inp.get("query", "")
+        category = inp.get("category", "")
+        limit = int(inp.get("limit", 25))
+        results = ai_catalog.search(query, category, limit)
+        return {
+            "results": results,
+            "count": len(results),
+            "categories": ai_catalog.all_categories(),
+        }
+
+    def tool_get_function_details(self, inp: dict) -> dict:
+        from . import ai_catalog
+        names = inp.get("names", [])
+        if isinstance(names, str):
+            names = [names]
+        return {"details": ai_catalog.details(names)}
+
+    # ── Chart introspection & cloning ───────────────────────────
+
+    def _chart_spec(self, sheet: SheetWidget, chart) -> dict:
+        """Build a readable spec for *chart*: style + which columns
+        feed each series (X/Y as column letters)."""
+        tpl = chart.to_template()  # style + column mapping, no raw data
+        chart_x = tpl.get("x_col")
+        series_out = []
+        for sd in tpl.get("series", []):
+            xc = sd.get("x_col", chart_x)
+            yc = sd.get("y_col")
+            series_out.append({
+                "label": sd.get("label"),
+                "plot_type": sd.get("plot_type"),
+                "x_column": (col_index_to_letter(xc)
+                             if xc is not None else "row index"),
+                "y_column": (col_index_to_letter(yc)
+                             if yc is not None else None),
+                "color": sd.get("color"),
+                "linestyle": sd.get("linestyle"),
+                "linewidth": sd.get("linewidth"),
+                "marker": sd.get("marker"),
+                "markersize": sd.get("markersize"),
+                "row_start": (sd.get("y_row_start", sd.get("x_row_start"))),
+                "row_end": (sd.get("y_row_end", sd.get("x_row_end"))),
+            })
+        return {
+            "title": tpl.get("title", ""),
+            "xlabel": tpl.get("xlabel", ""),
+            "ylabel": tpl.get("ylabel", ""),
+            "xscale": tpl.get("xscale", "linear"),
+            "yscale": tpl.get("yscale", "linear"),
+            "width": tpl.get("width"),
+            "height": tpl.get("height"),
+            "series": series_out,
+        }
+
+    def tool_list_charts(self, inp: dict) -> dict:
+        sheet = self._sheet(inp["sheet_name"])
+        charts = getattr(sheet, "_charts", []) or []
+        out = []
+        for i, ch in enumerate(charts):
+            try:
+                spec = self._chart_spec(sheet, ch)
+            except Exception as exc:
+                spec = {"error": str(exc)}
+            out.append({
+                "index": i,
+                "title": spec.get("title", ""),
+                "series_count": len(spec.get("series", [])),
+                "series": spec.get("series", []),
+            })
+        return {"sheet": inp["sheet_name"], "charts": out,
+                "count": len(out)}
+
+    def tool_get_chart_details(self, inp: dict) -> dict:
+        sheet = self._sheet(inp["sheet_name"])
+        charts = getattr(sheet, "_charts", []) or []
+        idx = int(inp.get("chart_index", 0))
+        if idx < 0 or idx >= len(charts):
+            return {"error": f"Chart index {idx} out of range "
+                    f"(sheet has {len(charts)} chart(s))."}
+        return {"chart": self._chart_spec(sheet, charts[idx]),
+                "index": idx}
+
+    def tool_clone_chart(self, inp: dict) -> dict:
+        """Recreate a chart — with its exact style and column mapping —
+        on a target sheet, pulling live data from that target sheet."""
+        src = self._sheet(inp["source_sheet"])
+        charts = getattr(src, "_charts", []) or []
+        idx = int(inp.get("chart_index", 0))
+        if idx < 0 or idx >= len(charts):
+            return {"error": f"Chart index {idx} out of range "
+                    f"(source sheet has {len(charts)} chart(s))."}
+        target_name = inp.get("target_sheet") or inp["source_sheet"]
+        target = self._sheet(target_name)
+        tpl = charts[idx].to_template()
+        from .graph import EmbeddedChart
+        viewport = target.table.viewport()
+        chart = EmbeddedChart.from_template(tpl, target, viewport)
+        if chart is None:
+            return {"error": "Could not rebuild the chart — the target "
+                    "sheet may lack numeric data in the mapped columns."}
+        if not hasattr(target, "_charts"):
+            target._charts = []
+        offset = len(target._charts) * 30
+        chart.move(40 + offset, 40 + offset)
+        chart.show()
+        chart.raise_()
+        target._charts.append(chart)
+        return {"cloned": True, "target_sheet": target_name,
+                "spec": self._chart_spec(target, chart)}

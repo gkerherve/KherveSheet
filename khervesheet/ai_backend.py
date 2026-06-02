@@ -251,6 +251,125 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "search_functions",
+        "description": (
+            "Search KherveSheet's capability catalogue for spreadsheet "
+            "formula functions and science/analysis features. Use this "
+            "BEFORE telling the user a function does or doesn't exist, or "
+            "when you need the exact name/signature of a function (e.g. "
+            "FFT, smoothing, peak fitting, baseline, integration). Returns "
+            "lightweight matches; follow up with get_function_details for "
+            "full syntax."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Search text matched against function names and "
+                        "descriptions, e.g. 'fft', 'smooth', 'gaussian', "
+                        "'baseline', 'lookup'."
+                    ),
+                },
+                "category": {
+                    "type": "string",
+                    "description": (
+                        "Optional category filter, e.g. 'Statistical', "
+                        "'Science', 'Data Analysis', 'Analysis', 'Charts'."
+                    ),
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results (default 25).",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "get_function_details",
+        "description": (
+            "Get full details (signature, description, how to access) for "
+            "specific functions or features by exact name."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Exact names to look up, e.g. "
+                        "['SAVGOL', 'FFT.MAG', 'Curve Fitting']."
+                    ),
+                },
+            },
+            "required": ["names"],
+        },
+    },
+    {
+        "name": "list_charts",
+        "description": (
+            "List the embedded charts on a sheet with each series' style "
+            "and which columns (X and Y) feed it. Use this to understand "
+            "an existing plot before recreating or modifying it."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {"type": "string"},
+            },
+            "required": ["sheet_name"],
+        },
+    },
+    {
+        "name": "get_chart_details",
+        "description": (
+            "Get the full spec of one chart on a sheet: title, axis labels, "
+            "scales, and every series' plot type, X/Y columns, colour, line "
+            "style, and markers."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {"type": "string"},
+                "chart_index": {
+                    "type": "integer",
+                    "description": "0-based index (see list_charts).",
+                },
+            },
+            "required": ["sheet_name", "chart_index"],
+        },
+    },
+    {
+        "name": "clone_chart",
+        "description": (
+            "Recreate a chart from one sheet onto another (or the same) "
+            "sheet, preserving its exact style — colours, line styles, "
+            "markers, axis labels — and the same column mapping, pulling "
+            "live data from the target sheet."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "source_sheet": {"type": "string"},
+                "chart_index": {
+                    "type": "integer",
+                    "description": "0-based index on the source sheet.",
+                },
+                "target_sheet": {
+                    "type": "string",
+                    "description": (
+                        "Sheet to place the clone on. Defaults to the "
+                        "source sheet."
+                    ),
+                },
+            },
+            "required": ["source_sheet", "chart_index"],
+        },
+    },
 ]
 
 
@@ -302,6 +421,14 @@ write_cells with bulk data.
 - Use set_formula for calculated cells (formulas start with =).
 - Always read_cells first if you need to understand existing data \
 before modifying.
+- KherveSheet has 150+ formula functions and many science/analysis \
+features (FFT, smoothing, peak fitting, baselines, solver, trendlines, \
+etc.). You do NOT know them all from memory — use search_functions to \
+look them up on demand, then get_function_details for exact syntax. \
+Do this before claiming a capability is missing.
+- To copy or understand an existing plot, use list_charts and \
+get_chart_details to see each series' style and X/Y columns, and \
+clone_chart to reproduce a chart (with identical style) on another sheet.
 - Available chart types: Line, Scatter, Line+Symbol, Bar, Step, Stem, \
 Histogram, Box, Heatmap, 3D Surface.
 - format_cells accepts: bg_color (hex), bold, italic, underline, \
@@ -537,6 +664,18 @@ class AiBackend(QObject):
             return f"Listed {n} sheet{'s' if n != 1 else ''}"
         if name in ("read_cells", "read_selection"):
             return "Read data"
+        if name == "search_functions":
+            n = result.get("count", 0)
+            return f"Searched functions ({n} match{'es' if n != 1 else ''})"
+        if name == "get_function_details":
+            return "Looked up function details"
+        if name == "list_charts":
+            n = result.get("count", 0)
+            return f"Listed {n} chart{'s' if n != 1 else ''}"
+        if name == "get_chart_details":
+            return "Read chart details"
+        if name == "clone_chart":
+            return f"Cloned chart to '{result.get('target_sheet', '')}'"
         return name
 
     def shutdown(self):
