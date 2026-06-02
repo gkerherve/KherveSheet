@@ -231,6 +231,11 @@ class SheetRenderer:
 
     # ── Public entry point ───────────────────────────────────────────
 
+    # Logical page size — we work in these units and let Qt map to
+    # the high-resolution device via setWindow / setViewport.
+    _LOGICAL_W = 800
+    _LOGICAL_H = 1130  # ~A4 aspect ratio
+
     def render(self, printer: "QPrinter"):
         """Paint the grid onto *printer* (may span multiple pages)."""
         table = self._sheet.table
@@ -245,13 +250,15 @@ class SheetRenderer:
         col_ws = [table.columnWidth(c) for c in range(c_start, c_end + 1)]
         row_hs = [table.rowHeight(r) for r in range(r_start, r_end + 1)]
 
-        # ── Page geometry (in screen-resolution pixels) ──────────────
-        page_rect = printer.pageRect()
-        page_w = page_rect.width()
-        page_h = page_rect.height()
+        # ── Logical page geometry ────────────────────────────────────
+        # Work entirely in logical units; setWindow maps them to device.
+        page_w = self._LOGICAL_W
+        page_h = self._LOGICAL_H
+        if self._orientation == "landscape":
+            page_w, page_h = page_h, page_w
 
         # Reserve space for header (sheet name) and footer (page number).
-        hdr_footer_h = 24
+        hdr_footer_h = 20
         body_h = page_h - 2 * hdr_footer_h
         body_w = page_w
 
@@ -277,6 +284,9 @@ class SheetRenderer:
         total_pages = len(col_pages) * len(row_pages)
         page_num = 0
 
+        # Device page rect for viewport mapping.
+        dev_rect = printer.pageRect()
+
         painter = QPainter(printer)
         painter.setRenderHint(QPainter.TextAntialiasing)
 
@@ -287,6 +297,12 @@ class SheetRenderer:
                 page_num += 1
 
                 painter.save()
+
+                # Map logical coordinates to device pixels.  This lets
+                # us draw in small logical units while Qt scales fonts
+                # and geometry to the printer's native resolution.
+                painter.setWindow(0, 0, page_w, page_h)
+                painter.setViewport(dev_rect)
 
                 # Header line (sheet name — left, page info — right).
                 hdr_font = QFont("Segoe UI", 8)
@@ -307,7 +323,7 @@ class SheetRenderer:
                                  Qt.AlignCenter | Qt.AlignVCenter,
                                  f"{self._sheet_name} - Page {page_num}")
 
-                # Move origin below header, then scale.
+                # Move origin below header, then scale for cell content.
                 painter.translate(0, hdr_footer_h)
                 painter.scale(scale, scale)
 
@@ -480,7 +496,7 @@ def _make_printer(orientation="portrait", paper_key="A4",
                   margins_mm=None):
     """Create and configure a QPrinter."""
     from PyQt5.QtPrintSupport import QPrinter
-    printer = QPrinter(QPrinter.ScreenResolution)
+    printer = QPrinter(QPrinter.HighResolution)
     if orientation == "landscape":
         printer.setOrientation(QPrinter.Landscape)
     else:
