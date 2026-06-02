@@ -67,13 +67,22 @@ A complete, correct reference build is `examples/build_projectile_motion.py`
 2. **Only use formula functions KherveSheet supports.** Check
    `khervesheet/formulas.py` for the function list before using one
    (SUM, MAX, MIN, AVERAGE, COS, SIN, RADIANS, DEGREES, IF, etc. exist).
-   Being in the list is necessary but not sufficient — a few combinations
-   misbehave. Known traps: `ISNUMBER(<cell ref>)` evaluates to `#ERROR`
-   (avoid it; guard with `IFERROR(expr, fallback)` or a value comparison
-   instead), and `IF` evaluates *both* branches, so neither branch may
-   contain a domain error even when the condition would skip it (clamp
-   args, e.g. `LOG10(MAX(x, 1e-9))`, rather than relying on the IF to
-   dodge `LOG10(0)`).
+   Being in the list is necessary but not sufficient — several behave
+   surprisingly. Known traps (all confirmed):
+   - `ISNUMBER(<cell ref>)` evaluates to `#ERROR`. Avoid it; guard with
+     `IFERROR(expr, fallback)` or a plain value comparison instead.
+   - `IF` evaluates *both* branches, so neither branch may contain a
+     domain error even when the condition would skip it — clamp args,
+     e.g. `LOG10(MAX(x, 1e-9))`, not a bare `LOG10(0)` dodged by an IF.
+   - `SLOPE` / `INTERCEPT` (and likely other regression helpers) are in
+     the catalog but **unimplemented** → `#ERROR`. Compute the quantity
+     analytically/closed-form instead, or from two endpoints.
+   - **Never write scientific-notation literals inside a formula string**
+     (`=1E-15`, `=2.5E3`): the cell-ref regex matches the `E` as column
+     E, corrupting the formula. Use plain decimals (`=0.000000000000001`).
+   - On edit, numeric results are re-formatted to ~3 decimals, so a
+     value below ~5e-4 rounds to `0`. Store tiny constants in scaled
+     units (e.g. a CTE as `12` ppm, not `1.2e-5`) so chained refs survive.
 3. **Charts MUST be bound to the sheet data — never a static snapshot.**
    On every `Series`, set `y_col` (and `x_col`, or omit for a row-index
    X) plus `row_start`/`row_end` (0-based, inclusive) so the curve
