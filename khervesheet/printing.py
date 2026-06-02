@@ -299,13 +299,22 @@ class SheetRenderer:
                 painter.save()
 
                 # Map logical coordinates to device pixels.  This lets
-                # us draw in small logical units while Qt scales fonts
-                # and geometry to the printer's native resolution.
+                # us draw in small logical units while Qt scales
+                # geometry to the printer's native resolution.
                 painter.setWindow(0, 0, page_w, page_h)
                 painter.setViewport(dev_rect)
 
+                # Fonts must use pixel sizes (in window units) because
+                # point sizes would be interpreted at the printer's DPI
+                # and then scaled again by the window/viewport mapping.
+                hdr_font = QFont("Segoe UI")
+                hdr_font.setPixelSize(11)
+                hdr_font_s = QFont("Segoe UI", -1, QFont.Bold)
+                hdr_font_s.setPixelSize(10)
+                default_font = QFont("Segoe UI")
+                default_font.setPixelSize(12)
+
                 # Header line (sheet name — left, page info — right).
-                hdr_font = QFont("Segoe UI", 8)
                 painter.setFont(hdr_font)
                 painter.setPen(QColor(80, 80, 80))
                 hdr_rect = QRectF(0, 0, page_w, hdr_footer_h)
@@ -330,7 +339,6 @@ class SheetRenderer:
                 # ── Column headers ───────────────────────────────────
                 hdr_pen = QPen(QColor(100, 100, 100), 0.5)
                 hdr_bg = QColor(230, 230, 230)
-                hdr_font_s = QFont("Segoe UI", 8, QFont.Bold)
                 painter.setFont(hdr_font_s)
 
                 x = rh_w
@@ -347,7 +355,6 @@ class SheetRenderer:
                 # ── Row headers + cells ──────────────────────────────
                 y = ch_h
                 grid_pen = QPen(QColor(180, 180, 180), 0.5)
-                default_font = QFont("Segoe UI", 9)
 
                 for local_r, (global_r, rh) in enumerate(row_page):
                     # Row number header.
@@ -381,9 +388,16 @@ class SheetRenderer:
                         # Cell text.
                         it = table.item(global_r, global_c)
                         if it and it.text():
-                            font = (it.font()
-                                    if it.font().family()
-                                    else default_font)
+                            # Convert cell font to pixel-sized copy.
+                            src = it.font()
+                            if src.family():
+                                font = QFont(src)
+                            else:
+                                font = QFont(default_font)
+                            ps = src.pointSize()
+                            font.setPixelSize(
+                                max(int(ps * 1.33), 10) if ps > 0
+                                else default_font.pixelSize())
                             painter.setFont(font)
                             fg = (it.foreground().color()
                                   if it.foreground().style()
