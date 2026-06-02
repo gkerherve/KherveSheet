@@ -393,8 +393,10 @@ class MainWindow(QMainWindow):
         # ── Science ──────────────────────────────────────────────────
         science_menu = mb.addMenu("&Science")
         from .science import TOOLS as _SCIENCE_TOOLS
-        for i, (label, cls) in enumerate(_SCIENCE_TOOLS):
-            if i == 7:                       # separator before wave-2 tools
+        from .science_extra import EXTRA_TOOLS as _EXTRA
+        _all_tools = _SCIENCE_TOOLS + _EXTRA
+        for i, (label, cls) in enumerate(_all_tools):
+            if i == len(_SCIENCE_TOOLS):     # separator before wave-2 tools
                 science_menu.addSeparator()
             science_menu.addAction(
                 label, lambda _=False, c=cls: self._open_science_tool(c))
@@ -422,14 +424,18 @@ class MainWindow(QMainWindow):
         self._build_example_files_menu(examples_menu)
         # Undergraduate exercises, grouped by UK year of study.
         self._build_exercises_menu(examples_menu)
-        # Quick data templates (programmatic builders), by category.
-        from .examples import EXAMPLES
+        # Templates: rich .ksheet templates (examples/templates/<cat>/)
+        # first, then the quick programmatic builders by category.
         templates_menu = examples_menu.addMenu("Templates")
+        rich_cats = self._build_rich_templates_menu(templates_menu)
+        from .examples import EXAMPLES
         cats: dict = {}
         for name, cat, builder in EXAMPLES:
             cats.setdefault(cat, []).append((name, builder))
         for cat in cats:
-            cm = templates_menu.addMenu(cat)
+            # Skip a programmatic category once a rich folder supersedes it.
+            label = cat if cat not in rich_cats else f"{cat} (basic)"
+            cm = templates_menu.addMenu(label)
             for name, builder in cats[cat]:
                 cm.addAction(name,
                              lambda b=builder: self._load_example(b))
@@ -512,8 +518,12 @@ class MainWindow(QMainWindow):
         self._science_btn.setToolTip("Science Tools")
         self._science_btn.setPopupMode(QToolButton.InstantPopup)
         sci_menu = QMenu(self._science_btn)
-        from .science import TOOLS as _SCIENCE_TOOLS
-        for _label, _cls in _SCIENCE_TOOLS:
+        from .science import TOOLS as _ST2
+        from .science_extra import EXTRA_TOOLS as _EX2
+        _tb_tools = _ST2 + _EX2
+        for j, (_label, _cls) in enumerate(_tb_tools):
+            if j == len(_ST2):
+                sci_menu.addSeparator()
             sci_menu.addAction(
                 _label,
                 lambda _=False, c=_cls: self._open_science_tool(c))
@@ -1041,6 +1051,38 @@ class MainWindow(QMainWindow):
                 ym.addAction(
                     label,
                     lambda _=False, p=path: self._open_example_file(p))
+
+    def _build_rich_templates_menu(self, parent_menu):
+        """Add rich .ksheet template submenus from examples/templates/<cat>/.
+
+        Returns the set of category names that have rich templates, so the
+        caller can de-duplicate against the programmatic builders.
+        """
+        import os
+        base = self._examples_dir()
+        rich_cats = set()
+        if not base:
+            return rich_cats
+        tdir = os.path.join(base, "templates")
+        if not os.path.isdir(tdir):
+            return rich_cats
+        for cat in sorted(os.listdir(tdir)):
+            cdir = os.path.join(tdir, cat)
+            if not os.path.isdir(cdir):
+                continue
+            files = sorted(f for f in os.listdir(cdir)
+                           if f.lower().endswith(".ksheet"))
+            if not files:
+                continue
+            rich_cats.add(cat)
+            cm = parent_menu.addMenu(cat)
+            for fn in files:
+                label = os.path.splitext(fn)[0]
+                path = os.path.join(cdir, fn)
+                cm.addAction(
+                    label,
+                    lambda _=False, p=path: self._open_example_file(p))
+        return rich_cats
 
     def _open_example_file(self, path: str):
         """Open a shipped .ksheet example (guards unsaved changes)."""

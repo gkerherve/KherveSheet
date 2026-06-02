@@ -14,8 +14,9 @@ the Free Software Foundation, either version 3 of the License, or
 
 import numpy as np
 
+from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
-    QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout,
+    QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout, QHBoxLayout,
     QLabel, QMessageBox, QSpinBox, QWidget,
 )
 
@@ -25,23 +26,48 @@ from .solver import _PickLineEdit
 
 # ── Baseline subtraction ───────────────────────────────────────────────
 
+_BL_METHODS = [
+    "Polynomial",
+    "Linear",
+    "ALS (Asymmetric Least Squares)",
+    "SNIP (Peak Clipping)",
+    "Rubberband (Convex Hull)",
+    "Rolling Ball",
+    "LOWESS",
+    "Median Filter",
+    "Shirley (XPS)",
+    "Tougaard (XPS)",
+    "Spline",
+]
+
+# Which parameter widgets each method needs (index into _BL_METHODS).
+_NEED_DEGREE   = {0}                  # Polynomial
+_NEED_LAM_P    = {2}                  # ALS
+_NEED_ITERS    = {3}                  # SNIP
+_NEED_RADIUS   = {5}                  # Rolling Ball
+_NEED_WINDOW   = {7}                  # Median Filter
+_NEED_FRACTION = {6}                  # LOWESS
+_NEED_SMOOTH   = {10}                 # Spline
+_NEED_REVERSE  = {8, 9}              # Shirley, Tougaard
+_NEED_TOUG     = {9}                  # Tougaard B, C params
+
+
 class BaselineDialog(ScienceToolDialog):
     TITLE = "Baseline Subtraction"
 
     def _build_options(self, form: QFormLayout):
         self._method = QComboBox()
-        self._method.addItems(["Polynomial",
-                               "ALS (Asymmetric Least Squares)"])
+        self._method.addItems(_BL_METHODS)
         form.addRow("Method:", self._method)
 
-        # Polynomial options
+        # ── Polynomial degree ───────────────────────────────────────
         self._deg_label = QLabel("Degree:")
         self._degree = QSpinBox()
         self._degree.setRange(1, 10)
         self._degree.setValue(3)
         form.addRow(self._deg_label, self._degree)
 
-        # ALS options
+        # ── ALS: lambda + asymmetry ─────────────────────────────────
         self._lam_label = QLabel("Lambda:")
         self._lam = QDoubleSpinBox()
         self._lam.setRange(1e2, 1e10)
@@ -57,35 +83,276 @@ class BaselineDialog(ScienceToolDialog):
         self._p.setSingleStep(0.001)
         form.addRow(self._p_label, self._p)
 
+        # ── SNIP iterations ─────────────────────────────────────────
+        self._iter_label = QLabel("Iterations:")
+        self._iters = QSpinBox()
+        self._iters.setRange(1, 500)
+        self._iters.setValue(40)
+        form.addRow(self._iter_label, self._iters)
+
+        # ── Rolling Ball radius ─────────────────────────────────────
+        self._rad_label = QLabel("Radius (pts):")
+        self._radius = QSpinBox()
+        self._radius.setRange(1, 10_000)
+        self._radius.setValue(50)
+        form.addRow(self._rad_label, self._radius)
+
+        # ── Median filter window ────────────────────────────────────
+        self._win_label = QLabel("Window (pts):")
+        self._window = QSpinBox()
+        self._window.setRange(3, 10_001)
+        self._window.setValue(51)
+        self._window.setSingleStep(2)
+        form.addRow(self._win_label, self._window)
+
+        # ── LOWESS fraction ─────────────────────────────────────────
+        self._frac_label = QLabel("Fraction:")
+        self._fraction = QDoubleSpinBox()
+        self._fraction.setRange(0.01, 1.0)
+        self._fraction.setValue(0.1)
+        self._fraction.setDecimals(3)
+        self._fraction.setSingleStep(0.01)
+        form.addRow(self._frac_label, self._fraction)
+
+        # ── Spline smoothing factor ─────────────────────────────────
+        self._smo_label = QLabel("Smoothing:")
+        self._smooth = QDoubleSpinBox()
+        self._smooth.setRange(0.0, 1e15)
+        self._smooth.setValue(0.0)
+        self._smooth.setDecimals(2)
+        self._smooth.setSpecialValueText("auto")
+        form.addRow(self._smo_label, self._smooth)
+
+        # ── Shirley / Tougaard: reverse flag ────────────────────────
+        self._reverse = QCheckBox("Reverse (inelastic tail at low x)")
+        self._rev_label = QLabel("")          # spacer label for form row
+        form.addRow(self._rev_label, self._reverse)
+
+        # ── Tougaard B, C parameters ───────────────────────────────
+        self._tB_label = QLabel("B:")
+        self._tB = QDoubleSpinBox()
+        self._tB.setRange(0, 1e12)
+        self._tB.setValue(2866.0)
+        self._tB.setDecimals(1)
+        form.addRow(self._tB_label, self._tB)
+
+        self._tC_label = QLabel("C (eV\u00b2):")
+        self._tC = QDoubleSpinBox()
+        self._tC.setRange(0.01, 1e12)
+        self._tC.setValue(1643.0)
+        self._tC.setDecimals(1)
+        form.addRow(self._tC_label, self._tC)
+
+        # ── Collect widget groups for toggling ──────────────────────
+        self._groups = {
+            "degree":   (self._deg_label, self._degree),
+            "lam_p":    (self._lam_label, self._lam,
+                         self._p_label, self._p),
+            "iters":    (self._iter_label, self._iters),
+            "radius":   (self._rad_label, self._radius),
+            "window":   (self._win_label, self._window),
+            "fraction": (self._frac_label, self._fraction),
+            "smooth":   (self._smo_label, self._smooth),
+            "reverse":  (self._rev_label, self._reverse),
+            "tougaard": (self._tB_label, self._tB,
+                         self._tC_label, self._tC),
+        }
+
         self._method.currentIndexChanged.connect(self._toggle_method)
         self._toggle_method(0)
 
-    def _toggle_method(self, idx):
-        poly = idx == 0
-        self._degree.setVisible(poly)
-        self._deg_label.setVisible(poly)
-        self._lam.setVisible(not poly)
-        self._lam_label.setVisible(not poly)
-        self._p.setVisible(not poly)
-        self._p_label.setVisible(not poly)
+    # ── Visibility ──────────────────────────────────────────────────
 
-    def _compute(self, x, y):
-        if self._method.currentIndex() == 0:
-            coeffs = np.polyfit(x, y, self._degree.value())
-            baseline = np.polyval(coeffs, x)
-        else:
-            from scipy import sparse
-            n = len(y)
-            D = sparse.diags([1, -2, 1], [0, 1, 2], shape=(n - 2, n))
-            lam = self._lam.value()
-            p = self._p.value()
-            w = np.ones(n)
-            for _ in range(15):
-                W = sparse.diags(w)
-                Z = W + lam * D.T.dot(D)
-                baseline = sparse.linalg.spsolve(Z, w * y)
-                w = np.where(y > baseline, p, 1 - p)
+    def _toggle_method(self, idx):
+        _show = {
+            "degree":   idx in _NEED_DEGREE,
+            "lam_p":    idx in _NEED_LAM_P,
+            "iters":    idx in _NEED_ITERS,
+            "radius":   idx in _NEED_RADIUS,
+            "window":   idx in _NEED_WINDOW,
+            "fraction": idx in _NEED_FRACTION,
+            "smooth":   idx in _NEED_SMOOTH,
+            "reverse":  idx in _NEED_REVERSE,
+            "tougaard": idx in _NEED_TOUG,
+        }
+        for key, widgets in self._groups.items():
+            vis = _show[key]
+            for w in widgets:
+                w.setVisible(vis)
+
+    # ── Compute ─────────────────────────────────────────────────────
+
+    def _compute(self, x, y):                        # noqa: C901
+        idx = self._method.currentIndex()
+
+        if idx == 0:                                 # Polynomial
+            c = np.polyfit(x, y, self._degree.value())
+            baseline = np.polyval(c, x)
+
+        elif idx == 1:                               # Linear
+            c = np.polyfit(x, y, 1)
+            baseline = np.polyval(c, x)
+
+        elif idx == 2:                               # ALS
+            from .fit_models import als_background
+            baseline = als_background(
+                x, y, lam=self._lam.value(), p=self._p.value())
+
+        elif idx == 3:                               # SNIP
+            baseline = self._snip(y, self._iters.value())
+
+        elif idx == 4:                               # Rubberband
+            baseline = self._rubberband(x, y)
+
+        elif idx == 5:                               # Rolling Ball
+            baseline = self._rolling_ball(y, self._radius.value())
+
+        elif idx == 6:                               # LOWESS
+            baseline = self._lowess(x, y, self._fraction.value())
+
+        elif idx == 7:                               # Median Filter
+            win = self._window.value()
+            if win % 2 == 0:
+                win += 1
+            from scipy.ndimage import median_filter
+            baseline = median_filter(y, size=win).astype(float)
+
+        elif idx == 8:                               # Shirley
+            from .fit_models import shirley_background
+            baseline = shirley_background(
+                x, y, reverse=self._reverse.isChecked())
+
+        elif idx == 9:                               # Tougaard
+            baseline = self._tougaard(
+                x, y,
+                B=self._tB.value(), C=self._tC.value(),
+                reverse=self._reverse.isChecked())
+
+        else:                                        # Spline
+            baseline = self._spline(x, y, self._smooth.value())
+
         return [("baseline", baseline), ("subtracted", y - baseline)]
+
+    # ── Algorithm helpers ───────────────────────────────────────────
+
+    @staticmethod
+    def _snip(y, n_iter):
+        """SNIP (Statistics-sensitive Non-linear Iterative Peak-clipping).
+
+        Operates in LLS (Log-Log-Square-root) space so that the clipping
+        adapts to Poisson-like counting statistics (Ryan et al. 1988).
+        """
+        v = np.log(np.log(np.sqrt(np.clip(y, 1, None) + 1) + 1) + 1)
+        for p in range(1, n_iter + 1):
+            rolled = np.minimum(
+                np.roll(v, p, axis=0), np.roll(v, -p, axis=0))
+            # Fix boundary artefacts.
+            rolled[:p] = v[:p]
+            rolled[-p:] = v[-p:]
+            v = np.minimum(v, (rolled + v) / 2.0)
+        # Invert LLS transform.
+        baseline = (np.exp(np.exp(v) - 1) - 1) ** 2 - 1
+        return np.clip(baseline, 0, None)
+
+    @staticmethod
+    def _rubberband(x, y):
+        """Convex-hull (rubberband) baseline — lower hull only."""
+        from scipy.spatial import ConvexHull
+        pts = np.column_stack((x, y))
+        hull = ConvexHull(pts)
+        # Select vertices on the *lower* hull (connecting leftmost to
+        # rightmost along the bottom).
+        verts = hull.vertices
+        verts = verts[np.argsort(x[verts])]
+        # Walk from left to right keeping only vertices whose y is below
+        # or equal to the line connecting the endpoints.
+        x_lo, x_hi = x.min(), x.max()
+        y_lo = y[np.argmin(np.abs(x - x_lo))]
+        y_hi = y[np.argmin(np.abs(x - x_hi))]
+        lower = []
+        for v in verts:
+            # Below the straight line between first and last data point.
+            frac = (x[v] - x_lo) / (x_hi - x_lo) if x_hi != x_lo else 0.5
+            y_line = y_lo + frac * (y_hi - y_lo)
+            if y[v] <= y_line or v == verts[0] or v == verts[-1]:
+                lower.append(v)
+        if len(lower) < 2:
+            lower = [verts[0], verts[-1]]
+        lower = np.array(lower)
+        baseline = np.interp(x, x[lower], y[lower])
+        return baseline
+
+    @staticmethod
+    def _rolling_ball(y, radius):
+        """Rolling-ball baseline via morphological erosion + dilation."""
+        from scipy.ndimage import minimum_filter1d, maximum_filter1d
+        size = 2 * radius + 1
+        eroded = minimum_filter1d(y, size=size)
+        baseline = maximum_filter1d(eroded, size=size)
+        return baseline.astype(float)
+
+    @staticmethod
+    def _lowess(x, y, frac):
+        """LOWESS (locally weighted scatterplot smoothing) baseline."""
+        try:
+            from statsmodels.nonparametric.smoothers_lowess import lowess
+            result = lowess(y, x, frac=frac, return_sorted=False)
+            return result
+        except ImportError:
+            # Fallback: Savitzky-Golay with equivalent window.
+            from scipy.signal import savgol_filter
+            win = max(3, int(frac * len(y)) | 1)
+            win = min(win, len(y) if len(y) % 2 else len(y) - 1)
+            return savgol_filter(y, win, min(2, win - 1))
+
+    @staticmethod
+    def _tougaard(x, y, B=2866.0, C=1643.0, reverse=False,
+                  max_iter=30, tol=1e-6):
+        """Two-parameter universal Tougaard background.
+
+        K(T) = B·T / (C + T²)²  is the universal inelastic cross-section.
+        The background at energy E is the integral of K(E'-E)·J(E') over
+        the inelastic-loss region, iterated until convergence.
+        """
+        x = np.asarray(x, dtype=float)
+        y = np.asarray(y, dtype=float)
+        n = len(y)
+        if n < 2:
+            return np.zeros_like(y)
+        order = np.argsort(x)
+        xs, ys = x[order], y[order]
+        if reverse:
+            xs, ys = xs[::-1], ys[::-1]
+        dx = np.abs(np.diff(xs))
+        dx = np.append(dx, dx[-1])
+        bg = np.zeros(n)
+        j = ys.copy()
+        for _ in range(max_iter):
+            old_bg = bg.copy()
+            for i in range(n):
+                T = xs[i + 1:] - xs[i] if not reverse else xs[i] - xs[i + 1:]
+                T = np.abs(T)
+                mask = T > 0
+                if not mask.any():
+                    continue
+                K = B * T[mask] / (C + T[mask] ** 2) ** 2
+                bg[i] = np.sum(K * j[i + 1:][mask] * dx[i + 1:][mask])
+            j = ys - bg
+            if np.max(np.abs(bg - old_bg)) < tol * (np.max(np.abs(bg)) + 1e-12):
+                break
+        if reverse:
+            bg = bg[::-1]
+        out = np.empty(n)
+        out[order] = bg
+        return out
+
+    @staticmethod
+    def _spline(x, y, smooth):
+        """Smoothing spline baseline."""
+        from scipy.interpolate import UnivariateSpline
+        s = None if smooth == 0.0 else smooth
+        spl = UnivariateSpline(x, y, s=s)
+        return spl(x)
 
 
 # ── Crop ────────────────────────────────────────────────────────────────
