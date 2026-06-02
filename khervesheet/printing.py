@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional, Tuple
 
-from PyQt5.QtCore import Qt, QRectF
-from PyQt5.QtGui import QColor, QFont, QPainter, QPen
+from PyQt5.QtCore import Qt, QRectF, QRect
+from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 from PyQt5.QtWidgets import (
     QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
     QGroupBox, QHBoxLayout, QVBoxLayout, QLabel, QComboBox,
@@ -413,9 +413,104 @@ class SheetRenderer:
                         x += cw
                     y += rh
 
+                # ── Overlays (charts, images, shapes, equations) ─────
+                # Only render on the first column/row page to avoid
+                # duplicating overlays across paginated pages.
+                if cp_idx == 0 and rp_idx == 0:
+                    self._draw_overlays(painter, table, r_start,
+                                        c_start, col_ws, row_hs,
+                                        rh_w, ch_h)
+
                 painter.restore()
 
         painter.end()
+
+    # ── Overlay rendering ─────────────────────────────────────────────
+
+    def _draw_overlays(self, painter, table, r_start, c_start,
+                       col_ws, row_hs, rh_w, ch_h):
+        """Grab and draw charts, images, shapes, equations onto the page.
+
+        Each overlay is a QWidget parented to the table viewport.  We
+        convert its viewport-pixel position to our print coordinate
+        system using cumulative column widths and row heights.
+        """
+        overlays = []
+        for attr in ('_charts', '_images', '_shapes', '_equations'):
+            overlays.extend(getattr(self._sheet, attr, []))
+        if not overlays:
+            return
+
+        # Build cumulative pixel offset → print offset maps.
+        # Viewport pixel position of each column/row boundary.
+        cum_col_px = [0]  # pixel x for column c_start
+        for c in range(c_start, c_start + len(col_ws)):
+            cum_col_px.append(cum_col_px[-1] + table.columnWidth(c))
+
+        cum_row_px = [0]  # pixel y for row r_start
+        for r in range(r_start, r_start + len(row_hs)):
+            cum_row_px.append(cum_row_px[-1] + table.rowHeight(r))
+
+        # Print-coordinate offsets for each column/row boundary.
+        cum_col_pr = [0]
+        for w in col_ws:
+            cum_col_pr.append(cum_col_pr[-1] + w)
+
+        cum_row_pr = [0]
+        for h in row_hs:
+            cum_row_pr.append(cum_row_pr[-1] + h)
+
+        # Pixel offset of the top-left printed cell in the viewport.
+        vp_x0 = table.columnViewportPosition(c_start)
+        vp_y0 = table.rowViewportPosition(r_start)
+
+        for widget in overlays:
+            if not widget.isVisible():
+                continue
+            geom = widget.geometry()  # relative to table viewport
+
+            # Widget position relative to the printed cell region.
+            wx = geom.x() - vp_x0
+            wy = geom.y() - vp_y0
+
+            # Map viewport pixel position to print coordinates via
+            # interpolation in the cumulative offset arrays.
+            px = self._px_to_print(wx, cum_col_px, cum_col_pr) + rh_w
+            py = self._px_to_print(wy, cum_row_px, cum_row_pr) + ch_h
+
+            # Map widget size similarly.
+            pw = self._px_to_print(wx + geom.width(), cum_col_px,
+                                   cum_col_pr) + rh_w - px
+            ph = self._px_to_print(wy + geom.height(), cum_row_px,
+                                   cum_row_pr) + ch_h - py
+
+            # Grab the widget as a pixmap.
+            pixmap = widget.grab()
+            target = QRectF(px, py, pw, ph)
+            painter.drawPixmap(target.toRect(), pixmap)
+
+    @staticmethod
+    def _px_to_print(px_pos, cum_px, cum_pr):
+        """Map a viewport pixel position to print coordinates.
+
+        Uses the cumulative offset arrays to interpolate.
+        """
+        # Clamp to the range.
+        if px_pos <= 0:
+            return 0.0
+        total_px = cum_px[-1] if cum_px else 1
+        total_pr = cum_pr[-1] if cum_pr else 1
+        if px_pos >= total_px:
+            return float(total_pr)
+
+        # Find which segment we're in.
+        for i in range(1, len(cum_px)):
+            if px_pos <= cum_px[i]:
+                frac = ((px_pos - cum_px[i - 1])
+                        / max(cum_px[i] - cum_px[i - 1], 1))
+                return (cum_pr[i - 1]
+                        + frac * (cum_pr[i] - cum_pr[i - 1]))
+        return float(total_pr)
 
     # ── Helpers ──────────────────────────────────────────────────────
 
