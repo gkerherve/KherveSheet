@@ -1452,6 +1452,52 @@ def save_file_icon(size: int = 28) -> QIcon:
     return _fmt_icon(size, _draw)
 
 
+def science_icon(size: int = 28) -> QIcon:
+    """Erlenmeyer flask icon for science tools."""
+    def _draw(p, s):
+        fg = _toolbar_fg()
+        accent = QColor("#3a78b4")
+        pw = max(1.4, s / 18)
+        p.setPen(QPen(fg, pw))
+        # Flask body (triangle).
+        p.setBrush(QBrush(QColor("#d6eaff")))
+        p.drawPolygon(QPolygonF([
+            QPointF(s * 0.38, s * 0.38),
+            QPointF(s * 0.12, s * 0.88),
+            QPointF(s * 0.88, s * 0.88),
+            QPointF(s * 0.62, s * 0.38),
+        ]))
+        # Neck.
+        p.setBrush(QBrush(Qt.white))
+        p.drawRect(QRectF(s * 0.38, s * 0.10, s * 0.24, s * 0.30))
+        # Liquid fill at bottom.
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(accent))
+        p.drawPolygon(QPolygonF([
+            QPointF(s * 0.26, s * 0.72),
+            QPointF(s * 0.12, s * 0.88),
+            QPointF(s * 0.88, s * 0.88),
+            QPointF(s * 0.74, s * 0.72),
+        ]))
+        # Re-draw outline.
+        p.setPen(QPen(fg, pw))
+        p.setBrush(Qt.NoBrush)
+        p.drawPolygon(QPolygonF([
+            QPointF(s * 0.38, s * 0.38),
+            QPointF(s * 0.12, s * 0.88),
+            QPointF(s * 0.88, s * 0.88),
+            QPointF(s * 0.62, s * 0.38),
+        ]))
+        p.drawLine(QPointF(s * 0.38, s * 0.10),
+                   QPointF(s * 0.38, s * 0.38))
+        p.drawLine(QPointF(s * 0.62, s * 0.10),
+                   QPointF(s * 0.62, s * 0.38))
+        # Rim.
+        p.drawLine(QPointF(s * 0.32, s * 0.10),
+                   QPointF(s * 0.68, s * 0.10))
+    return _fmt_icon(size, _draw)
+
+
 def print_icon(size: int = 28) -> QIcon:
     """Printer icon — matches KherveTeX style."""
     def _draw(p, s):

@@ -448,30 +448,8 @@ class MainWindow(QMainWindow):
             icons.open_file_icon(_ICO), "Open", self._open_file)
         std.addAction(
             icons.save_file_icon(_ICO), "Save", self._save_file)
-        std.addSeparator()
 
-        self._undo_act = std.addAction(
-            icons.undo_icon(_ICO), "Undo", self._undo_stack.undo)
-        self._undo_act.setToolTip("Undo (Ctrl+Z)")
-        self._redo_act = std.addAction(
-            icons.redo_icon(_ICO), "Redo", self._undo_stack.redo)
-        self._redo_act.setToolTip("Redo (Ctrl+Y)")
-        std.addSeparator()
-
-        # ── Solver button ───────────────────────────────────────────
-        self._solver_btn = QToolButton()
-        self._solver_btn.setIcon(icons.solver_icon(_ICO))
-        self._solver_btn.setToolTip("Solver")
-        self._solver_btn.clicked.connect(self._open_solver)
-        std.addWidget(self._solver_btn)
-
-        self._fitting_btn = QToolButton()
-        self._fitting_btn.setIcon(icons.fitting_icon(_ICO))
-        self._fitting_btn.setToolTip("Curve Fitting")
-        self._fitting_btn.clicked.connect(self._open_fitting)
-        std.addWidget(self._fitting_btn)
-
-        # ── Print button with dropdown ─────────────────────────────
+        # ── Print button with dropdown (after Save) ────────────────
         self._print_btn = QToolButton()
         self._print_btn.setIcon(icons.print_icon(_ICO))
         self._print_btn.setToolTip("Print Preview (Ctrl+P)")
@@ -496,6 +474,43 @@ class MainWindow(QMainWindow):
                 lambda n=_pn, w=_pw, h=_ph: self._set_page_size(n, w, h))
         self._print_btn.setMenu(print_menu)
         std.addWidget(self._print_btn)
+
+        std.addSeparator()
+
+        self._undo_act = std.addAction(
+            icons.undo_icon(_ICO), "Undo", self._undo_stack.undo)
+        self._undo_act.setToolTip("Undo (Ctrl+Z)")
+        self._redo_act = std.addAction(
+            icons.redo_icon(_ICO), "Redo", self._undo_stack.redo)
+        self._redo_act.setToolTip("Redo (Ctrl+Y)")
+        std.addSeparator()
+
+        # ── Solver button ───────────────────────────────────────────
+        self._solver_btn = QToolButton()
+        self._solver_btn.setIcon(icons.solver_icon(_ICO))
+        self._solver_btn.setToolTip("Solver")
+        self._solver_btn.clicked.connect(self._open_solver)
+        std.addWidget(self._solver_btn)
+
+        self._fitting_btn = QToolButton()
+        self._fitting_btn.setIcon(icons.fitting_icon(_ICO))
+        self._fitting_btn.setToolTip("Curve Fitting")
+        self._fitting_btn.clicked.connect(self._open_fitting)
+        std.addWidget(self._fitting_btn)
+
+        # ── Science button with dropdown ───────────────────────────
+        self._science_btn = QToolButton()
+        self._science_btn.setIcon(icons.science_icon(_ICO))
+        self._science_btn.setToolTip("Science Tools")
+        self._science_btn.setPopupMode(QToolButton.InstantPopup)
+        sci_menu = QMenu(self._science_btn)
+        from .science import TOOLS as _SCIENCE_TOOLS
+        for _label, _cls in _SCIENCE_TOOLS:
+            sci_menu.addAction(
+                _label,
+                lambda _=False, c=_cls: self._open_science_tool(c))
+        self._science_btn.setMenu(sci_menu)
+        std.addWidget(self._science_btn)
 
         # Font toolbar
         fmt = self.addToolBar("Font")
