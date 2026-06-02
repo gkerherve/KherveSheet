@@ -67,6 +67,13 @@ A complete, correct reference build is `examples/build_projectile_motion.py`
 2. **Only use formula functions KherveSheet supports.** Check
    `khervesheet/formulas.py` for the function list before using one
    (SUM, MAX, MIN, AVERAGE, COS, SIN, RADIANS, DEGREES, IF, etc. exist).
+   Being in the list is necessary but not sufficient — a few combinations
+   misbehave. Known traps: `ISNUMBER(<cell ref>)` evaluates to `#ERROR`
+   (avoid it; guard with `IFERROR(expr, fallback)` or a value comparison
+   instead), and `IF` evaluates *both* branches, so neither branch may
+   contain a domain error even when the condition would skip it (clamp
+   args, e.g. `LOG10(MAX(x, 1e-9))`, rather than relying on the IF to
+   dodge `LOG10(0)`).
 3. **Charts MUST be bound to the sheet data — never a static snapshot.**
    On every `Series`, set `y_col` (and `x_col`, or omit for a row-index
    X) plus `row_start`/`row_end` (0-based, inclusive) so the curve
@@ -101,9 +108,11 @@ A complete, correct reference build is `examples/build_projectile_motion.py`
    `QT_QPA_PLATFORM=offscreen` that constructs `MainWindow`, stubs
    `QMessageBox.warning/critical/information`, calls `mw._load_ksheet(path)`,
    then prints: sheet dims, a few key formula-cell results, count of
-   `_cell_formats`, `_cell_notes`, `_charts`, `_equations`. Confirm the
-   numbers are sane (no `#ERROR`, formula results correct). Delete the
-   throwaway script when done.
+   `_cell_formats`, `_cell_notes`, `_charts`, `_equations`. **Scan EVERY
+   cell** for `#ERROR` (loop all rows × cols of the loaded sheet) — not
+   just the few you spot-check — and fail loudly if any are found.
+   Confirm the chart's `_x_col`/`_y_cols` are set and formula results are
+   numerically correct. Delete the throwaway script when done.
 7. Report what you built: the topic, the features used, and the verified
    key results. The Help ▸ Example Files menu auto-discovers any
    `*.ksheet` in `examples/`, so no menu wiring is needed.
