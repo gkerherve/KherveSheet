@@ -339,9 +339,18 @@ class _Provider:
             if not tool_calls:
                 break
             results = []
+            stop = False
             for tc in tool_calls:
                 if cancelled():
-                    break
+                    stop = True
+                    # Provide a dummy result for every remaining call so
+                    # the history stays valid for the Anthropic API.
+                    results.append({
+                        "id": tc["id"],
+                        "name": tc["name"],
+                        "content": json.dumps({"error": "cancelled"}),
+                    })
+                    continue
                 out = run_tool(tc["name"], tc["input"])
                 results.append({
                     "id": tc["id"],
@@ -349,6 +358,8 @@ class _Provider:
                     "content": json.dumps(out),
                 })
             history.append({"role": "tool_results", "results": results})
+            if stop:
+                break
 
 
 # ── Anthropic ──────────────────────────────────────────────────────

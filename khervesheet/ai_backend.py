@@ -513,15 +513,54 @@ _MAX_TURNS = 60  # keep at most this many neutral-history turns
 def _trim_messages(messages: List[dict]) -> List[dict]:
     """Keep only the last *_MAX_TURNS* neutral-history turns.
 
-    After truncating, drop any leading turns that are not a plain user
-    turn so the history never starts mid-exchange (a dangling
-    tool_results or assistant turn would be rejected by the APIs).
+    Ensures the history is API-safe after truncation:
+    - Starts with a plain user turn (not mid-exchange).
+    - Every assistant turn that contains tool_calls is immediately
+      followed by a tool_results turn with a result for every call.
+    - No dangling tool_results or assistant-with-calls at the tail.
     """
     if len(messages) > _MAX_TURNS:
         messages = messages[-_MAX_TURNS:]
+    # Strip leading non-user turns.
     while messages and messages[0].get("role") != "user":
         messages = messages[1:]
-    return messages
+    # Strip a dangling tail (assistant-with-calls or tool_results
+    # without its pair).
+    while messages:
+        last = messages[-1]
+        if last["role"] == "tool_results":
+            messages = messages[:-1]
+            continue
+        if (last["role"] == "assistant"
+                and last.get("tool_calls")):
+            messages = messages[:-1]
+            continue
+        break
+    # Validate interior: every assistant turn with tool_calls must be
+    # followed by a tool_results turn covering every call id.
+    clean: List[dict] = []
+    i = 0
+    while i < len(messages):
+        turn = messages[i]
+        if (turn["role"] == "assistant" and turn.get("tool_calls")):
+            expected_ids = {tc["id"] for tc in turn["tool_calls"]}
+            nxt = messages[i + 1] if i + 1 < len(messages) else None
+            if (nxt is None or nxt["role"] != "tool_results"
+                    or {r["id"] for r in nxt.get("results", [])}
+                    != expected_ids):
+                # Drop this assistant + its (possibly partial) results.
+                i += 1
+                if (i < len(messages)
+                        and messages[i]["role"] == "tool_results"):
+                    i += 1
+                continue
+            clean.append(turn)
+            clean.append(nxt)
+            i += 2
+        else:
+            clean.append(turn)
+            i += 1
+    return clean
 
 
 # ── Worker (runs on QThread) ───────────────────────────────────────
