@@ -98,7 +98,7 @@ class CellFormat:
         if self.font_color is not None:
             d["font_color"] = self.font_color
         if self.alignment is not None:
-            d["alignment"] = self.alignment
+            d["alignment"] = int(self.alignment)
         if self.number_format is not None:
             d["number_format"] = self.number_format
         if self.wrap_text is not None:
