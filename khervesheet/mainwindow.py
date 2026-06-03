@@ -451,9 +451,11 @@ class MainWindow(QMainWindow):
         for name, cat, builder in EXAMPLES:
             cats.setdefault(cat, []).append((name, builder))
         for cat in cats:
-            # Skip a programmatic category once a rich folder supersedes it.
-            label = cat if cat not in rich_cats else f"{cat} (basic)"
-            cm = templates_menu.addMenu(label)
+            # Skip a programmatic category once a rich folder supersedes it;
+            # only show categories that have no rich template folder.
+            if cat in rich_cats:
+                continue
+            cm = templates_menu.addMenu(cat)
             for name, builder in cats[cat]:
                 cm.addAction(name,
                              lambda b=builder: self._load_example(b))
