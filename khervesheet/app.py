@@ -344,7 +344,7 @@ QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
     border-radius: 2px; padding: 2px 4px;
 }
 QTreeWidget, QListWidget, QTableWidget {
-    background: #fffcf6; alternate-background-color: #faf4ea;
+    background: #ffffff; alternate-background-color: #f6f6f8;
     border: 1px solid #d8ccb8;
 }
 QHeaderView::section {
@@ -356,7 +356,7 @@ QLabel { color: #3a3020; }
 
 _WARM_LIGHT_PALETTE = {
     "Window": "#faf6f0", "WindowText": "#3a3020",
-    "Base": "#fffcf6", "AlternateBase": "#faf4ea",
+    "Base": "#ffffff", "AlternateBase": "#f6f6f8",
     "ToolTipBase": "#fff8e0", "ToolTipText": "#3a3020",
     "Text": "#3a3020", "Button": "#faf4e8",
     "ButtonText": "#3a3020", "Highlight": "#b8903a",
@@ -367,7 +367,15 @@ _WARM_LIGHT_PALETTE = {
 
 def _gen_theme(bg, bg2, fg, fg2, accent, border, base, alt_base,
                btn, btn_hover, menu_sel, link, is_dark=False):
-    """Generate (QSS, palette) from a compact colour spec."""
+    """Generate (QSS, palette) from a compact colour spec.
+
+    Light themes always get a WHITE data grid with a neutral zebra —
+    only the chrome (menus, toolbars, tabs, headers) carries the theme
+    tint. Dark themes keep their darker *base* so cells stay legible.
+    """
+    if not is_dark:
+        base = "#ffffff"
+        alt_base = "#f6f6f8"
     qss = _COMMON_QSS + f"""
 QMainWindow, QDialog {{ background: {bg}; }}
 QMenuBar {{
@@ -483,7 +491,41 @@ THEMES = {
         "#e8c8c0", "#fff8f5", "#faefeb", "#fcf5f2",
         "#f4d4cc", "#e8b8b0", "#c04030"),
 
+    # ── Green light themes (white grid, green chrome) ───────────
+    "Emerald": _gen_theme(
+        "#eef7f1", "#ffffff", "#0d2a1d", "#4a6a58", "#0a9d5b",
+        "#c0e2cd", "#ffffff", "#f6f6f8", "#e2f3ea",
+        "#bfe9cf", "#cfeedc", "#0a7d49"),
+    "Fern": _gen_theme(
+        "#f1f7ec", "#fbfdf8", "#1f3215", "#56684c", "#4f9e2e",
+        "#cfe2bf", "#ffffff", "#f6f6f8", "#e8f3dd",
+        "#d3ebbd", "#ddefcb", "#3d7e22"),
+    "Pistachio": _gen_theme(
+        "#f3f8ec", "#fcfdf8", "#2a3318", "#5e6a4a", "#86b73a",
+        "#d8e6c0", "#ffffff", "#f6f6f8", "#ecf4dc",
+        "#dcecbc", "#e4f0cc", "#6e9a28"),
+    "Seafoam": _gen_theme(
+        "#ecf7f3", "#f8fdfb", "#0e2e28", "#4a6a62", "#16a98a",
+        "#bfe4da", "#ffffff", "#f6f6f8", "#dff3ee",
+        "#bce8de", "#cdeee6", "#0e8a70"),
+    "Olive": _gen_theme(
+        "#f5f5ec", "#fbfbf5", "#2e2e16", "#66664a", "#8a8a30",
+        "#dcdcc0", "#ffffff", "#f6f6f8", "#eeeedc",
+        "#dcdcb8", "#e6e6c6", "#6e6e22"),
+    "Teal": _gen_theme(
+        "#ecf6f7", "#f8fcfd", "#0e2a2e", "#4a666a", "#179a9a",
+        "#bfe0e2", "#ffffff", "#f6f6f8", "#def2f3",
+        "#bce6e8", "#cdeced", "#0e7d7d"),
+    "Jade": _gen_theme(
+        "#eef7f2", "#f9fdfb", "#122e22", "#4e6a5e", "#2aa66f",
+        "#c4e3d2", "#ffffff", "#f6f6f8", "#e2f3ea",
+        "#c2e8d2", "#d2eede", "#1e8456"),
+
     # ── Additional dark themes ──────────────────────────────────
+    "Pine": _gen_theme(
+        "#16241c", "#1e2e24", "#c8d8cc", "#84a890", "#3aa860",
+        "#2e4636", "#101c16", "#1a281e", "#26362c",
+        "#34483a", "#2a5038", "#5ec882", is_dark=True),
     "Charcoal": _gen_theme(
         "#222226", "#2c2c32", "#d8d8dc", "#909098", "#5898d0",
         "#3c3c44", "#1e1e22", "#282830", "#343438",
