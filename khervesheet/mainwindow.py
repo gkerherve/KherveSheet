@@ -2255,7 +2255,23 @@ class MainWindow(QMainWindow):
         self._open_path(path, add_recent=False)
 
     # ── Edit operations (proxy to active sheet) ──────────────────────
+    def _clipboard_to_focused_text(self, op: str) -> bool:
+        """If a text-editing widget (chat box, formula bar, dialog field)
+        has focus, run its clipboard *op* ('cut'/'copy'/'paste') and
+        return True so the sheet-level clipboard handler is skipped.
+
+        The Edit-menu shortcuts (Ctrl+C/V/X) otherwise fire window-wide
+        and steal copy/paste from text inputs such as the AI chat."""
+        from PyQt5.QtWidgets import QLineEdit, QPlainTextEdit, QTextEdit
+        w = QApplication.focusWidget()
+        if isinstance(w, (QLineEdit, QPlainTextEdit, QTextEdit)):
+            getattr(w, op)()
+            return True
+        return False
+
     def _cut(self):
+        if self._clipboard_to_focused_text("cut"):
+            return
         s = self._active_sheet()
         if not s:
             return
@@ -2291,6 +2307,8 @@ class MainWindow(QMainWindow):
             s._cut_selection()
 
     def _copy(self):
+        if self._clipboard_to_focused_text("copy"):
+            return
         s = self._active_sheet()
         if not s:
             return
@@ -2325,6 +2343,8 @@ class MainWindow(QMainWindow):
             s._copy_selection()
 
     def _paste(self):
+        if self._clipboard_to_focused_text("paste"):
+            return
         s = self._active_sheet()
         if not s:
             return
