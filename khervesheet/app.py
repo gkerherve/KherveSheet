@@ -493,33 +493,33 @@ THEMES = {
 
     # ── Green light themes (white grid, green chrome) ───────────
     "Emerald": _gen_theme(
-        "#eef7f1", "#ffffff", "#0d2a1d", "#4a6a58", "#0a9d5b",
-        "#c0e2cd", "#ffffff", "#f6f6f8", "#e2f3ea",
-        "#bfe9cf", "#cfeedc", "#0a7d49"),
+        "#eef7f1", "#d4f0df", "#0d2a1d", "#2e5a44", "#0a9d5b",
+        "#a8dcbd", "#ffffff", "#f6f6f8", "#e2f3ea",
+        "#bfe9cf", "#bfe9cf", "#0a7d49"),
     "Fern": _gen_theme(
-        "#f1f7ec", "#fbfdf8", "#1f3215", "#56684c", "#4f9e2e",
-        "#cfe2bf", "#ffffff", "#f6f6f8", "#e8f3dd",
-        "#d3ebbd", "#ddefcb", "#3d7e22"),
+        "#f1f7ec", "#e0f0d0", "#1f3215", "#42603a", "#4f9e2e",
+        "#bcd8a8", "#ffffff", "#f6f6f8", "#e8f3dd",
+        "#d3ebbd", "#d3ebbd", "#3d7e22"),
     "Pistachio": _gen_theme(
-        "#f3f8ec", "#fcfdf8", "#2a3318", "#5e6a4a", "#86b73a",
-        "#d8e6c0", "#ffffff", "#f6f6f8", "#ecf4dc",
-        "#dcecbc", "#e4f0cc", "#6e9a28"),
+        "#f3f8ec", "#e8f2d4", "#2a3318", "#4e5c34", "#86b73a",
+        "#cce0a8", "#ffffff", "#f6f6f8", "#ecf4dc",
+        "#dcecbc", "#dcecbc", "#6e9a28"),
     "Seafoam": _gen_theme(
-        "#ecf7f3", "#f8fdfb", "#0e2e28", "#4a6a62", "#16a98a",
-        "#bfe4da", "#ffffff", "#f6f6f8", "#dff3ee",
-        "#bce8de", "#cdeee6", "#0e8a70"),
+        "#ecf7f3", "#d2f0e8", "#0e2e28", "#36605a", "#16a98a",
+        "#a8ddd0", "#ffffff", "#f6f6f8", "#dff3ee",
+        "#bce8de", "#bce8de", "#0e8a70"),
     "Olive": _gen_theme(
-        "#f5f5ec", "#fbfbf5", "#2e2e16", "#66664a", "#8a8a30",
-        "#dcdcc0", "#ffffff", "#f6f6f8", "#eeeedc",
-        "#dcdcb8", "#e6e6c6", "#6e6e22"),
+        "#f5f5ec", "#e8e8cc", "#2e2e16", "#565636", "#8a8a30",
+        "#cccca0", "#ffffff", "#f6f6f8", "#eeeedc",
+        "#dcdcb8", "#dcdcb8", "#6e6e22"),
     "Teal": _gen_theme(
-        "#ecf6f7", "#f8fcfd", "#0e2a2e", "#4a666a", "#179a9a",
-        "#bfe0e2", "#ffffff", "#f6f6f8", "#def2f3",
-        "#bce6e8", "#cdeced", "#0e7d7d"),
+        "#ecf6f7", "#d2eeef", "#0e2a2e", "#365e62", "#179a9a",
+        "#a8dadc", "#ffffff", "#f6f6f8", "#def2f3",
+        "#bce6e8", "#bce6e8", "#0e7d7d"),
     "Jade": _gen_theme(
-        "#eef7f2", "#f9fdfb", "#122e22", "#4e6a5e", "#2aa66f",
-        "#c4e3d2", "#ffffff", "#f6f6f8", "#e2f3ea",
-        "#c2e8d2", "#d2eede", "#1e8456"),
+        "#eef7f2", "#d8f0e2", "#122e22", "#3a5e4e", "#2aa66f",
+        "#b0ddc6", "#ffffff", "#f6f6f8", "#e2f3ea",
+        "#c2e8d2", "#c2e8d2", "#1e8456"),
 
     # ── Additional dark themes ──────────────────────────────────
     "Pine": _gen_theme(
