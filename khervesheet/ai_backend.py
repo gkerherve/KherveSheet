@@ -370,6 +370,47 @@ TOOLS = [
             "required": ["source_sheet", "chart_index"],
         },
     },
+    {
+        "name": "modify_chart",
+        "description": (
+            "Edit an existing chart's axes and labels in place: invert "
+            "(reverse) the X or Y axis, set axis scales (linear/log), set "
+            "the title or axis labels, or toggle gridlines. Use this when "
+            "the user asks to flip/reverse an axis, use a log scale, or "
+            "rename a chart's title/axes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {"type": "string"},
+                "chart_index": {
+                    "type": "integer",
+                    "description": "0-based index (see list_charts).",
+                },
+                "invert_x": {
+                    "type": "boolean",
+                    "description": "True reverses the X axis (high→low).",
+                },
+                "invert_y": {
+                    "type": "boolean",
+                    "description": "True reverses the Y axis.",
+                },
+                "x_scale": {
+                    "type": "string",
+                    "enum": ["linear", "log", "symlog", "logit"],
+                },
+                "y_scale": {
+                    "type": "string",
+                    "enum": ["linear", "log", "symlog", "logit"],
+                },
+                "title": {"type": "string"},
+                "x_label": {"type": "string"},
+                "y_label": {"type": "string"},
+                "grid": {"type": "boolean"},
+            },
+            "required": ["sheet_name", "chart_index"],
+        },
+    },
 ]
 
 
@@ -429,6 +470,9 @@ Do this before claiming a capability is missing.
 - To copy or understand an existing plot, use list_charts and \
 get_chart_details to see each series' style and X/Y columns, and \
 clone_chart to reproduce a chart (with identical style) on another sheet.
+- To change an existing chart's axes — reverse/invert an axis, switch \
+to a log scale, or rename the title/axis labels — use modify_chart. \
+Reversing the X axis is invert_x=true.
 - Available chart types: Line, Scatter, Line+Symbol, Bar, Step, Stem, \
 Histogram, Box, Heatmap, 3D Surface.
 - format_cells accepts: bg_color (hex), bold, italic, underline, \
@@ -679,6 +723,9 @@ class AiBackend(QObject):
             return "Read chart details"
         if name == "clone_chart":
             return f"Cloned chart to '{result.get('target_sheet', '')}'"
+        if name == "modify_chart":
+            keys = ", ".join((result.get("applied") or {}).keys())
+            return f"Modified chart ({keys})" if keys else "Modified chart"
         return name
 
     def shutdown(self):

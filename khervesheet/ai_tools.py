@@ -96,6 +96,7 @@ class AiToolExecutor:
             "list_charts": self.tool_list_charts,
             "get_chart_details": self.tool_get_chart_details,
             "clone_chart": self.tool_clone_chart,
+            "modify_chart": self.tool_modify_chart,
         }
 
     # ── Dispatcher ──────────────────────────────────────────────
@@ -442,3 +443,30 @@ class AiToolExecutor:
         target._charts.append(chart)
         return {"cloned": True, "target_sheet": target_name,
                 "spec": self._chart_spec(target, chart)}
+
+    def tool_modify_chart(self, inp: dict) -> dict:
+        """Edit a chart's axes/labels in place: invert axes, set scales,
+        title, axis labels, gridlines."""
+        sheet = self._sheet(inp["sheet_name"])
+        charts = getattr(sheet, "_charts", []) or []
+        idx = int(inp.get("chart_index", 0))
+        if idx < 0 or idx >= len(charts):
+            return {"error": f"Chart index {idx} out of range "
+                    f"(sheet has {len(charts)} chart(s))."}
+        chart = charts[idx]
+        kwargs = {}
+        for key in ("invert_x", "invert_y", "grid"):
+            if key in inp:
+                kwargs[key] = bool(inp[key])
+        for key in ("x_scale", "y_scale", "title", "x_label", "y_label"):
+            if key in inp:
+                kwargs[key] = inp[key]
+        if not kwargs:
+            return {"error": "No changes specified. Provide at least one "
+                    "of: invert_x, invert_y, x_scale, y_scale, title, "
+                    "x_label, y_label, grid."}
+        try:
+            applied = chart.set_axis_options(**kwargs)
+        except ValueError as exc:
+            return {"error": f"Invalid value: {exc}"}
+        return {"modified": True, "index": idx, "applied": applied}

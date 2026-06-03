@@ -333,6 +333,57 @@ class EmbeddedChart(QWidget):
             leg.set_draggable(True)
         self._canvas.draw_idle()
 
+    # ── Programmatic axis editing (used by the AI assistant) ──────────
+    def set_axis_options(self, *, invert_x=None, invert_y=None,
+                         x_scale=None, y_scale=None, title=None,
+                         x_label=None, y_label=None, grid=None):
+        """Apply axis/labels changes live and return the applied set.
+
+        Every argument is optional; only the ones provided are changed.
+        ``invert_x``/``invert_y`` set the *absolute* desired state.
+        ``x_scale``/``y_scale`` accept matplotlib scale names
+        ("linear", "log", "symlog", "logit").
+        """
+        ax = self._ax
+        applied = {}
+        if x_scale is not None:
+            ax.set_xscale(x_scale)
+            applied["x_scale"] = x_scale
+        if y_scale is not None:
+            ax.set_yscale(y_scale)
+            applied["y_scale"] = y_scale
+        if invert_x is not None:
+            if bool(invert_x) != ax.xaxis_inverted():
+                ax.invert_xaxis()
+            applied["invert_x"] = bool(invert_x)
+        if invert_y is not None:
+            if bool(invert_y) != ax.yaxis_inverted():
+                ax.invert_yaxis()
+            applied["invert_y"] = bool(invert_y)
+        if title is not None:
+            ax.set_title(title)
+            applied["title"] = title
+        if x_label is not None:
+            ax.set_xlabel(x_label)
+            applied["x_label"] = x_label
+        if y_label is not None:
+            ax.set_ylabel(y_label)
+            applied["y_label"] = y_label
+        if grid is not None:
+            ax.grid(bool(grid))
+            applied["grid"] = bool(grid)
+        # Keep any dialog-saved axis state in sync so a later open of the
+        # Axis Properties dialog reflects these changes.
+        ap = self._axis_props or {}
+        if "x" in ap:
+            ap["x"]["invert"] = ax.xaxis_inverted()
+            ap["x"]["scale"] = ax.get_xscale()
+        if "y" in ap:
+            ap["y"]["invert"] = ax.yaxis_inverted()
+            ap["y"]["scale"] = ax.get_yscale()
+        self._canvas.draw_idle()
+        return applied
+
     # ── Serialisation ────────────────────────────────────────────────
     def to_dict(self):
         """Return a JSON-safe dict capturing chart state."""
@@ -441,6 +492,8 @@ class EmbeddedChart(QWidget):
             "ylabel": ax.get_ylabel(),
             "xscale": ax.get_xscale(),
             "yscale": ax.get_yscale(),
+            "x_inverted": bool(ax.xaxis_inverted()),
+            "y_inverted": bool(ax.yaxis_inverted()),
             "grid": (ax.xaxis.get_gridlines()[0].get_visible()
                      if ax.xaxis.get_gridlines() else False),
             "top_label": getattr(self, '_top_label_text', ''),
@@ -617,6 +670,13 @@ class EmbeddedChart(QWidget):
             except ValueError:
                 pass
             ax.grid(tpl.get("grid", False))
+        # Enforce saved axis inversion (idempotent).
+        if ("x_inverted" in tpl
+                and bool(tpl["x_inverted"]) != ax.xaxis_inverted()):
+            ax.invert_xaxis()
+        if ("y_inverted" in tpl
+                and bool(tpl["y_inverted"]) != ax.yaxis_inverted()):
+            ax.invert_yaxis()
 
         # Column mapping.
         chart._x_col = chart_x_col
@@ -820,6 +880,12 @@ class EmbeddedChart(QWidget):
             except ValueError:
                 pass
             ax.grid(d.get("grid", False))
+        # Enforce saved axis inversion (idempotent; applied after
+        # axis_props so the most recent state always wins).
+        if "x_inverted" in d and bool(d["x_inverted"]) != ax.xaxis_inverted():
+            ax.invert_xaxis()
+        if "y_inverted" in d and bool(d["y_inverted"]) != ax.yaxis_inverted():
+            ax.invert_yaxis()
         # Restore source column mapping for live updates.
         chart._x_col = d.get("x_col")
         chart._y_cols = d.get("y_cols", [])
