@@ -18,7 +18,9 @@ import base64
 from PyQt5.QtCore import (
     Qt, QTimer, QSettings, QBuffer, QByteArray, pyqtSignal,
 )
-from PyQt5.QtGui import QColor, QKeySequence, QImage, QPixmap
+from PyQt5.QtGui import (
+    QColor, QKeySequence, QImage, QPixmap, QTextDocument,
+)
 from PyQt5.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPlainTextEdit, QToolButton, QScrollArea, QFrame,
@@ -150,25 +152,51 @@ class ApiKeyDialog(QDialog):
         super().accept()
 
 
+# ── Markdown rendering ─────────────────────────────────────────────
+
+def _markdown_to_html(md: str, font) -> str:
+    """Render Markdown to Qt-compatible HTML using Qt's own parser.
+
+    Uses QTextDocument.setMarkdown (GitHub dialect) so no extra
+    dependency is needed; the document's default font is set to *font*
+    so the rendered size tracks the chat's zoom level.
+    """
+    doc = QTextDocument()
+    if font is not None:
+        doc.setDefaultFont(font)
+    try:
+        doc.setMarkdown(md, QTextDocument.MarkdownDialectGitHub)
+    except Exception:
+        doc.setPlainText(md)
+    return doc.toHtml()
+
+
 # ── Chat bubble ────────────────────────────────────────────────────
 
 class ChatBubble(QFrame):
-    """A single message bubble in the chat history."""
+    """A single message bubble in the chat history.
+
+    Assistant/tool bubbles render their text as Markdown; user bubbles
+    stay plain so a typed ``*`` or ``#`` is shown verbatim.
+    """
 
     def __init__(self, role: str, text: str = "", parent=None,
                  font_pt: float = 10.0):
         super().__init__(parent)
         self._role = role
+        self._raw = text          # markdown / plain source text
+        self._font_pt = font_pt
         self.setFrameShape(QFrame.StyledPanel)
         self.setLineWidth(0)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 6, 10, 6)
 
-        self._label = QLabel(text)
+        self._label = QLabel()
         self._label.setWordWrap(True)
         self._label.setTextInteractionFlags(
             Qt.TextSelectableByMouse | Qt.LinksAccessibleByMouse)
         self._label.setOpenExternalLinks(True)
+        self._label.setStyleSheet("background: transparent;")
         layout.addWidget(self._label)
 
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -191,15 +219,31 @@ class ChatBubble(QFrame):
 
     def set_font_pt(self, pt: float):
         """Apply a point size; tool 'receipts' render one point smaller."""
+        self._font_pt = pt
         f = self._label.font()
         f.setPointSizeF(max(7.0, pt - 1.0) if self._role == "tool" else pt)
         self._label.setFont(f)
+        self._render()
+
+    def _render(self):
+        """Refresh the label from the raw source text."""
+        if self._role == "assistant":
+            self._label.setTextFormat(Qt.RichText)
+            self._label.setText(
+                _markdown_to_html(self._raw, self._label.font()))
+        else:
+            # User text and tool receipts (which contain formulas with
+            # * and _ that markdown would mangle) stay verbatim.
+            self._label.setTextFormat(Qt.PlainText)
+            self._label.setText(self._raw)
 
     def append_text(self, text: str):
-        self._label.setText(self._label.text() + text)
+        self._raw += text
+        self._render()
 
     def set_text(self, text: str):
-        self._label.setText(text)
+        self._raw = text
+        self._render()
 
     def add_image_b64(self, b64: str):
         """Show a base64-PNG thumbnail inside the bubble."""
