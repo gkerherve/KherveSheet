@@ -82,7 +82,14 @@ class ApiKeyDialog(QDialog):
         # Model (editable so local/custom names can be typed).
         self._model_combo = QComboBox()
         self._model_combo.setEditable(True)
-        layout.addRow("Model:", self._model_combo)
+        model_row = QHBoxLayout()
+        model_row.addWidget(self._model_combo, stretch=1)
+        self._refresh_btn = QToolButton()
+        self._refresh_btn.setText("⟳")
+        self._refresh_btn.setToolTip("Refresh model list from server")
+        self._refresh_btn.clicked.connect(self._refresh_models)
+        model_row.addWidget(self._refresh_btn)
+        layout.addRow("Model:", model_row)
 
         # API key.
         self._key_edit = QLineEdit()
@@ -133,10 +140,33 @@ class ApiKeyDialog(QDialog):
         self._key_label.setVisible(spec["needs_key"])
         self._key_edit.setVisible(spec["needs_key"])
         self._key_edit.setText(s.value(f"ai/key_{provider}", ""))
-        self._key_edit.setPlaceholderText(
-            "sk-ant-..." if provider == "anthropic" else "")
+        placeholder = {"anthropic": "sk-ant-...",
+                       "openai": "sk-..."}.get(provider, "")
+        self._key_edit.setPlaceholderText(placeholder)
         self._host_label.setVisible(spec["needs_host"])
         self._host_edit.setVisible(spec["needs_host"])
+        # Refresh button only for providers that support model listing.
+        self._refresh_btn.setVisible(spec.get("refreshable", False))
+
+    def _refresh_models(self):
+        """Fetch the live model list from the provider's server."""
+        from .ai_providers import fetch_models
+        provider = self._current_provider()
+        api_key = self._key_edit.text().strip()
+        host = self._host_edit.text().strip()
+        try:
+            models = fetch_models(provider, api_key=api_key, host=host)
+        except Exception as exc:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Refresh failed", str(exc))
+            return
+        current = self._model_combo.currentText()
+        self._model_combo.blockSignals(True)
+        self._model_combo.clear()
+        self._model_combo.addItems(models)
+        if current in models:
+            self._model_combo.setCurrentText(current)
+        self._model_combo.blockSignals(False)
 
     def accept(self):
         provider = self._current_provider()
@@ -532,8 +562,8 @@ class AiChatDock(QDockWidget):
                              "format cells, or insert a chart. You can also "
                              "paste a screenshot or image (Ctrl+V) for me to "
                              "look at.\n"
-                             "Set your provider (Anthropic, Mistral, or "
-                             "Ollama) and API key via the gear icon.",
+                             "Set your provider (Anthropic, OpenAI, Mistral, "
+                             "or Ollama) and API key via the gear icon.",
                              font_pt=self._font_pt)
         self._msg_layout.addWidget(welcome)
         self._update_title()

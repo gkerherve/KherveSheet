@@ -1,4 +1,4 @@
-"""AI provider adapters — Anthropic, Mistral, and Ollama.
+"""AI provider adapters — Anthropic, OpenAI, Mistral, and Ollama.
 
 Each provider speaks a different wire format, so the conversation is
 kept in a single *provider-neutral* history and converted on the fly.
@@ -38,6 +38,7 @@ PROVIDERS: Dict[str, dict] = {
         "pip": "anthropic",
         "needs_key": True,
         "needs_host": False,
+        "refreshable": False,
         "models": [
             "claude-sonnet-4-20250514",
             "claude-opus-4-20250514",
@@ -45,12 +46,30 @@ PROVIDERS: Dict[str, dict] = {
         ],
         "default_model": "claude-sonnet-4-20250514",
     },
+    "openai": {
+        "label": "OpenAI (ChatGPT)",
+        "module": "openai",
+        "pip": "openai",
+        "needs_key": True,
+        "needs_host": False,
+        "refreshable": False,
+        "models": [
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "gpt-4.1-nano",
+            "o3-mini",
+        ],
+        "default_model": "gpt-4o",
+    },
     "mistral": {
         "label": "Mistral AI",
         "module": "mistralai",
         "pip": "mistralai",
         "needs_key": True,
         "needs_host": False,
+        "refreshable": True,
         "models": [
             "mistral-large-latest",
             "mistral-small-latest",
@@ -65,6 +84,7 @@ PROVIDERS: Dict[str, dict] = {
         "pip": "ollama",
         "needs_key": False,
         "needs_host": True,
+        "refreshable": True,
         "models": [
             "llama3.1",
             "qwen2.5",
@@ -91,6 +111,42 @@ def is_available(provider_name: str) -> bool:
         return importlib.util.find_spec(spec["module"]) is not None
     except (ImportError, ValueError):
         return False
+
+
+def fetch_models(provider_name: str, api_key: str = "",
+                 host: str = "") -> List[str]:
+    """Query the provider for its available models.
+
+    Returns a list of model-id strings, or raises on failure.
+    Only meaningful for providers with ``refreshable: True``.
+    """
+    if provider_name == "ollama":
+        import ollama
+        client = ollama.Client(host=host or DEFAULT_HOST)
+        resp = client.list()
+        models = resp.get("models", []) if isinstance(resp, dict) else []
+        if not models and hasattr(resp, "models"):
+            models = resp.models or []
+        names = []
+        for m in models:
+            name = m.get("name", "") if isinstance(m, dict) else getattr(m, "name", "")
+            if name:
+                names.append(name.split(":")[0] if ":" in name else name)
+        return sorted(set(names)) or ["llama3.1"]
+
+    if provider_name == "mistral":
+        from mistralai import Mistral
+        client = Mistral(api_key=api_key)
+        resp = client.models.list()
+        models = resp.data if hasattr(resp, "data") else []
+        names = []
+        for m in models:
+            mid = m.id if hasattr(m, "id") else (m.get("id", "") if isinstance(m, dict) else "")
+            if mid:
+                names.append(mid)
+        return sorted(names) or ["mistral-large-latest"]
+
+    return PROVIDERS.get(provider_name, {}).get("models", [])
 
 
 # ── Format converters ──────────────────────────────────────────────
@@ -343,6 +399,55 @@ class AnthropicProvider(_Provider):
         return str(exc)
 
 
+# ── OpenAI ─────────────────────────────────────────────────────────
+
+class OpenAIProvider(_Provider):
+    name = "openai"
+
+    def _make_client(self):
+        try:
+            import openai
+        except ImportError:
+            raise RuntimeError(
+                "The 'openai' package is not installed.\n"
+                "Install it with:  pip install openai")
+        self._sdk = openai
+        return openai.OpenAI(api_key=self.cfg["api_key"])
+
+    def _call(self, system, tools, history):
+        resp = self._client.chat.completions.create(
+            model=self.cfg["model"],
+            messages=_openai_messages(system, history),
+            tools=_openai_tools(tools) or None,
+            max_tokens=_MAX_TOKENS,
+        )
+        msg = resp.choices[0].message
+        text = msg.content or ""
+        tool_calls: List[dict] = []
+        for i, tc in enumerate(msg.tool_calls or []):
+            fn = tc.function
+            args = fn.arguments
+            if isinstance(args, str):
+                args = json.loads(args or "{}")
+            tool_calls.append({
+                "id": tc.id or f"call_{i}",
+                "name": fn.name,
+                "input": args,
+            })
+        return text, tool_calls
+
+    def humanize(self, exc):
+        sdk = getattr(self, "_sdk", None)
+        if sdk is not None:
+            if isinstance(exc, sdk.AuthenticationError):
+                return "Invalid OpenAI API key. Check it in AI Chat settings."
+            if isinstance(exc, sdk.RateLimitError):
+                return "OpenAI rate limit reached. Please wait and try again."
+            if isinstance(exc, sdk.APIConnectionError):
+                return "Cannot reach the OpenAI API. Check your connection."
+        return str(exc)
+
+
 # ── Mistral ────────────────────────────────────────────────────────
 
 class MistralProvider(_Provider):
@@ -442,6 +547,7 @@ class OllamaProvider(_Provider):
 
 _REGISTRY = {
     "anthropic": AnthropicProvider,
+    "openai": OpenAIProvider,
     "mistral": MistralProvider,
     "ollama": OllamaProvider,
 }
