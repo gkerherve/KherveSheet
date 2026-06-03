@@ -878,6 +878,8 @@ class SheetWidget(QWidget):
         self._fill_dragging = False
         self._fill_anchor_range = None
         self._fill_end_row = None
+        self._fill_end_col = None
+        self._fill_direction = None          # "down" or "right"
 
         # ── Marching ants (copy highlight) ───────────────────────────
         self._marching_range = None   # QTableWidgetSelectionRange or None
@@ -4364,6 +4366,8 @@ class SheetWidget(QWidget):
                     self._fill_dragging = True
                     self._fill_anchor_range = sel[0]
                     self._fill_end_row = sel[0].bottomRow()
+                    self._fill_end_col = sel[0].rightColumn()
+                    self._fill_direction = None  # decided on first move
                     return True
 
         elif (etype == QEvent.MouseButtonDblClick
@@ -4378,9 +4382,23 @@ class SheetWidget(QWidget):
 
         elif etype == QEvent.MouseMove and self._fill_dragging:
             row = self.table.rowAt(event.pos().y())
-            if row >= 0:
-                self._fill_end_row = row
-                self._preview_fill()
+            col = self.table.columnAt(event.pos().x())
+            s = self._fill_anchor_range
+            if s is not None:
+                # Determine direction from dominant axis on first move
+                dr = (row - s.bottomRow()) if row >= 0 else 0
+                dc = (col - s.rightColumn()) if col >= 0 else 0
+                if self._fill_direction is None and (dr or dc):
+                    self._fill_direction = (
+                        "right" if abs(dc) > abs(dr) else "down")
+                if self._fill_direction == "right":
+                    if col >= 0:
+                        self._fill_end_col = col
+                        self._preview_fill()
+                else:
+                    if row >= 0:
+                        self._fill_end_row = row
+                        self._preview_fill()
             return True
 
         elif etype == QEvent.MouseButtonRelease and self._fill_dragging:
@@ -4396,13 +4414,26 @@ class SheetWidget(QWidget):
         if s is None:
             return
         self.table.clearSelection()
-        self.table.setRangeSelected(
-            QTableWidgetSelectionRange(
-                s.topRow(), s.leftColumn(),
-                self._fill_end_row, s.rightColumn()),
-            True)
+        if self._fill_direction == "right":
+            self.table.setRangeSelected(
+                QTableWidgetSelectionRange(
+                    s.topRow(), s.leftColumn(),
+                    s.bottomRow(), self._fill_end_col),
+                True)
+        else:
+            self.table.setRangeSelected(
+                QTableWidgetSelectionRange(
+                    s.topRow(), s.leftColumn(),
+                    self._fill_end_row, s.rightColumn()),
+                True)
 
     def _apply_fill(self):
+        if self._fill_direction == "right":
+            self._apply_fill_right()
+            return
+        self._apply_fill_down()
+
+    def _apply_fill_down(self):
         s = self._fill_anchor_range
         if s is None:
             return
@@ -4478,6 +4509,84 @@ class SheetWidget(QWidget):
             self._undo_stack.push(
                 BulkCellEditCmd(self, changes, "Drag fill"))
         # Recalculate cells that depend on any changed cell.
+        for r, c, _old, _new in changes:
+            self._recalc_dependents(r, c)
+        self._refresh_cross_sheet()
+        self._fill_anchor_range = None
+
+    def _apply_fill_right(self):
+        """Fill horizontally (rightward) — mirrors _apply_fill_down."""
+        s = self._fill_anchor_range
+        if s is None:
+            return
+        src_left = s.leftColumn()
+        src_right = s.rightColumn()
+        fill_end = self._fill_end_col
+        if fill_end <= src_right:
+            return
+
+        src_len = src_right - src_left + 1
+        changes = []
+        self.table.blockSignals(True)
+        try:
+            for r in range(s.topRow(), s.bottomRow() + 1):
+                formulas = []
+                vals = []
+                for c in range(src_left, src_right + 1):
+                    it = self.table.item(r, c)
+                    vals.append(it.text() if it else "")
+                    formulas.append(
+                        self._cell_formulas.get((r, c)))
+
+                has_formulas = any(f is not None for f in formulas)
+
+                if has_formulas:
+                    for c in range(src_right + 1, fill_end + 1):
+                        src_idx = (c - src_left) % src_len
+                        src_c = src_left + src_idx
+                        f = formulas[src_idx]
+                        if f:
+                            d_col = c - src_c
+                            shifted = shift_formula(f, 0, d_col)
+                            self._cell_formulas[(r, c)] = shifted
+                            result = self._evaluate_formula(
+                                shifted, r, c)
+                            text = str(result)
+                        else:
+                            text = vals[src_idx]
+                            self._cell_formulas.pop((r, c), None)
+
+                        it = self.table.item(r, c)
+                        old = it.text() if it else ""
+                        if it is None:
+                            it = QTableWidgetItem(text)
+                            self.table.setItem(r, c, it)
+                        else:
+                            it.setText(text)
+                        self._shadow[(r, c)] = text
+                        if old != text:
+                            changes.append((r, c, old, text))
+                else:
+                    pattern = self._detect_pattern(vals)
+                    for c in range(src_right + 1, fill_end + 1):
+                        idx = c - src_left
+                        text = self._pattern_value(
+                            pattern, idx, vals)
+                        it = self.table.item(r, c)
+                        old = it.text() if it else ""
+                        if it is None:
+                            it = QTableWidgetItem(text)
+                            self.table.setItem(r, c, it)
+                        else:
+                            it.setText(text)
+                        self._shadow[(r, c)] = text
+                        if old != text:
+                            changes.append((r, c, old, text))
+        finally:
+            self.table.blockSignals(False)
+        if changes and self._undo_stack is not None:
+            self._undo_stack.push(
+                BulkCellEditCmd(self, changes, "Drag fill"))
         for r, c, _old, _new in changes:
             self._recalc_dependents(r, c)
         self._refresh_cross_sheet()
