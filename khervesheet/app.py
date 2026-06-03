@@ -70,13 +70,9 @@ QToolBar QComboBox, QToolBar QFontComboBox {
 QToolBar QComboBox:hover, QToolBar QFontComboBox:hover {
     border-color: palette(highlight);
 }
-QToolBar QComboBox::drop-down, QToolBar QFontComboBox::drop-down {
-    subcontrol-origin: padding;
-    subcontrol-position: center right;
-    width: 18px;
-    border-top-right-radius: 4px;
-    border-bottom-right-radius: 4px;
-}
+/* Do NOT style ::drop-down without also supplying a ::down-arrow image:
+   styling the drop-down subcontrol turns off Qt's native rendering and
+   the dropdown arrow disappears. We rely on the native arrow instead. */
 #layoutToolStrip {
     background: palette(button);
     border-right: 1px solid palette(mid);
