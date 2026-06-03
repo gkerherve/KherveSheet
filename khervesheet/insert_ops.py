@@ -117,6 +117,17 @@ def insert_dropdown(sheet, parent=None):
                     else:
                         it.setText(items[0])
                     sheet._shadow[(r, c)] = items[0]
+                mark_dropdown_cell(sheet, r, c)
+
+
+def mark_dropdown_cell(sheet, row, col):
+    """Make a validated cell non-editable so its value can only be
+    changed through the dropdown list (no free-text typing)."""
+    it = sheet.table.item(row, col)
+    if it is None:
+        it = QTableWidgetItem("")
+        sheet.table.setItem(row, col, it)
+    it.setFlags(it.flags() & ~Qt.ItemIsEditable)
 
 
 class _DropdownCloseFilter(QObject):
@@ -142,11 +153,13 @@ def show_dropdown_for_cell(sheet, row, col):
     it = sheet.table.item(row, col)
     if it and it.text() in items:
         combo.setCurrentText(it.text())
+    # Overlay the combo exactly on the cell so its popup drops down from
+    # the cell itself (previously it was offset one row below).
     x = sheet.table.columnViewportPosition(col)
-    y = (sheet.table.rowViewportPosition(row)
-         + sheet.table.rowHeight(row))
-    combo.move(x, y)
-    combo.setMinimumWidth(sheet.table.columnWidth(col))
+    y = sheet.table.rowViewportPosition(row)
+    w = max(sheet.table.columnWidth(col), 60)
+    h = sheet.table.rowHeight(row)
+    combo.setGeometry(x, y, w, h)
     combo.show()
     combo.showPopup()
 

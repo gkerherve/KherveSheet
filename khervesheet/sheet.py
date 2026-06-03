@@ -861,6 +861,7 @@ class SheetWidget(QWidget):
         self.table.cellChanged.connect(self._on_cell_changed)
         self.table.currentCellChanged.connect(self._on_current_cell_changed)
         self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
+        self.table.cellClicked.connect(self._on_cell_clicked)
 
         # Sync resize across selected columns / rows.
         self._resizing_sections = False  # recursion guard
@@ -1206,6 +1207,22 @@ class SheetWidget(QWidget):
         else:
             it = self.table.item(row, col)
             self._formula_bar.setText(it.text() if it else "")
+
+    def _on_cell_clicked(self, row, col):
+        """Open a validation dropdown when its ▼ arrow is clicked.
+
+        Only the arrow region (right edge) triggers the popup, so a plain
+        click still just selects the cell (e.g. to copy it)."""
+        if (row, col) not in self._cell_dropdowns:
+            return
+        from PyQt5.QtGui import QCursor
+        vp = self.table.viewport()
+        pos = vp.mapFromGlobal(QCursor.pos())
+        right = (self.table.columnViewportPosition(col)
+                 + self.table.columnWidth(col))
+        if pos.x() >= right - 18:
+            from .insert_ops import show_dropdown_for_cell
+            show_dropdown_for_cell(self, row, col)
 
     def _on_cell_double_clicked(self, row, col):
         """Show formula ref highlights or dropdown when entering edit mode."""
@@ -3362,6 +3379,8 @@ class SheetWidget(QWidget):
                                     Qt.Checked if dm["checkbox"] else Qt.Unchecked)
                             if "dropdown" in dm:
                                 self._cell_dropdowns[(r, c)] = dm["dropdown"]
+                                it.setFlags(
+                                    it.flags() & ~Qt.ItemIsEditable)
                             if "note" in dm:
                                 self._cell_notes[(r, c)] = dm["note"]
                             if "sparkline" in dm:
