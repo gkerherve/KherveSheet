@@ -845,6 +845,10 @@ class SheetWidget(QWidget):
         self._inline_formula_text = None  # saved editor text on close
         self._inline_formula_pos = None   # saved cursor position
         self._inline_formula_cell = None  # (row, col) of the cell being edited
+        # Tab-completion state for formula function names.
+        self._tab_matches: list = []       # current matching function names
+        self._tab_index: int = -1          # index in _tab_matches
+        self._tab_prefix_pos: int = 0      # cursor pos where the prefix starts
         # Arrow-key cell reference navigation state.
         self._arrow_nav_active = False
         self._arrow_nav_pos = None       # (row, col) of ref cursor
@@ -3842,6 +3846,84 @@ class SheetWidget(QWidget):
         self._update_ref_highlights(new_text)
         return True
 
+    # ── Tab completion for formula function names ─────────────────
+
+    _FORMULA_FUNC_NAMES: list = []  # lazily populated
+
+    @classmethod
+    def _get_formula_func_names(cls):
+        """Return sorted list of all known formula function names."""
+        if not cls._FORMULA_FUNC_NAMES:
+            from .formulas import FUNCTION_CATEGORIES
+            names = set()
+            for funcs in FUNCTION_CATEGORIES.values():
+                names.update(funcs)
+            cls._FORMULA_FUNC_NAMES = sorted(names)
+        return cls._FORMULA_FUNC_NAMES
+
+    def _handle_formula_tab(self, editor):
+        """Tab-complete a function name in the formula bar.
+
+        On first Tab press, find all functions matching the partial token
+        before the cursor and replace it with the first match.  Subsequent
+        Tab presses cycle through matches; Shift+Tab cycles backwards.
+        Returns True if the event was consumed.
+        """
+        import re
+        text = editor.text()
+        if not text.startswith("="):
+            return False
+
+        # If we already have matches, cycle to the next one.
+        if self._tab_matches:
+            from PyQt5.QtWidgets import QApplication
+            shift = (QApplication.keyboardModifiers() & Qt.ShiftModifier)
+            step = -1 if shift else 1
+            self._tab_index = (
+                (self._tab_index + step) % len(self._tab_matches))
+            replacement = self._tab_matches[self._tab_index]
+            # Replace from prefix_pos to current cursor position.
+            before = text[:self._tab_prefix_pos]
+            # Find end of previous completion (cursor is right after it).
+            cp = editor.cursorPosition()
+            after = text[cp:]
+            new_text = before + replacement + after
+            editor.blockSignals(True)
+            editor.setText(new_text)
+            editor.setCursorPosition(
+                self._tab_prefix_pos + len(replacement))
+            editor.blockSignals(False)
+            return True
+
+        # First Tab: extract the partial token before cursor.
+        cp = editor.cursorPosition()
+        left = text[1:cp]  # strip leading "="
+        # Find the last function-name token (letters, digits, dots).
+        m = re.search(r'([A-Za-z][A-Za-z0-9._]*)$', left)
+        if not m:
+            return False
+        prefix = m.group(1).upper()
+        prefix_pos = 1 + m.start()  # absolute position in text
+
+        all_funcs = self._get_formula_func_names()
+        matches = [f for f in all_funcs if f.startswith(prefix)]
+        if not matches:
+            return False
+
+        self._tab_matches = matches
+        self._tab_index = 0
+        self._tab_prefix_pos = prefix_pos
+
+        replacement = matches[0]
+        before = text[:prefix_pos]
+        after = text[cp:]
+        new_text = before + replacement + after
+        editor.blockSignals(True)
+        editor.setText(new_text)
+        editor.setCursorPosition(prefix_pos + len(replacement))
+        editor.blockSignals(False)
+        return True
+
     def _toggle_absolute_ref(self, editor):
         """Cycle cell reference under cursor through A1→$A$1→A$1→$A1.
 
@@ -3953,7 +4035,10 @@ class SheetWidget(QWidget):
         # ── Formula bar arrow key interception ───────────────────
         if obj is self._formula_bar and event.type() == QEvent.KeyPress:
             key = event.key()
-            if key in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right):
+            if key == Qt.Key_Tab:
+                if self._handle_formula_tab(self._formula_bar):
+                    return True
+            elif key in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right):
                 if (self._formula_entry_cell is not None
                         and self._should_arrow_insert_ref(self._formula_bar)):
                     if self._handle_arrow_key(key, self._formula_bar):
@@ -3964,6 +4049,9 @@ class SheetWidget(QWidget):
                 self._toggle_absolute_ref(self._formula_bar)
                 return True
             else:
+                # Any non-arrow/non-tab key resets tab completion.
+                self._tab_matches.clear()
+                self._tab_index = -1
                 # Any non-arrow key breaks arrow nav mode.
                 self._arrow_nav_active = False
                 self._arrow_nav_pos = None
