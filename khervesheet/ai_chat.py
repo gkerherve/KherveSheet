@@ -16,7 +16,7 @@ from __future__ import annotations
 import base64
 
 from PyQt5.QtCore import (
-    Qt, QTimer, QSettings, QBuffer, QByteArray, pyqtSignal,
+    Qt, QTimer, QSettings, QBuffer, QByteArray, QSize, pyqtSignal,
 )
 from PyQt5.QtGui import (
     QColor, QKeySequence, QImage, QPixmap, QTextDocument,
@@ -454,6 +454,7 @@ class AiChatDock(QDockWidget):
         self.setObjectName("AiChatDock")
         self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         self.setMinimumWidth(180)
+        self.setMaximumWidth(600)
         self._mw = mainwindow
         self._current_bubble: ChatBubble | None = None
         self._busy = False
@@ -568,6 +569,9 @@ class AiChatDock(QDockWidget):
         self._msg_layout.addWidget(welcome)
         self._update_title()
         self._apply_font()
+
+    def sizeHint(self):
+        return QSize(360, 600)
 
     # ── Actions ─────────────────────────────────────────────────
 
