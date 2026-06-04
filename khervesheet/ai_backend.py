@@ -215,8 +215,10 @@ TOOLS = [
                 "y_range": {
                     "type": "string",
                     "description": (
-                        "A1-notation range for Y data, "
-                        "e.g. 'B2:B20'."
+                        "A1-notation range(s) for Y data. "
+                        "Single: 'B2:B20'. "
+                        "Multiple series: 'B2:B20,C2:C20,D2:D20' "
+                        "(comma-separated, one range per series)."
                     ),
                 },
             },
@@ -474,7 +476,9 @@ with a value glued on.
   5. Apply number formats to numeric columns via format_cells \
 (number_format), and light borders/zebra fills for readability.
   6. Create chart(s) with insert_chart, then use modify_chart to give \
-each a descriptive title and x_label/y_label (with units).
+each a descriptive title and x_label/y_label (with units). \
+For multi-series charts, pass comma-separated y_range values \
+(e.g. 'B2:B20,C2:C20,D2:D20') — each range becomes a series.
   7. Optionally add a short note explaining how to use the template.
 - After writing formulas, READ BACK the calculated cells with \
 read_cells; if any show #ERROR, #N/A or look wrong, diagnose and fix \

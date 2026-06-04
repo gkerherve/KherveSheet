@@ -285,10 +285,9 @@ class AiToolExecutor:
         if chart_type not in valid_types:
             return {"error": f"Invalid chart_type {chart_type!r}. "
                     f"Valid: {valid_types}"}
-        # Read X and Y data.
-        xr1, xc1, xr2, xc2 = parse_range(inp["x_range"])
-        yr1, yc1, yr2, yc2 = parse_range(inp["y_range"])
         import numpy as np
+        # Read X data.
+        xr1, xc1, xr2, xc2 = parse_range(inp["x_range"])
         x_vals = []
         for r in range(xr1, xr2 + 1):
             t = sheet.cell_text(r, xc1)
@@ -296,29 +295,54 @@ class AiToolExecutor:
                 x_vals.append(float(t))
             except (ValueError, TypeError):
                 x_vals.append(float('nan'))
-        y_vals = []
-        for r in range(yr1, yr2 + 1):
-            t = sheet.cell_text(r, yc1)
-            try:
-                y_vals.append(float(t))
-            except (ValueError, TypeError):
-                y_vals.append(float('nan'))
         x = np.array(x_vals)
-        y = np.array(y_vals)
-        if len(x) == 0 or len(y) == 0:
-            return {"error": "No numeric data found in the specified ranges."}
-        # Create chart on the sheet viewport.
+        if len(x) == 0:
+            return {"error": "No numeric X data found."}
+
+        # Parse Y ranges — may be comma-separated for multiple series.
+        y_range_str = inp["y_range"]
+        y_ranges = [s.strip() for s in y_range_str.split(",") if s.strip()]
+        if not y_ranges:
+            return {"error": "No Y range specified."}
+
         from .graph import EmbeddedChart
         viewport = sheet.table.viewport()
-        chart = EmbeddedChart(
-            x, y, "Data", chart_type, sheet, viewport,
-            x_col=xc1, y_col=yc1,
-            row_start=xr1, row_end=xr2)
+        chart = None
+        series_count = 0
+
+        for y_rng in y_ranges:
+            yr1, yc1, yr2, yc2 = parse_range(y_rng)
+            y_vals = []
+            for r in range(yr1, yr2 + 1):
+                t = sheet.cell_text(r, yc1)
+                try:
+                    y_vals.append(float(t))
+                except (ValueError, TypeError):
+                    y_vals.append(float('nan'))
+            y = np.array(y_vals)
+            if len(y) == 0:
+                continue
+            label = col_index_to_letter(yc1)
+            if chart is None:
+                chart = EmbeddedChart(
+                    x, y, label, chart_type, sheet, viewport,
+                    x_col=xc1, y_col=yc1,
+                    row_start=xr1, row_end=xr2)
+            else:
+                chart.add_series(
+                    x, y, label, chart_type,
+                    x_col=xc1, y_col=yc1,
+                    row_start=xr1, row_end=xr2)
+            series_count += 1
+
+        if chart is None:
+            return {"error": "No numeric Y data found in the specified ranges."}
         offset = len(sheet._charts) * 30
         chart.move(40 + offset, 40 + offset)
         sheet._charts.append(chart)
         sheet.data_changed.connect(chart._on_data_changed)
-        return {"chart_created": True, "chart_type": chart_type}
+        return {"chart_created": True, "chart_type": chart_type,
+                "series_count": series_count}
 
     def tool_add_sheet(self, inp: dict) -> dict:
         name = inp["name"]
