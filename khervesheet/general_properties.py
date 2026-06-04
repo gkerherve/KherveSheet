@@ -70,6 +70,7 @@ def default_general_state(chart):
     fig = chart._figure
     grid_on = bool(ax.xaxis.get_gridlines()[0].get_visible()
                    if ax.xaxis.get_gridlines() else False)
+    sp = fig.subplotpars
     return {
         "title": ax.get_title(),
         "xlabel": ax.get_xlabel(),
@@ -83,6 +84,12 @@ def default_general_state(chart):
         "grid_alpha": 1.0,
         "grid_style": "-",
         "sketch": bool(getattr(chart, "_sketch_on", False)),
+        "tight_layout": bool(getattr(chart, "_tight_layout", True)),
+        "keep_ratio": bool(getattr(chart, "_keep_ratio", False)),
+        "margin_left": sp.left,
+        "margin_right": sp.right,
+        "margin_top": sp.top,
+        "margin_bottom": sp.bottom,
     }
 
 
@@ -112,6 +119,34 @@ def apply_general_state(chart, state):
     chart._sketch_on = sketch_on
     apply_sketch(chart, sketch_on)
 
+    # ── Layout controls ─────────────────────────────────────────────
+    tight = bool(state.get("tight_layout", True))
+    chart._tight_layout = tight
+    if tight:
+        try:
+            fig.set_layout_engine("tight")
+        except Exception:
+            try:
+                fig.tight_layout()
+            except Exception:
+                pass
+    else:
+        try:
+            fig.set_layout_engine("none")
+        except Exception:
+            pass
+        fig.subplots_adjust(
+            left=float(state.get("margin_left", 0.15)),
+            right=float(state.get("margin_right", 0.95)),
+            top=float(state.get("margin_top", 0.92)),
+            bottom=float(state.get("margin_bottom", 0.15)),
+        )
+
+    keep = bool(state.get("keep_ratio", False))
+    chart._keep_ratio = keep
+    if keep:
+        chart._aspect_ratio = chart.width() / max(chart.height(), 1)
+
     chart._general_props = dict(state)
     chart._canvas.draw_idle()
 
@@ -127,7 +162,7 @@ class GeneralPropertiesDialog(QDialog):
     def __init__(self, chart, parent=None):
         super().__init__(parent or chart)
         self.setWindowTitle("General Properties")
-        self.resize(420, 480)
+        self.resize(680, 520)
         self._chart = chart
 
         from .graph import _ColorButton  # lazy: graph imports us lazily
@@ -136,6 +171,11 @@ class GeneralPropertiesDialog(QDialog):
                      or default_general_state(chart))
 
         outer = QVBoxLayout(self)
+
+        # Two-column body: left = existing groups, right = layout controls
+        columns = QHBoxLayout()
+        left_col = QVBoxLayout()
+        right_col = QVBoxLayout()
 
         # ── Titles ──────────────────────────────────────────────────
         title_box = QGroupBox("Titles")
@@ -146,7 +186,7 @@ class GeneralPropertiesDialog(QDialog):
         tform.addRow("Title:", self.title_edit)
         tform.addRow("X Label:", self.xlabel_edit)
         tform.addRow("Y Label:", self.ylabel_edit)
-        outer.addWidget(title_box)
+        left_col.addWidget(title_box)
 
         # ── Background ──────────────────────────────────────────────
         bg_box = QGroupBox("Background")
@@ -159,7 +199,7 @@ class GeneralPropertiesDialog(QDialog):
         bform.addRow("Figure color:", self.fig_color)
         self.fig_alpha = self._make_alpha(state.get("fig_alpha", 1.0))
         bform.addRow("Figure opacity:", self.fig_alpha)
-        outer.addWidget(bg_box)
+        left_col.addWidget(bg_box)
 
         # ── Grid ────────────────────────────────────────────────────
         grid_box = QGroupBox("Grid")
@@ -179,7 +219,7 @@ class GeneralPropertiesDialog(QDialog):
         if si >= 0:
             self.grid_style.setCurrentIndex(si)
         gform.addRow("Grid style:", self.grid_style)
-        outer.addWidget(grid_box)
+        left_col.addWidget(grid_box)
 
         # ── Effects ─────────────────────────────────────────────────
         fx_box = QGroupBox("Effects")
@@ -187,16 +227,58 @@ class GeneralPropertiesDialog(QDialog):
         self.sketch_check = QCheckBox("Cartoon (wobbly lines)")
         self.sketch_check.setChecked(bool(state.get("sketch", False)))
         fxform.addRow(self.sketch_check)
-        outer.addWidget(fx_box)
+        left_col.addWidget(fx_box)
 
-        outer.addStretch()
+        left_col.addStretch()
+
+        # ── RIGHT COLUMN: Layout ────────────────────────────────────
+        layout_box = QGroupBox("Layout")
+        lform = QFormLayout(layout_box)
+        self.tight_check = QCheckBox("Tight layout")
+        self.tight_check.setChecked(bool(state.get("tight_layout", True)))
+        lform.addRow(self.tight_check)
+        self.ratio_check = QCheckBox("Keep proportions")
+        self.ratio_check.setChecked(bool(state.get("keep_ratio", False)))
+        lform.addRow(self.ratio_check)
+        right_col.addWidget(layout_box)
+
+        # ── Margins ─────────────────────────────────────────────────
+        margin_box = QGroupBox("Margins")
+        mform = QFormLayout(margin_box)
+        sp = chart._figure.subplotpars
+        self._margin_spins = {}
+        for name, val in (
+            ("left", state.get("margin_left", sp.left)),
+            ("right", state.get("margin_right", sp.right)),
+            ("top", state.get("margin_top", sp.top)),
+            ("bottom", state.get("margin_bottom", sp.bottom)),
+        ):
+            spin = QDoubleSpinBox()
+            spin.setRange(0.0, 1.0)
+            spin.setSingleStep(0.01)
+            spin.setDecimals(3)
+            spin.setValue(float(val))
+            mform.addRow(name.capitalize() + ":", spin)
+            self._margin_spins[name] = spin
+        right_col.addWidget(margin_box)
+
+        # Disable margin spinboxes when tight layout is on.
+        self.tight_check.toggled.connect(
+            lambda on: margin_box.setEnabled(not on))
+        margin_box.setEnabled(not self.tight_check.isChecked())
+
+        right_col.addStretch()
+
+        columns.addLayout(left_col, stretch=1)
+        columns.addLayout(right_col, stretch=1)
+        outer.addLayout(columns)
 
         # ── Footer ──────────────────────────────────────────────────
         footer = QHBoxLayout()
-        series_btn = QPushButton("Series Properties…")
+        series_btn = QPushButton("Series Properties\u2026")
         series_btn.clicked.connect(self._switch_to_series)
         footer.addWidget(series_btn)
-        axis_btn = QPushButton("Axis Properties…")
+        axis_btn = QPushButton("Axis Properties\u2026")
         axis_btn.clicked.connect(self._switch_to_axis)
         footer.addWidget(axis_btn)
         footer.addStretch()
@@ -221,7 +303,7 @@ class GeneralPropertiesDialog(QDialog):
 
     # ── State capture / apply ──────────────────────────────────────
     def _capture_state(self):
-        return {
+        state = {
             "title": self.title_edit.text(),
             "xlabel": self.xlabel_edit.text(),
             "ylabel": self.ylabel_edit.text(),
@@ -234,7 +316,12 @@ class GeneralPropertiesDialog(QDialog):
             "grid_alpha": self.grid_alpha.value(),
             "grid_style": self.grid_style.currentData(),
             "sketch": self.sketch_check.isChecked(),
+            "tight_layout": self.tight_check.isChecked(),
+            "keep_ratio": self.ratio_check.isChecked(),
         }
+        for k, spin in self._margin_spins.items():
+            state[f"margin_{k}"] = spin.value()
+        return state
 
     def apply_to_chart(self, chart):
         apply_general_state(chart, self._capture_state())

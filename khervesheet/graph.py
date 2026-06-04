@@ -122,6 +122,57 @@ class _HandleOverlay(QWidget):
         p.end()
 
 
+class _DraggableLine:
+    """Make an axhline / axvline draggable by mouse drag on the canvas."""
+
+    def __init__(self, line, direction, canvas):
+        self._line = line
+        self._dir = direction     # "horizontal" or "vertical"
+        self._canvas = canvas
+        self._press = None
+        self._cids = [
+            canvas.mpl_connect('button_press_event', self._on_press),
+            canvas.mpl_connect('motion_notify_event', self._on_motion),
+            canvas.mpl_connect('button_release_event', self._on_release),
+        ]
+
+    def _on_press(self, event):
+        if event.inaxes is None:
+            return
+        if self._dir == "horizontal":
+            ydata = self._line.get_ydata()[0]
+            ax = self._line.axes
+            ypix = ax.transData.transform((0, ydata))[1]
+            epix = ax.transData.transform((0, event.ydata))[1]
+            if abs(ypix - epix) > 8:
+                return
+            self._press = event.ydata
+        else:
+            xdata = self._line.get_xdata()[0]
+            ax = self._line.axes
+            xpix = ax.transData.transform((xdata, 0))[0]
+            epix = ax.transData.transform((event.xdata, 0))[0]
+            if abs(xpix - epix) > 8:
+                return
+            self._press = event.xdata
+
+    def _on_motion(self, event):
+        if self._press is None or event.inaxes is None:
+            return
+        if self._dir == "horizontal":
+            self._line.set_ydata([event.ydata, event.ydata])
+        else:
+            self._line.set_xdata([event.xdata, event.xdata])
+        self._canvas.draw_idle()
+
+    def _on_release(self, event):
+        self._press = None
+
+    def disconnect(self):
+        for cid in self._cids:
+            self._canvas.mpl_disconnect(cid)
+
+
 class EmbeddedChart(QWidget):
     """A matplotlib chart that lives as a child of the grid viewport."""
 
@@ -156,6 +207,7 @@ class EmbeddedChart(QWidget):
         self._keep_ratio = False      # fixed aspect-ratio resize
         self._aspect_ratio = 480 / 320  # w/h ratio at creation
         self._tight_layout = True       # tight layout on by default
+        self._annotations = []            # user text/arrow/line annotations
 
         self.setMinimumSize(240, 180)
         self.resize(480, 320)
@@ -540,6 +592,29 @@ class EmbeddedChart(QWidget):
         # Trendlines
         if self._trendlines:
             d["trendlines"] = [t.to_dict() for t in self._trendlines]
+        # Annotations
+        if self._annotations:
+            ann_list = []
+            for a in self._annotations:
+                ad = {"type": a["type"]}
+                if a["type"] == "text":
+                    artist = a["artist"]
+                    ad["text"] = artist.get_text()
+                    ad["xy"] = list(artist.xy)
+                elif a["type"] == "arrow":
+                    artist = a["artist"]
+                    ad["text"] = artist.get_text()
+                    ad["xy"] = list(artist.xy)
+                    ad["xytext"] = list(artist.get_position())
+                elif a["type"] == "line":
+                    ad["direction"] = a["direction"]
+                    line = a["artist"]
+                    if a["direction"] == "horizontal":
+                        ad["value"] = float(line.get_ydata()[0])
+                    else:
+                        ad["value"] = float(line.get_xdata()[0])
+                ann_list.append(ad)
+            d["annotations"] = ann_list
         return d
 
     # ── Plot template support ──────────────────────────────────────────
@@ -1027,6 +1102,43 @@ class EmbeddedChart(QWidget):
         if gp:
             from .general_properties import apply_general_state
             apply_general_state(chart, gp)
+        # Restore annotations.
+        for ad in d.get("annotations", []):
+            atype = ad.get("type")
+            if atype == "text":
+                ann = ax.annotate(
+                    ad["text"], xy=tuple(ad["xy"]),
+                    xytext=tuple(ad["xy"]),
+                    fontsize=10, ha='center', va='center',
+                    bbox=dict(boxstyle='round,pad=0.3',
+                              fc='wheat', alpha=0.8))
+                ann.draggable(True)
+                chart._annotations.append(
+                    {"type": "text", "artist": ann})
+            elif atype == "arrow":
+                ann = ax.annotate(
+                    ad.get("text", ""), xy=tuple(ad["xy"]),
+                    xytext=tuple(ad.get("xytext", ad["xy"])),
+                    fontsize=9,
+                    arrowprops=dict(arrowstyle='->',
+                                    color='black', lw=1.5),
+                    bbox=dict(boxstyle='round,pad=0.2',
+                              fc='white', alpha=0.7)
+                    if ad.get("text", "").strip() else None)
+                ann.draggable(True)
+                chart._annotations.append(
+                    {"type": "arrow", "artist": ann})
+            elif atype == "line":
+                dirn = ad.get("direction", "horizontal")
+                val = ad.get("value", 0)
+                if dirn == "horizontal":
+                    line = ax.axhline(val, color='red', ls='--', lw=1.2)
+                else:
+                    line = ax.axvline(val, color='red', ls='--', lw=1.2)
+                dl = _DraggableLine(line, dirn, chart._canvas)
+                chart._annotations.append(
+                    {"type": "line", "artist": line,
+                     "direction": dirn, "dragger": dl})
         chart._canvas.draw_idle()
         return chart
 
@@ -1697,29 +1809,31 @@ class EmbeddedChart(QWidget):
 
         menu.addSeparator()
 
+        # Annotations
+        ann_menu = menu.addMenu("Annotations")
+        ann_menu.addAction("Add Text\u2026", self._add_text_annotation)
+        ann_menu.addAction("Add Arrow\u2026", self._add_arrow_annotation)
+        ann_menu.addAction("Add Line\u2026", self._add_line_annotation)
+
         # Pan axes toggle
         pan_act = menu.addAction("Pan Axes")
         pan_act.setCheckable(True)
         pan_act.setChecked(self._pan_enabled)
         pan_act.triggered.connect(self._toggle_pan_mode)
 
-        # Keep proportions toggle
-        ratio_act = menu.addAction("Keep Proportions")
-        ratio_act.setCheckable(True)
-        ratio_act.setChecked(self._keep_ratio)
-        ratio_act.triggered.connect(self._toggle_keep_ratio)
-
-        # Tight layout toggle
-        tight_act = menu.addAction("Tight Layout")
-        tight_act.setCheckable(True)
-        tight_act.setChecked(self._tight_layout)
-        tight_act.triggered.connect(self._toggle_tight_layout)
-        menu.addAction("Subplot Margins\u2026", self._open_margins_dialog)
-
         # Resize presets — dimensions at 100 dpi (pixels = inches × 100)
-        size_menu = menu.addMenu("Resize")
+        size_menu = menu.addMenu("Size")
+        # General screen sizes
+        for label, w, h in (
+            ("Small (320\u00d7240)", 320, 240),
+            ("Medium (480\u00d7320)", 480, 320),
+            ("Large (640\u00d7480)", 640, 480),
+            ("HD (960\u00d7540)", 960, 540),
+        ):
+            size_menu.addAction(
+                label, lambda _=False, ww=w, hh=h: self._resize_to(ww, hh))
+        size_menu.addSeparator()
         # Journal publication sizes
-        pub_menu = size_menu.addMenu("Publication")
         for label, w, h in (
             ('Single column  (3.3\u2033\u00d72.5\u2033 / 84\u00d763 mm)',
              330, 250),
@@ -1739,16 +1853,6 @@ class EmbeddedChart(QWidget):
              700, 400),
             ('Square  (4.0\u2033\u00d74.0\u2033 / 102\u00d7102 mm)',
              400, 400),
-        ):
-            pub_menu.addAction(
-                label, lambda _=False, ww=w, hh=h: self._resize_to(ww, hh))
-        size_menu.addSeparator()
-        # General screen sizes
-        for label, w, h in (
-            ("Small (320\u00d7240)", 320, 240),
-            ("Medium (480\u00d7320)", 480, 320),
-            ("Large (640\u00d7480)", 640, 480),
-            ("HD (960\u00d7540)", 960, 540),
         ):
             size_menu.addAction(
                 label, lambda _=False, ww=w, hh=h: self._resize_to(ww, hh))
@@ -1771,14 +1875,6 @@ class EmbeddedChart(QWidget):
 
         menu.addSeparator()
         menu.addAction("Update Plot", self._refresh_data)
-        show_data_act = menu.addAction("Show Data")
-        show_data_act.setCheckable(True)
-        show_data_act.setChecked(getattr(self, '_show_data_active', False))
-        show_data_act.triggered.connect(self._toggle_show_data)
-        menu.addSeparator()
-        menu.addAction("Pop Out to Window", self._pop_out)
-        menu.addSeparator()
-        menu.addAction("Close Chart", self._close_chart)
         menu.exec_(event.globalPos())
 
     def _toggle_pan_mode(self, checked):
@@ -1859,6 +1955,74 @@ class EmbeddedChart(QWidget):
         dlg = _ChartWindow(self._figure, self._series, self.window())
         self._close_chart()
         dlg.show()
+
+    # ── Annotations (text / arrow / line) ────────────────────────────
+
+    def _add_text_annotation(self):
+        """Add a draggable text label at the centre of the current view."""
+        from PyQt5.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getText(self, "Add Text", "Text:")
+        if not ok or not text.strip():
+            return
+        xl, xr = self._ax.get_xlim()
+        yb, yt = self._ax.get_ylim()
+        cx, cy = (xl + xr) / 2, (yb + yt) / 2
+        ann = self._ax.annotate(
+            text, xy=(cx, cy), xytext=(cx, cy),
+            fontsize=10, ha='center', va='center',
+            bbox=dict(boxstyle='round,pad=0.3', fc='wheat', alpha=0.8))
+        ann.draggable(True)
+        self._annotations.append({"type": "text", "artist": ann,
+                                   "text": text, "xy": (cx, cy)})
+        self._canvas.draw_idle()
+
+    def _add_arrow_annotation(self):
+        """Add a draggable arrow from one data point to another."""
+        from PyQt5.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getText(
+            self, "Add Arrow", "Label (blank for none):")
+        if not ok:
+            return
+        xl, xr = self._ax.get_xlim()
+        yb, yt = self._ax.get_ylim()
+        dx, dy = (xr - xl) * 0.15, (yt - yb) * 0.15
+        cx, cy = (xl + xr) / 2, (yb + yt) / 2
+        ann = self._ax.annotate(
+            text, xy=(cx, cy), xytext=(cx + dx, cy + dy),
+            fontsize=9,
+            arrowprops=dict(arrowstyle='->', color='black', lw=1.5),
+            bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.7)
+            if text.strip() else None)
+        ann.draggable(True)
+        self._annotations.append({"type": "arrow", "artist": ann,
+                                   "text": text,
+                                   "xy": (cx, cy),
+                                   "xytext": (cx + dx, cy + dy)})
+        self._canvas.draw_idle()
+
+    def _add_line_annotation(self):
+        """Add a draggable horizontal or vertical line."""
+        from PyQt5.QtWidgets import QInputDialog
+        items = ["Horizontal", "Vertical"]
+        choice, ok = QInputDialog.getItem(
+            self, "Add Line", "Direction:", items, 0, False)
+        if not ok:
+            return
+        xl, xr = self._ax.get_xlim()
+        yb, yt = self._ax.get_ylim()
+        if choice == "Horizontal":
+            val = (yb + yt) / 2
+            line = self._ax.axhline(val, color='red', ls='--', lw=1.2)
+        else:
+            val = (xl + xr) / 2
+            line = self._ax.axvline(val, color='red', ls='--', lw=1.2)
+        # axhline/axvline are not natively draggable — wrap with a
+        # DraggableLine helper that responds to mouse events.
+        dl = _DraggableLine(line, choice.lower(), self._canvas)
+        self._annotations.append({"type": "line", "artist": line,
+                                   "direction": choice.lower(),
+                                   "value": val, "dragger": dl})
+        self._canvas.draw_idle()
 
     # ── Double-click opens axis properties ─────────────────────────
     def mouseDoubleClickEvent(self, event):
