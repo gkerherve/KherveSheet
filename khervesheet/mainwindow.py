@@ -1172,7 +1172,12 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Prompt to save unsaved changes before closing."""
-        event.accept() if self._maybe_save_changes() else event.ignore()
+        if not self._maybe_save_changes():
+            event.ignore()
+            return
+        if hasattr(self, '_ai_dock'):
+            self._ai_dock._backend.shutdown()
+        event.accept()
 
     # ── Drag-and-drop file opening ───────────────────────────────────
     def _dropped_openable_paths(self, mime):
