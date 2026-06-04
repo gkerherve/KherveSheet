@@ -299,10 +299,19 @@ class AiToolExecutor:
         if len(x) == 0:
             return {"error": "No numeric X data found."}
 
-        # Parse Y ranges — may be comma-separated for multiple series.
+        # Build list of (row_start, col, row_end) for each Y series.
+        # Supports: single column "D5:D14", multi-column "D5:H14",
+        # or comma-separated "D5:D14,E5:E14,F5:F14".
         y_range_str = inp["y_range"]
-        y_ranges = [s.strip() for s in y_range_str.split(",") if s.strip()]
-        if not y_ranges:
+        y_columns = []  # list of (row_start, col_index, row_end)
+        for part in y_range_str.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            yr1, yc1, yr2, yc2 = parse_range(part)
+            for c in range(yc1, yc2 + 1):
+                y_columns.append((yr1, c, yr2))
+        if not y_columns:
             return {"error": "No Y range specified."}
 
         from .graph import EmbeddedChart
@@ -310,11 +319,10 @@ class AiToolExecutor:
         chart = None
         series_count = 0
 
-        for y_rng in y_ranges:
-            yr1, yc1, yr2, yc2 = parse_range(y_rng)
+        for yr1, yc, yr2 in y_columns:
             y_vals = []
             for r in range(yr1, yr2 + 1):
-                t = sheet.cell_text(r, yc1)
+                t = sheet.cell_text(r, yc)
                 try:
                     y_vals.append(float(t))
                 except (ValueError, TypeError):
@@ -322,16 +330,16 @@ class AiToolExecutor:
             y = np.array(y_vals)
             if len(y) == 0:
                 continue
-            label = col_index_to_letter(yc1)
+            label = col_index_to_letter(yc)
             if chart is None:
                 chart = EmbeddedChart(
                     x, y, label, chart_type, sheet, viewport,
-                    x_col=xc1, y_col=yc1,
+                    x_col=xc1, y_col=yc,
                     row_start=xr1, row_end=xr2)
             else:
                 chart.add_series(
                     x, y, label, chart_type,
-                    x_col=xc1, y_col=yc1,
+                    x_col=xc1, y_col=yc,
                     row_start=xr1, row_end=xr2)
             series_count += 1
 

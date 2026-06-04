@@ -215,10 +215,10 @@ TOOLS = [
                 "y_range": {
                     "type": "string",
                     "description": (
-                        "A1-notation range(s) for Y data. "
-                        "Single: 'B2:B20'. "
-                        "Multiple series: 'B2:B20,C2:C20,D2:D20' "
-                        "(comma-separated, one range per series)."
+                        "A1-notation range for Y data. "
+                        "Use a multi-column range like 'D5:H14' to "
+                        "plot one series per column. "
+                        "Or comma-separated: 'D5:D14,F5:F14'."
                     ),
                 },
             },
