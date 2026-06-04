@@ -204,20 +204,14 @@ class CellFormatDelegate(QStyledItemDelegate):
             painter.fillRect(option.rect, bg)
             painter.restore()
 
-        # Paint cell content without the default opaque selection
-        # highlight so values remain readable when a column/row is
-        # selected.  We draw a translucent tint afterwards instead.
+        # Strip the built-in selection highlight so cells look normal
+        # when selected.  The selection border is drawn by a viewport
+        # overlay (_SelectionOverlay) instead.
         selected = bool(option.state & QStyle.State_Selected)
         if selected:
             opt2 = QStyleOptionViewItem(option)
             opt2.state &= ~QStyle.State_Selected
             super().paint(painter, opt2, index)
-            # Translucent selection overlay (Excel-like light blue).
-            painter.save()
-            hl = option.palette.highlight().color()
-            hl.setAlpha(60)
-            painter.fillRect(option.rect, hl)
-            painter.restore()
         else:
             super().paint(painter, option, index)
 

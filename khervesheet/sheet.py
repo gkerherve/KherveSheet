@@ -707,6 +707,76 @@ class _MarchingAntsOverlay(QWidget):
         painter.end()
 
 
+class _SelectionOverlay(QWidget):
+    """Draws an Excel-style selection border and fill-handle square on
+    top of the table viewport, replacing the default opaque highlight."""
+
+    _HANDLE_PX = 4  # half-size of the fill-handle square
+
+    def __init__(self, sheet):
+        super().__init__(sheet.table.viewport())
+        self._sheet = sheet
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_NoSystemBackground)
+
+    def paintEvent(self, event):
+        table = self._sheet.table
+        sel = table.selectedRanges()
+        if not sel:
+            r = table.currentRow()
+            c = table.currentColumn()
+            if r < 0 or c < 0:
+                return
+            sel = [QTableWidgetSelectionRange(r, c, r, c)]
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, False)
+
+        # Use the palette highlight colour for the border.
+        border_color = self.palette().highlight().color()
+
+        for s in sel:
+            # Compute bounding rect from top-left to bottom-right cell.
+            r1, c1 = s.topRow(), s.leftColumn()
+            r2, c2 = s.bottomRow(), s.rightColumn()
+
+            tl_rect = table.visualRect(table.model().index(r1, c1))
+            br_rect = table.visualRect(table.model().index(r2, c2))
+            if tl_rect.isNull() and br_rect.isNull():
+                continue
+
+            # Handle partially-visible ranges.
+            if tl_rect.isNull():
+                tl_rect = br_rect
+            if br_rect.isNull():
+                br_rect = tl_rect
+
+            x = tl_rect.left()
+            y = tl_rect.top()
+            w = br_rect.right() - tl_rect.left()
+            h = br_rect.bottom() - tl_rect.top()
+
+            # Draw 2 px solid border around the selection.
+            pen = QPen(border_color, 2)
+            painter.setPen(pen)
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRect(x, y, w, h)
+
+        # Draw fill handle on last (primary) selection range.
+        s = sel[0]
+        br_rect = table.visualRect(
+            table.model().index(s.bottomRow(), s.rightColumn()))
+        if not br_rect.isNull():
+            hp = self._HANDLE_PX
+            hx = br_rect.right() - hp
+            hy = br_rect.bottom() - hp
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(border_color)
+            painter.drawRect(hx, hy, hp * 2, hp * 2)
+
+        painter.end()
+
+
 # ── SheetWidget ──────────────────────────────────────────────────────
 class SheetWidget(QWidget):
     """A single Excel-style spreadsheet grid."""
@@ -881,6 +951,13 @@ class SheetWidget(QWidget):
         self._fill_end_col = None
         self._fill_direction = None          # "down" or "right"
 
+        # ── Selection border overlay (Excel-style) ────────────────────
+        self._sel_overlay = _SelectionOverlay(self)
+        self._sel_overlay.setGeometry(self.table.viewport().rect())
+        self._sel_overlay.show()
+        self._sel_overlay.raise_()
+        self.table.itemSelectionChanged.connect(self._update_sel_overlay)
+
         # ── Marching ants (copy highlight) ───────────────────────────
         self._marching_range = None   # QTableWidgetSelectionRange or None
         self._march_offset = 0
@@ -888,9 +965,11 @@ class SheetWidget(QWidget):
         self._march_timer.timeout.connect(self._march_tick)
         self._ants_overlay = _MarchingAntsOverlay(self)
         self.table.horizontalScrollBar().valueChanged.connect(
-            lambda _=0: self._ants_overlay.update())
+            lambda _=0: (self._ants_overlay.update(),
+                         self._sel_overlay.update()))
         self.table.verticalScrollBar().valueChanged.connect(
-            lambda _=0: self._ants_overlay.update())
+            lambda _=0: (self._ants_overlay.update(),
+                         self._sel_overlay.update()))
         # Grow columns to keep the viewport filled when scrolling right.
         self.table.horizontalScrollBar().valueChanged.connect(
             self._on_hscroll)
@@ -1179,6 +1258,7 @@ class SheetWidget(QWidget):
 
     # ── Cell ref display ─────────────────────────────────────────────
     def _on_current_cell_changed(self, row, col, prev_row, prev_col):
+        self._update_sel_overlay()
         # Clear formula highlights when navigating away (unless in
         # formula entry mode where clicking inserts a ref).
         if self._formula_entry_cell is None:
@@ -3221,6 +3301,13 @@ class SheetWidget(QWidget):
             self._march_timer.stop()
             self._ants_overlay.hide()
 
+    def _update_sel_overlay(self):
+        """Resize and repaint the selection border overlay."""
+        vp = self.table.viewport()
+        self._sel_overlay.setGeometry(vp.rect())
+        self._sel_overlay.raise_()
+        self._sel_overlay.update()
+
     def _sync_ants_overlay(self):
         """Keep the overlay covering the whole viewport."""
         vp = self.table.viewport()
@@ -4206,9 +4293,11 @@ class SheetWidget(QWidget):
                 self._end_pick_drag()
                 return True
 
-        # Keep the marching-ants overlay sized to the viewport.
-        if (etype == QEvent.Resize and self._marching_range is not None):
-            self._sync_ants_overlay()
+        # Keep overlays sized to the viewport.
+        if etype == QEvent.Resize:
+            self._update_sel_overlay()
+            if self._marching_range is not None:
+                self._sync_ants_overlay()
 
         if etype == QEvent.Leave:
             self._hide_note_popup()
