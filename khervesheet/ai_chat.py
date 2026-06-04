@@ -453,7 +453,7 @@ class AiChatDock(QDockWidget):
         super().__init__("AI Chat", mainwindow)
         self.setObjectName("AiChatDock")
         self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(180)
         self._mw = mainwindow
         self._current_bubble: ChatBubble | None = None
         self._busy = False
