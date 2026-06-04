@@ -15,7 +15,8 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
 from PyQt5.QtCore import Qt, QPoint, QRect, QRectF, QModelIndex
-from PyQt5.QtGui import QPen, QColor, QPainter, QFontMetrics, QPolygon
+from PyQt5.QtGui import (QPen, QColor, QPainter, QFontMetrics, QPolygon,
+                         QPalette)
 from PyQt5.QtWidgets import (
     QStyledItemDelegate, QStyleOptionViewItem, QTableWidget,
     QStyle,
@@ -210,7 +211,12 @@ class CellFormatDelegate(QStyledItemDelegate):
         selected = bool(option.state & QStyle.State_Selected)
         if selected:
             opt2 = QStyleOptionViewItem(option)
-            opt2.state &= ~QStyle.State_Selected
+            opt2.state &= ~(QStyle.State_Selected | QStyle.State_HasFocus)
+            # Force the palette so the style cannot use Highlight colours.
+            pal = QPalette(opt2.palette)
+            pal.setBrush(QPalette.Highlight, pal.base())
+            pal.setBrush(QPalette.HighlightedText, pal.text())
+            opt2.palette = pal
             super().paint(painter, opt2, index)
         else:
             super().paint(painter, option, index)
