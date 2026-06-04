@@ -30,9 +30,8 @@ _GRID_STYLES = [
     ("Dash-dot", "-."),
 ]
 
-# Sketch parameters used when "cartoon" mode is enabled:
-# (scale, length, randomness) — see Artist.set_sketch_params.
-_SKETCH_PARAMS = (2.0, 120.0, 16.0)
+# Default sketch parameters — see Artist.set_sketch_params.
+_SKETCH_DEFAULTS = {"scale": 2.0, "length": 120.0, "randomness": 16.0}
 
 
 def _hexify(color):
@@ -43,12 +42,15 @@ def _hexify(color):
         return "#ffffff"
 
 
-def apply_sketch(chart, enabled):
+def apply_sketch(chart, enabled, scale=None, length=None, randomness=None):
     """Enable/disable the wobbly hand-drawn sketch effect on every
     artist, spine and tick of the chart's axes."""
     ax = chart._ax
     if enabled:
-        scale, length, randomness = _SKETCH_PARAMS
+        scale = scale if scale is not None else _SKETCH_DEFAULTS["scale"]
+        length = length if length is not None else _SKETCH_DEFAULTS["length"]
+        randomness = (randomness if randomness is not None
+                      else _SKETCH_DEFAULTS["randomness"])
     else:
         scale = length = randomness = None
     targets = list(ax.get_lines())
@@ -84,6 +86,12 @@ def default_general_state(chart):
         "grid_alpha": 1.0,
         "grid_style": "-",
         "sketch": bool(getattr(chart, "_sketch_on", False)),
+        "sketch_scale": float(getattr(chart, "_sketch_scale",
+                                       _SKETCH_DEFAULTS["scale"])),
+        "sketch_length": float(getattr(chart, "_sketch_length",
+                                        _SKETCH_DEFAULTS["length"])),
+        "sketch_randomness": float(getattr(chart, "_sketch_randomness",
+                                            _SKETCH_DEFAULTS["randomness"])),
         "tight_layout": bool(getattr(chart, "_tight_layout", True)),
         "keep_ratio": bool(getattr(chart, "_keep_ratio", False)),
         "margin_left": sp.left,
@@ -117,7 +125,14 @@ def apply_general_state(chart, state):
 
     sketch_on = bool(state.get("sketch", False))
     chart._sketch_on = sketch_on
-    apply_sketch(chart, sketch_on)
+    sk_scale = float(state.get("sketch_scale", _SKETCH_DEFAULTS["scale"]))
+    sk_length = float(state.get("sketch_length", _SKETCH_DEFAULTS["length"]))
+    sk_rand = float(state.get("sketch_randomness",
+                               _SKETCH_DEFAULTS["randomness"]))
+    chart._sketch_scale = sk_scale
+    chart._sketch_length = sk_length
+    chart._sketch_randomness = sk_rand
+    apply_sketch(chart, sketch_on, sk_scale, sk_length, sk_rand)
 
     # ── Layout controls ─────────────────────────────────────────────
     tight = bool(state.get("tight_layout", True))
@@ -221,14 +236,6 @@ class GeneralPropertiesDialog(QDialog):
         gform.addRow("Grid style:", self.grid_style)
         left_col.addWidget(grid_box)
 
-        # ── Effects ─────────────────────────────────────────────────
-        fx_box = QGroupBox("Effects")
-        fxform = QFormLayout(fx_box)
-        self.sketch_check = QCheckBox("Cartoon (wobbly lines)")
-        self.sketch_check.setChecked(bool(state.get("sketch", False)))
-        fxform.addRow(self.sketch_check)
-        left_col.addWidget(fx_box)
-
         left_col.addStretch()
 
         # ── RIGHT COLUMN: Layout ────────────────────────────────────
@@ -266,6 +273,54 @@ class GeneralPropertiesDialog(QDialog):
         self.tight_check.toggled.connect(
             lambda on: margin_box.setEnabled(not on))
         margin_box.setEnabled(not self.tight_check.isChecked())
+
+        # ── Effects ─────────────────────────────────────────────────
+        fx_box = QGroupBox("Effects")
+        fxform = QFormLayout(fx_box)
+        self.sketch_check = QCheckBox("Cartoon (wobbly lines)")
+        self.sketch_check.setChecked(bool(state.get("sketch", False)))
+        fxform.addRow(self.sketch_check)
+
+        self.sketch_scale = QDoubleSpinBox()
+        self.sketch_scale.setRange(0.1, 20.0)
+        self.sketch_scale.setSingleStep(0.5)
+        self.sketch_scale.setDecimals(1)
+        self.sketch_scale.setValue(
+            float(state.get("sketch_scale", _SKETCH_DEFAULTS["scale"])))
+        self.sketch_scale.setToolTip(
+            "Amplitude of the wiggle perpendicular to the line")
+        fxform.addRow("Scale:", self.sketch_scale)
+
+        self.sketch_length = QDoubleSpinBox()
+        self.sketch_length.setRange(1.0, 500.0)
+        self.sketch_length.setSingleStep(10.0)
+        self.sketch_length.setDecimals(1)
+        self.sketch_length.setValue(
+            float(state.get("sketch_length", _SKETCH_DEFAULTS["length"])))
+        self.sketch_length.setToolTip(
+            "Length of the wiggle along the line (in pixels)")
+        fxform.addRow("Length:", self.sketch_length)
+
+        self.sketch_randomness = QDoubleSpinBox()
+        self.sketch_randomness.setRange(0.0, 100.0)
+        self.sketch_randomness.setSingleStep(1.0)
+        self.sketch_randomness.setDecimals(1)
+        self.sketch_randomness.setValue(
+            float(state.get("sketch_randomness",
+                            _SKETCH_DEFAULTS["randomness"])))
+        self.sketch_randomness.setToolTip(
+            "Scale factor for the random offset of each wiggle")
+        fxform.addRow("Randomness:", self.sketch_randomness)
+
+        # Enable/disable sketch params when checkbox toggled.
+        def _toggle_sketch_params(on):
+            self.sketch_scale.setEnabled(on)
+            self.sketch_length.setEnabled(on)
+            self.sketch_randomness.setEnabled(on)
+        self.sketch_check.toggled.connect(_toggle_sketch_params)
+        _toggle_sketch_params(self.sketch_check.isChecked())
+
+        right_col.addWidget(fx_box)
 
         right_col.addStretch()
 
@@ -316,6 +371,9 @@ class GeneralPropertiesDialog(QDialog):
             "grid_alpha": self.grid_alpha.value(),
             "grid_style": self.grid_style.currentData(),
             "sketch": self.sketch_check.isChecked(),
+            "sketch_scale": self.sketch_scale.value(),
+            "sketch_length": self.sketch_length.value(),
+            "sketch_randomness": self.sketch_randomness.value(),
             "tight_layout": self.tight_check.isChecked(),
             "keep_ratio": self.ratio_check.isChecked(),
         }
