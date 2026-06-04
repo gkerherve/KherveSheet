@@ -51,7 +51,19 @@ def _make_app_icon():
 # ── Shared QSS fragments ─────────────────────────────────────────
 _COMMON_QSS = """
 QToolBar { padding: 0px; margin: 0px; spacing: 1px; }
-QToolButton { padding: 1px; margin: 0px; }
+/* Give tool buttons a full QSS box (transparent border/background) in
+   EVERY state. Without a base box, Qt draws the button natively when
+   idle but switches to the stylesheet renderer on :hover — that path
+   change resizes the (HiDPI) icon, so it visibly grows on hover. A
+   consistent box keeps the icon one fixed size in all states. */
+QToolButton {
+    padding: 1px; margin: 0px;
+    background: transparent;
+    border: 1px solid transparent; border-radius: 3px;
+}
+QToolButton:hover { border: 1px solid transparent; }
+QToolButton:pressed { border: 1px solid transparent; }
+QToolButton:checked { border: 1px solid transparent; }
 /* Flatten the drop-down (menu) half of MenuButtonPopup tool buttons so it
    doesn't draw its own raised/bevelled frame on hover. */
 QToolButton::menu-button { border: none; background: transparent; width: 14px; }
