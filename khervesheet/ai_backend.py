@@ -373,6 +373,27 @@ TOOLS = [
         },
     },
     {
+        "name": "delete_charts",
+        "description": (
+            "Delete one or more embedded charts from a sheet. Pass "
+            "'all' to remove every chart, or a list of 0-based indices."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {"type": "string"},
+                "indices": {
+                    "type": "string",
+                    "description": (
+                        "'all' to delete every chart, or a comma-separated "
+                        "list of 0-based indices, e.g. '0,2,4'."
+                    ),
+                },
+            },
+            "required": ["sheet_name", "indices"],
+        },
+    },
+    {
         "name": "modify_chart",
         "description": (
             "Edit an existing chart's axes and labels in place: invert "
@@ -789,6 +810,9 @@ class AiBackend(QObject):
         if name == "modify_chart":
             keys = ", ".join((result.get("applied") or {}).keys())
             return f"Modified chart ({keys})" if keys else "Modified chart"
+        if name == "delete_charts":
+            n = result.get("deleted", 0)
+            return f"Deleted {n} chart{'s' if n != 1 else ''}"
         return name
 
     def shutdown(self):

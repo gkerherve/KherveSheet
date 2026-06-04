@@ -97,6 +97,7 @@ class AiToolExecutor:
             "get_chart_details": self.tool_get_chart_details,
             "clone_chart": self.tool_clone_chart,
             "modify_chart": self.tool_modify_chart,
+            "delete_charts": self.tool_delete_charts,
         }
 
     # ── Dispatcher ──────────────────────────────────────────────
@@ -502,3 +503,34 @@ class AiToolExecutor:
         except ValueError as exc:
             return {"error": f"Invalid value: {exc}"}
         return {"modified": True, "index": idx, "applied": applied}
+
+    def tool_delete_charts(self, inp: dict) -> dict:
+        """Delete charts from a sheet by index list or 'all'."""
+        sheet = self._sheet(inp["sheet_name"])
+        charts = getattr(sheet, "_charts", []) or []
+        indices_str = inp.get("indices", "all").strip()
+        if indices_str.lower() == "all":
+            to_delete = list(range(len(charts)))
+        else:
+            to_delete = []
+            for part in indices_str.split(","):
+                part = part.strip()
+                if part.isdigit():
+                    to_delete.append(int(part))
+        # Validate.
+        for idx in to_delete:
+            if idx < 0 or idx >= len(charts):
+                return {"error": f"Chart index {idx} out of range "
+                        f"(sheet has {len(charts)} chart(s))."}
+        # Delete in reverse order so indices stay valid.
+        deleted = 0
+        for idx in sorted(set(to_delete), reverse=True):
+            ch = charts.pop(idx)
+            try:
+                sheet.data_changed.disconnect(ch._on_data_changed)
+            except (TypeError, RuntimeError):
+                pass
+            ch.setParent(None)
+            ch.deleteLater()
+            deleted += 1
+        return {"deleted": deleted}
