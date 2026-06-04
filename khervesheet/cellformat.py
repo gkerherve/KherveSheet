@@ -16,7 +16,7 @@ from typing import Dict, Optional, Tuple
 
 from PyQt5.QtCore import Qt, QPoint, QRect, QRectF, QModelIndex
 from PyQt5.QtGui import (QPen, QColor, QPainter, QFontMetrics, QPolygon,
-                         QPalette)
+                         QPalette, QBrush)
 from PyQt5.QtWidgets import (
     QStyledItemDelegate, QStyleOptionViewItem, QTableWidget,
     QStyle,
@@ -205,18 +205,33 @@ class CellFormatDelegate(QStyledItemDelegate):
             painter.fillRect(option.rect, bg)
             painter.restore()
 
-        # Strip the built-in selection highlight so cells look normal
-        # when selected.  The selection border is drawn by a viewport
-        # overlay (_SelectionOverlay) instead.
+        # Strip the built-in selection highlight completely: paint the
+        # cell background ourselves, then let the base class draw only
+        # the text/icon on top.  A 10 % translucent tint replaces the
+        # opaque fill.  The selection border is drawn by a viewport
+        # overlay (_SelectionOverlay).
         selected = bool(option.state & QStyle.State_Selected)
         if selected:
+            # 1) Fill the cell rect with the normal (unselected) bg.
+            painter.save()
+            item_bg = index.data(Qt.BackgroundRole)
+            if item_bg and QColor(item_bg).isValid():
+                painter.fillRect(option.rect, QColor(item_bg))
+            else:
+                painter.fillRect(option.rect, option.palette.base())
+            # 2) Light selection tint (10 % opacity ≈ alpha 25).
+            hl = option.palette.highlight().color()
+            hl.setAlpha(25)
+            painter.fillRect(option.rect, hl)
+            painter.restore()
+            # 3) Draw text/decoration without any selection styling.
             opt2 = QStyleOptionViewItem(option)
             opt2.state &= ~(QStyle.State_Selected | QStyle.State_HasFocus)
-            # Force the palette so the style cannot use Highlight colours.
             pal = QPalette(opt2.palette)
-            pal.setBrush(QPalette.Highlight, pal.base())
+            pal.setBrush(QPalette.Highlight, QColor(0, 0, 0, 0))
             pal.setBrush(QPalette.HighlightedText, pal.text())
             opt2.palette = pal
+            opt2.backgroundBrush = QBrush(Qt.NoBrush)
             super().paint(painter, opt2, index)
         else:
             super().paint(painter, option, index)
