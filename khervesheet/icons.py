@@ -1160,8 +1160,14 @@ def _fmt_icon(size: int, draw_fn) -> QIcon:
     """Create a *size*×*size* icon by calling *draw_fn(painter, size)*.
 
     The pixmap is rendered at the display's device-pixel-ratio so the
-    glyph stays crisp on HiDPI screens (and doesn't visibly re-scale
-    between normal/hover states)."""
+    glyph stays crisp on HiDPI screens.
+
+    The *same* pixmap is registered for the Active/Selected (hover) and
+    On states as well as Normal/Off. Without this, Qt synthesises the
+    hover-state pixmap itself and drops the device-pixel-ratio, so on a
+    scaled display the icon visibly grows when its toolbar button is
+    hovered. Registering every mode keeps the icon a fixed size always.
+    """
     app = QApplication.instance()
     try:
         dpr = max(1.0, float(app.devicePixelRatio())) if app else 1.0
@@ -1174,7 +1180,11 @@ def _fmt_icon(size: int, draw_fn) -> QIcon:
     p.setRenderHint(QPainter.Antialiasing, True)
     draw_fn(p, size)
     p.end()
-    return QIcon(pm)
+    icon = QIcon()
+    for mode in (QIcon.Normal, QIcon.Active, QIcon.Selected):
+        for state in (QIcon.Off, QIcon.On):
+            icon.addPixmap(pm, mode, state)
+    return icon
 
 
 def bold_icon(size: int = 28) -> QIcon:
