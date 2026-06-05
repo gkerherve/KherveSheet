@@ -404,6 +404,8 @@ class MainWindow(QMainWindow):
         examples_menu = mb.addMenu("&Examples")
         # Rich, ready-to-open worked .ksheet files (examples/ folder).
         self._build_example_files_menu(examples_menu)
+        # Python (=PY) science examples (examples/python/ folder).
+        self._build_python_examples_menu(examples_menu)
         # Undergraduate exercises, grouped by UK year of study.
         self._build_exercises_menu(examples_menu)
         # Templates: rich .ksheet templates (examples/templates/<cat>/)
@@ -983,6 +985,48 @@ class MainWindow(QMainWindow):
             sub.addAction(
                 label,
                 lambda _=False, p=path: self._open_example_file(p))
+
+    def _build_python_examples_menu(self, parent_menu):
+        """Add a 'Python Examples' submenu listing =PY science .ksheet files.
+
+        Files live under examples/python/.  They may be flat or grouped in
+        category sub-folders (examples/python/<category>/*.ksheet).
+        """
+        import os
+        base = self._examples_dir()
+        if not base:
+            return
+        pdir = os.path.join(base, "python")
+        if not os.path.isdir(pdir):
+            return
+        flat = sorted(f for f in os.listdir(pdir)
+                      if f.lower().endswith(".ksheet"))
+        subcats = []
+        for cat in sorted(os.listdir(pdir)):
+            cdir = os.path.join(pdir, cat)
+            if not os.path.isdir(cdir):
+                continue
+            cfiles = sorted(f for f in os.listdir(cdir)
+                            if f.lower().endswith(".ksheet"))
+            if cfiles:
+                subcats.append((cat, cdir, cfiles))
+        if not flat and not subcats:
+            return
+        sub = parent_menu.addMenu("Python Examples")
+        for fn in flat:
+            label = os.path.splitext(fn)[0]
+            path = os.path.join(pdir, fn)
+            sub.addAction(
+                label,
+                lambda _=False, p=path: self._open_example_file(p))
+        for cat, cdir, cfiles in subcats:
+            cm = sub.addMenu(cat)
+            for fn in cfiles:
+                label = os.path.splitext(fn)[0]
+                path = os.path.join(cdir, fn)
+                cm.addAction(
+                    label,
+                    lambda _=False, p=path: self._open_example_file(p))
 
     def _build_exercises_menu(self, parent_menu):
         """Add an 'Exercises' submenu grouped by UK undergraduate year.
@@ -1742,6 +1786,10 @@ class MainWindow(QMainWindow):
         if trusted is None:
             trusted = self._trusted_py_paths = set()
         if path in trusted:
+            return True
+        # Shipped example files travel with the app — trust them implicitly.
+        ex_dir = self._examples_dir()
+        if ex_dir and os.path.abspath(path).startswith(os.path.abspath(ex_dir)):
             return True
         from PyQt5.QtWidgets import QMessageBox
         reply = QMessageBox.question(
@@ -4289,6 +4337,15 @@ class MainWindow(QMainWindow):
             f"GNU General Public License v3.0</a></p>")
 
     def _show_python_help(self):
+        # Prefer the rich, 100-example HTML page (opens in the browser);
+        # fall back to the in-app quick-reference dialog.
+        import pathlib
+        page = pathlib.Path(__file__).with_name("python_help.html")
+        if page.exists():
+            from PyQt5.QtGui import QDesktopServices
+            from PyQt5.QtCore import QUrl
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(page)))
+            return
         from .python_engine import show_python_help
         show_python_help(self)
 
