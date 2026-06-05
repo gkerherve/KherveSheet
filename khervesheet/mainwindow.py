@@ -140,6 +140,9 @@ class MainWindow(QMainWindow):
         file_menu.addAction("&Print…", self._open_print_dialog, "Ctrl+P")
 
         file_menu.addSeparator()
+        file_menu.addAction("Open File Location",
+                            self._open_file_location)
+        file_menu.addSeparator()
         self._recent_menu = file_menu.addMenu("Recent Files")
         self._rebuild_recent_menu()
 
@@ -2193,6 +2196,25 @@ class MainWindow(QMainWindow):
         finally:
             self._show_progress(False)
 
+    # ── Open file location ─────────────────────────────────────────────
+    def _open_file_location(self):
+        """Open the folder containing the current file in the OS explorer."""
+        path = getattr(self, '_current_file', None)
+        if not path or not os.path.exists(path):
+            QMessageBox.information(
+                self, "Open File Location",
+                "No file is currently open or the file does not exist.")
+            return
+        import subprocess, sys
+        folder = os.path.dirname(os.path.abspath(path))
+        if sys.platform == "win32":
+            subprocess.Popen(["explorer", "/select,",
+                              os.path.normpath(path)])
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", "-R", path])
+        else:
+            subprocess.Popen(["xdg-open", folder])
+
     # ── Recent files ─────────────────────────────────────────────────
     def _add_recent(self, path: str):
         if path in self._recent_files:
@@ -2216,7 +2238,12 @@ class MainWindow(QMainWindow):
         if not os.path.exists(path):
             QMessageBox.warning(self, "File Not Found",
                                 f"{path} no longer exists.")
+            self._recent_files = [
+                p for p in self._recent_files if p != path]
+            self._settings.setValue("recent_files", self._recent_files)
+            self._rebuild_recent_menu()
             return
+        self._add_recent(path)
         self._open_path(path, add_recent=False)
 
     # ── Edit operations (proxy to active sheet) ──────────────────────
