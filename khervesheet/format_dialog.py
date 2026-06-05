@@ -49,11 +49,11 @@ _NUM_CATEGORIES = [
 _CAT_TO_FMT = {
     "General": "General",
     "Number": "0.00",       # default; precision spin adjusts
-    "Currency": "Currency",
+    "Currency": "Currency:$",
     "Percentage": "Percentage",
-    "Scientific": "Scientific",
-    "Date": "Date",
-    "Time": "Time",
+    "Scientific": "Sci:4",
+    "Date": "Date:%Y-%m-%d",
+    "Time": "Time:%H:%M:%S",
     "Text": "Text",
 }
 
@@ -61,55 +61,47 @@ _NUMBER_PRECISIONS = {
     0: "0", 1: "0.0", 2: "0.00", 3: "0.000", 4: "0.0000",
 }
 
+_CURRENCY_SYMBOLS = [
+    ("$ Dollar", "$"),
+    ("€ Euro", "€"),
+    ("£ Pound", "£"),
+    ("¥ Yen", "¥"),
+    ("₹ Rupee", "₹"),
+    ("₩ Won", "₩"),
+    ("Fr Franc", "Fr"),
+    ("kr Krone", "kr"),
+]
+
+_DATE_FORMATS = [
+    ("2025-03-15  (YYYY-MM-DD)", "%Y-%m-%d"),
+    ("15/03/2025  (DD/MM/YYYY)", "%d/%m/%Y"),
+    ("03/15/2025  (MM/DD/YYYY)", "%m/%d/%Y"),
+    ("15 Mar 2025", "%d %b %Y"),
+    ("March 15, 2025", "%B %d, %Y"),
+    ("15-Mar-25", "%d-%b-%y"),
+]
+
+_TIME_FORMATS = [
+    ("13:30:00  (HH:MM:SS)", "%H:%M:%S"),
+    ("13:30  (HH:MM)", "%H:%M"),
+    ("1:30 PM  (12-hour)", "%I:%M %p"),
+    ("1:30:00 PM  (12-hour + sec)", "%I:%M:%S %p"),
+]
+
 
 # ── Helpers ─────────────────────────────────────────────────────────
 
 def _format_preview(raw: str, fmt: str) -> str:
-    """Format a raw value for preview in the Number tab."""
-    if not raw or fmt in ("General", "Text"):
-        return raw or "0"
+    """Format a raw value for preview in the Number tab.
 
-    if fmt == "Date":
-        try:
-            from datetime import datetime, timedelta
-            val = float(raw)
-            dt = datetime(1899, 12, 30) + timedelta(days=val)
-            return dt.strftime("%Y-%m-%d")
-        except (ValueError, TypeError, OverflowError):
-            return raw or "0"
-    if fmt == "Time":
-        try:
-            val = float(raw)
-            frac = val - int(val)
-            total_secs = int(round(frac * 86400))
-            h = total_secs // 3600
-            m = (total_secs % 3600) // 60
-            s = total_secs % 60
-            return f"{h:02d}:{m:02d}:{s:02d}"
-        except (ValueError, TypeError):
-            return raw or "0"
-
-    try:
-        val = float(raw)
-    except (ValueError, TypeError):
-        return raw or "0"
-    if fmt == "0":
-        return f"{val:.0f}"
-    elif fmt == "0.0":
-        return f"{val:.1f}"
-    elif fmt == "0.00":
-        return f"{val:.2f}"
-    elif fmt == "0.000":
-        return f"{val:.3f}"
-    elif fmt == "0.0000":
-        return f"{val:.4f}"
-    elif fmt == "Scientific":
-        return f"{val:.4e}"
-    elif fmt == "Percentage":
-        return f"{val * 100:.2f}%"
-    elif fmt == "Currency":
-        return f"${val:,.2f}"
-    return raw or "0"
+    Format strings use a ``Category:param`` convention for parameterised
+    formats: ``Currency:€``, ``Sci:2``, ``Date:%d/%m/%Y``, ``Time:%H:%M``.
+    Legacy single-word strings (``Currency``, ``Scientific``, ``Date``,
+    ``Time``) are still accepted for backwards compatibility.
+    """
+    from .sheet import _format_value
+    result = _format_value(raw or "0", fmt)
+    return result if result else (raw or "0")
 
 
 # ── Line style helpers ──────────────────────────────────────────────
@@ -363,16 +355,49 @@ class FormatCellsDialog(QDialog):
         self._num_desc.setStyleSheet("color:#555; margin-top:8px;")
         right.addWidget(self._num_desc)
 
-        # Precision spinner (only visible for "Number" category).
+        # Precision spinner (visible for Number and Scientific).
         prec_row = QHBoxLayout()
         self._prec_label = QLabel("Decimal places:")
         self._prec_spin = QSpinBox()
-        self._prec_spin.setRange(0, 4)
+        self._prec_spin.setRange(0, 10)
         self._prec_spin.setValue(2)
         prec_row.addWidget(self._prec_label)
         prec_row.addWidget(self._prec_spin)
         prec_row.addStretch()
         right.addLayout(prec_row)
+
+        # Currency symbol combo.
+        curr_row = QHBoxLayout()
+        self._curr_label = QLabel("Symbol:")
+        self._curr_combo = QComboBox()
+        for label, _sym in _CURRENCY_SYMBOLS:
+            self._curr_combo.addItem(label)
+        curr_row.addWidget(self._curr_label)
+        curr_row.addWidget(self._curr_combo)
+        curr_row.addStretch()
+        right.addLayout(curr_row)
+
+        # Date format combo.
+        date_row = QHBoxLayout()
+        self._date_label = QLabel("Format:")
+        self._date_combo = QComboBox()
+        for label, _pat in _DATE_FORMATS:
+            self._date_combo.addItem(label)
+        date_row.addWidget(self._date_label)
+        date_row.addWidget(self._date_combo)
+        date_row.addStretch()
+        right.addLayout(date_row)
+
+        # Time format combo.
+        time_row = QHBoxLayout()
+        self._time_label = QLabel("Format:")
+        self._time_combo = QComboBox()
+        for label, _pat in _TIME_FORMATS:
+            self._time_combo.addItem(label)
+        time_row.addWidget(self._time_label)
+        time_row.addWidget(self._time_combo)
+        time_row.addStretch()
+        right.addLayout(time_row)
 
         right.addStretch()
         h.addLayout(right, stretch=1)
@@ -380,6 +405,12 @@ class FormatCellsDialog(QDialog):
         # Connections.
         self._num_list.currentRowChanged.connect(self._on_num_category)
         self._prec_spin.valueChanged.connect(self._on_num_precision)
+        self._curr_combo.currentIndexChanged.connect(
+            lambda _: self._update_num_sample())
+        self._date_combo.currentIndexChanged.connect(
+            lambda _: self._update_num_sample())
+        self._time_combo.currentIndexChanged.connect(
+            lambda _: self._update_num_sample())
 
         # Pre-select current format.
         self._pre_select_number()
@@ -389,16 +420,48 @@ class FormatCellsDialog(QDialog):
     def _pre_select_number(self):
         """Select the list item matching the current number format."""
         fmt = self._current_num_fmt
+        cat = "General"
         # Map format strings back to category names.
         if fmt in ("0", "0.0", "0.00", "0.000", "0.0000"):
             cat = "Number"
             prec = {"0": 0, "0.0": 1, "0.00": 2, "0.000": 3,
                      "0.0000": 4}.get(fmt, 2)
             self._prec_spin.setValue(prec)
-        elif fmt in _CAT_TO_FMT:
+        elif fmt.startswith("Sci"):
+            cat = "Scientific"
+            if ":" in fmt:
+                try:
+                    self._prec_spin.setValue(int(fmt.split(":", 1)[1]))
+                except ValueError:
+                    self._prec_spin.setValue(4)
+            else:
+                self._prec_spin.setValue(4)
+        elif fmt == "Scientific":
+            cat = "Scientific"
+            self._prec_spin.setValue(4)
+        elif fmt.startswith("Currency"):
+            cat = "Currency"
+            sym = fmt.split(":", 1)[1] if ":" in fmt else "$"
+            for i, (_label, s) in enumerate(_CURRENCY_SYMBOLS):
+                if s == sym:
+                    self._curr_combo.setCurrentIndex(i)
+                    break
+        elif fmt.startswith("Date"):
+            cat = "Date"
+            pat = fmt.split(":", 1)[1] if ":" in fmt else "%Y-%m-%d"
+            for i, (_label, p) in enumerate(_DATE_FORMATS):
+                if p == pat:
+                    self._date_combo.setCurrentIndex(i)
+                    break
+        elif fmt.startswith("Time"):
+            cat = "Time"
+            pat = fmt.split(":", 1)[1] if ":" in fmt else "%H:%M:%S"
+            for i, (_label, p) in enumerate(_TIME_FORMATS):
+                if p == pat:
+                    self._time_combo.setCurrentIndex(i)
+                    break
+        elif fmt in ("General", "Percentage", "Text"):
             cat = fmt
-        else:
-            cat = "General"
 
         for i in range(self._num_list.count()):
             if self._num_list.item(i).text() == cat:
@@ -411,9 +474,16 @@ class FormatCellsDialog(QDialog):
             return
         name, desc = _NUM_CATEGORIES[row]
         self._num_desc.setText(desc)
-        show_prec = (name == "Number")
+        # Show/hide option widgets per category.
+        show_prec = name in ("Number", "Scientific")
         self._prec_label.setVisible(show_prec)
         self._prec_spin.setVisible(show_prec)
+        self._curr_label.setVisible(name == "Currency")
+        self._curr_combo.setVisible(name == "Currency")
+        self._date_label.setVisible(name == "Date")
+        self._date_combo.setVisible(name == "Date")
+        self._time_label.setVisible(name == "Time")
+        self._time_combo.setVisible(name == "Time")
         self._update_num_sample()
 
     def _on_num_precision(self, _val):
@@ -433,6 +503,23 @@ class FormatCellsDialog(QDialog):
         if cat == "Number":
             prec = self._prec_spin.value()
             return _NUMBER_PRECISIONS.get(prec, "0.00")
+        if cat == "Scientific":
+            return f"Sci:{self._prec_spin.value()}"
+        if cat == "Currency":
+            idx = self._curr_combo.currentIndex()
+            sym = _CURRENCY_SYMBOLS[idx][1] if 0 <= idx < len(
+                _CURRENCY_SYMBOLS) else "$"
+            return f"Currency:{sym}"
+        if cat == "Date":
+            idx = self._date_combo.currentIndex()
+            pat = _DATE_FORMATS[idx][1] if 0 <= idx < len(
+                _DATE_FORMATS) else "%Y-%m-%d"
+            return f"Date:{pat}"
+        if cat == "Time":
+            idx = self._time_combo.currentIndex()
+            pat = _TIME_FORMATS[idx][1] if 0 <= idx < len(
+                _TIME_FORMATS) else "%H:%M:%S"
+            return f"Time:{pat}"
         return _CAT_TO_FMT.get(cat, "General")
 
     # ── Alignment tab ───────────────────────────────────────────────

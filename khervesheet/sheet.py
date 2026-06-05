@@ -130,31 +130,40 @@ def shift_formula(formula: str, d_row: int, d_col: int) -> str:
 
 # ── Cell format storage ──────────────────────────────────────────────
 def _format_value(raw: str, fmt: str) -> str:
-    """Display-format a raw cell value according to the format string."""
+    """Display-format a raw cell value according to the format string.
+
+    Parameterised formats use ``Category:param``:
+    - ``Currency:€``  — symbol
+    - ``Sci:2``       — decimal places
+    - ``Date:%d/%m/%Y`` — strftime pattern
+    - ``Time:%H:%M``    — strftime pattern
+    Legacy single-word strings are kept for backwards compatibility.
+    """
     if fmt == "General" or fmt == "Text" or not raw:
         return raw
 
-    # Date / Time: interpret numeric values as Excel-style serial dates,
-    # or pass through text that already looks like a date/time.
-    if fmt == "Date":
+    # ── Date (serial number → formatted string) ──────────────────
+    if fmt.startswith("Date"):
+        pattern = fmt.split(":", 1)[1] if ":" in fmt else "%Y-%m-%d"
         try:
             from datetime import datetime, timedelta
             val = float(raw)
-            # Excel epoch: 1899-12-30
             dt = datetime(1899, 12, 30) + timedelta(days=val)
-            return dt.strftime("%Y-%m-%d")
+            return dt.strftime(pattern)
         except (ValueError, TypeError, OverflowError):
             return raw
-    if fmt == "Time":
+
+    # ── Time (fractional day → formatted string) ─────────────────
+    if fmt.startswith("Time"):
+        pattern = fmt.split(":", 1)[1] if ":" in fmt else "%H:%M:%S"
         try:
+            from datetime import datetime, timedelta
             val = float(raw)
-            # Fractional part represents time of day.
             frac = val - int(val)
-            total_secs = int(round(frac * 86400))
-            h = total_secs // 3600
-            m = (total_secs % 3600) // 60
-            s = total_secs % 60
-            return f"{h:02d}:{m:02d}:{s:02d}"
+            # Build a datetime so we can use strftime for 12-hour etc.
+            base = datetime(2000, 1, 1)
+            dt = base + timedelta(seconds=round(frac * 86400))
+            return dt.strftime(pattern)
         except (ValueError, TypeError):
             return raw
 
@@ -162,22 +171,40 @@ def _format_value(raw: str, fmt: str) -> str:
         val = float(raw)
     except (ValueError, TypeError):
         return raw
+
+    # ── Number precisions ────────────────────────────────────────
     if fmt == "0":
         return f"{val:.0f}"
-    elif fmt == "0.0":
+    if fmt == "0.0":
         return f"{val:.1f}"
-    elif fmt == "0.00":
+    if fmt == "0.00":
         return f"{val:.2f}"
-    elif fmt == "0.000":
+    if fmt == "0.000":
         return f"{val:.3f}"
-    elif fmt == "0.0000":
+    if fmt == "0.0000":
         return f"{val:.4f}"
-    elif fmt == "Scientific":
-        return f"{val:.4e}"
-    elif fmt == "Percentage":
+
+    # ── Scientific (with precision) ──────────────────────────────
+    if fmt == "Scientific" or fmt.startswith("Sci"):
+        prec = 4  # legacy default
+        if ":" in fmt:
+            try:
+                prec = int(fmt.split(":", 1)[1])
+            except ValueError:
+                pass
+        return f"{val:.{prec}e}"
+
+    # ── Percentage ───────────────────────────────────────────────
+    if fmt == "Percentage":
         return f"{val * 100:.2f}%"
-    elif fmt == "Currency":
-        return f"${val:,.2f}"
+
+    # ── Currency (with symbol) ───────────────────────────────────
+    if fmt == "Currency" or fmt.startswith("Currency:"):
+        sym = "$"
+        if ":" in fmt:
+            sym = fmt.split(":", 1)[1]
+        return f"{sym}{val:,.2f}"
+
     return raw
 
 
