@@ -1375,14 +1375,23 @@ class SheetWidget(QWidget):
 
     def _apply_cell_number_format(self, text: str, row: int,
                                    col: int) -> str:
-        """Apply per-cell number format (Currency, Percentage, etc.)
-        to *text*.  Returns the formatted string."""
+        """Apply per-cell number format to *text*.
+
+        When no explicit format is set, numeric values default to 2
+        decimal places (e.g. ``1`` → ``1.00``)."""
         cf = self._cell_formats.get((row, col))
         nf = cf.number_format if cf else None
         if not nf:
-            nf = self._col_formats.get(col, "General")
-        if nf in ("General", "Text") or not text:
+            nf = self._col_formats.get(col, None)
+        if nf == "Text" or not text:
             return text
+        # Default: display numbers with 2 decimal places.
+        if not nf or nf == "General":
+            try:
+                val = float(text)
+                return f"{val:.2f}"
+            except (ValueError, TypeError):
+                return text
         return _format_value(text, nf)
 
     # ── Cell formatting (fill + borders) ───────────────────────────
