@@ -96,35 +96,30 @@ class _RangeOverlay(QWidget):
         fill = QColor(self._color)
         fill.setAlpha(25)
         p.fillRect(0, 0, w, h, fill)
-        # Dashed border
-        pen = QPen(self._color, 2, Qt.DashLine)
+        # Solid border
+        pen = QPen(self._color, 2, Qt.SolidLine)
         p.setPen(pen)
         p.drawRect(0, 0, w - 1, h - 1)
-        # Corner handle squares
+        # Handle squares — top-right and bottom-right only
         hp = self._HP
         p.setPen(Qt.NoPen)
         p.setBrush(self._color)
-        for cx, cy in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)):
+        for cx, cy in ((w - 1, 0), (w - 1, h - 1)):
             p.drawRect(cx - hp, cy - hp, hp * 2, hp * 2)
         p.end()
 
     # ── hit-testing ─────────────────────────────────────────────────
-    def _corner_at(self, pos):
-        """Return 'tl'|'tr'|'bl'|'br' if *pos* is on a corner handle."""
+    def _handle_at(self, pos):
+        """Return 'tr'|'br' if *pos* is on a handle, else None."""
         x, y = pos.x(), pos.y()
         w, h = self.width(), self.height()
         margin = self._HP + 4
-        top = y < margin
-        bot = y > h - margin
-        left = x < margin
         right = x > w - margin
-        if top and left:
-            return "tl"
-        if top and right:
+        if not right:
+            return None
+        if y < margin:
             return "tr"
-        if bot and left:
-            return "bl"
-        if bot and right:
+        if y > h - margin:
             return "br"
         return None
 
@@ -133,9 +128,9 @@ class _RangeOverlay(QWidget):
         if event.button() != Qt.LeftButton:
             event.ignore()
             return
-        corner = self._corner_at(event.pos())
-        if corner:
-            self._drag_mode = corner
+        handle = self._handle_at(event.pos())
+        if handle:
+            self._drag_mode = handle
         else:
             self._drag_mode = "move"
         self._drag_origin = event.globalPos()
@@ -145,11 +140,11 @@ class _RangeOverlay(QWidget):
     def mouseMoveEvent(self, event):
         if self._drag_mode is None:
             # Update cursor on hover.
-            corner = self._corner_at(event.pos())
-            if corner in ("tl", "br"):
-                self.setCursor(Qt.SizeFDiagCursor)
-            elif corner in ("tr", "bl"):
+            handle = self._handle_at(event.pos())
+            if handle == "tr":
                 self.setCursor(Qt.SizeBDiagCursor)
+            elif handle == "br":
+                self.setCursor(Qt.SizeFDiagCursor)
             else:
                 self.setCursor(Qt.SizeAllCursor)
             return
@@ -211,15 +206,9 @@ class _RangeOverlay(QWidget):
                 nc0 = nc1 - (c1 - c0)
             self._r0, self._c0 = nr0, nc0
             self._r1, self._c1 = nr1, nc1
-        elif mode == "tl":
-            self._r0 = min(row, self._r1)
-            self._c0 = min(col, self._c1)
         elif mode == "tr":
             self._r0 = min(row, self._r1)
             self._c1 = max(col, self._c0)
-        elif mode == "bl":
-            self._r1 = max(row, self._r0)
-            self._c0 = min(col, self._c1)
         elif mode == "br":
             self._r1 = max(row, self._r0)
             self._c1 = max(col, self._c0)
