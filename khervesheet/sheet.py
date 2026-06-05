@@ -863,6 +863,11 @@ class SheetWidget(QWidget):
             Qt.CustomContextMenu)
         self.table.horizontalHeader().customContextMenuRequested.connect(
             self._header_menu)
+        self.table.verticalHeader().setSectionsClickable(True)
+        self.table.verticalHeader().setContextMenuPolicy(
+            Qt.CustomContextMenu)
+        self.table.verticalHeader().customContextMenuRequested.connect(
+            self._row_header_menu)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._cell_menu)
 
@@ -2988,6 +2993,20 @@ class SheetWidget(QWidget):
 
         menu.exec_(self.table.horizontalHeader().mapToGlobal(pos))
 
+    def _row_header_menu(self, pos):
+        """Context menu on the vertical (row) header."""
+        row = self.table.verticalHeader().logicalIndexAt(pos)
+        if row < 0:
+            return
+        # Ensure clicked row is part of the selection.
+        sel_rows = sorted(set(idx.row() for idx in self.table.selectedIndexes()))
+        if row not in sel_rows:
+            self.table.selectRow(row)
+        menu = QMenu(self)
+        menu.addAction("Insert Rows", self._insert_rows_from_selection)
+        menu.addAction("Delete Rows", self._delete_selected_rows)
+        menu.exec_(self.table.verticalHeader().mapToGlobal(pos))
+
     # ── Note / comment hover popup ─────────────────────────────────
     _NOTE_STYLE = (
         "QLabel {"
@@ -3141,11 +3160,8 @@ class SheetWidget(QWidget):
 
         menu.addSeparator()
 
-        sel_rows = sorted(set(idx.row() for idx in self.table.selectedIndexes()))
-        n_rows = max(len(sel_rows), 1)
-        lbl = f"Insert {n_rows} Row{'s' if n_rows > 1 else ''}"
-        menu.addAction(lbl, self._insert_rows_from_selection)
-        menu.addAction("Delete Row", self._delete_selected_rows)
+        menu.addAction("Insert Cells", self._insert_rows_from_selection)
+        menu.addAction("Delete Cells", self._delete_selected_rows)
 
         menu.addSeparator()
         menu.addAction("Format Cells\u2026",
