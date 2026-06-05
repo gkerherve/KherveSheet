@@ -92,7 +92,7 @@ def default_general_state(chart):
                                         _SKETCH_DEFAULTS["length"])),
         "sketch_randomness": float(getattr(chart, "_sketch_randomness",
                                             _SKETCH_DEFAULTS["randomness"])),
-        "tight_layout": bool(getattr(chart, "_tight_layout", True)),
+        "tight_layout": bool(getattr(chart, "_tight_layout", False)),
         "keep_ratio": bool(getattr(chart, "_keep_ratio", False)),
         "margin_left": sp.left,
         "margin_right": sp.right,
@@ -135,7 +135,7 @@ def apply_general_state(chart, state):
     apply_sketch(chart, sketch_on, sk_scale, sk_length, sk_rand)
 
     # ── Layout controls ─────────────────────────────────────────────
-    tight = bool(state.get("tight_layout", True))
+    tight = bool(state.get("tight_layout", False))
     chart._tight_layout = tight
     if tight:
         try:
@@ -242,7 +242,7 @@ class GeneralPropertiesDialog(QDialog):
         layout_box = QGroupBox("Layout")
         lform = QFormLayout(layout_box)
         self.tight_check = QCheckBox("Tight layout")
-        self.tight_check.setChecked(bool(state.get("tight_layout", True)))
+        self.tight_check.setChecked(bool(state.get("tight_layout", False)))
         lform.addRow(self.tight_check)
         self.ratio_check = QCheckBox("Keep proportions")
         self.ratio_check.setChecked(bool(state.get("keep_ratio", False)))

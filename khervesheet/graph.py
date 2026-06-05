@@ -206,7 +206,7 @@ class EmbeddedChart(QWidget):
         self._pan_enabled = False     # user must enable via right-click
         self._keep_ratio = False      # fixed aspect-ratio resize
         self._aspect_ratio = 480 / 320  # w/h ratio at creation
-        self._tight_layout = True       # tight layout on by default
+        self._tight_layout = False      # tight layout off by default
         self._annotations = []            # user text/arrow/line annotations
 
         self.setMinimumSize(240, 180)
@@ -560,9 +560,8 @@ class EmbeddedChart(QWidget):
             d["header_row"] = True
         if self._keep_ratio:
             d["keep_ratio"] = True
-        if self._tight_layout:
-            d["tight_layout"] = True
-        else:
+        d["tight_layout"] = self._tight_layout
+        if not self._tight_layout:
             sp = self._figure.subplotpars
             d["subplot_margins"] = {
                 "left": sp.left, "right": sp.right,
