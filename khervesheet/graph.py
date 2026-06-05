@@ -1758,12 +1758,10 @@ class EmbeddedChart(QWidget):
     # ── Context menu ────────────────────────────────────────────────
     def contextMenuEvent(self, event):
         menu = QMenu(self)
-        menu.addAction("General Properties\u2026", self._open_general_props)
-        menu.addAction("Series Properties\u2026", self._open_plot_details)
-        menu.addAction("Edit Legend\u2026", self._open_legend_editor)
+        menu.addAction("Update Plot", self._refresh_data)
+
         menu.addSeparator()
-        menu.addAction("Add Trendline\u2026", self._open_trendline_dialog)
-        menu.addSeparator()
+
 
         is_3d = hasattr(self._ax, 'get_zlim')
 
@@ -1809,17 +1807,19 @@ class EmbeddedChart(QWidget):
 
         menu.addSeparator()
 
-        # Annotations
-        ann_menu = menu.addMenu("Annotations")
-        ann_menu.addAction("Add Text\u2026", self._add_text_annotation)
-        ann_menu.addAction("Add Arrow\u2026", self._add_arrow_annotation)
-        ann_menu.addAction("Add Line\u2026", self._add_line_annotation)
-
         # Pan axes toggle
         pan_act = menu.addAction("Pan Axes")
         pan_act.setCheckable(True)
         pan_act.setChecked(self._pan_enabled)
         pan_act.triggered.connect(self._toggle_pan_mode)
+
+        menu.addAction("Add Trendline\u2026", self._open_trendline_dialog)
+
+        # Annotations
+        ann_menu = menu.addMenu("Annotations")
+        ann_menu.addAction("Add Text\u2026", self._add_text_annotation)
+        ann_menu.addAction("Add Arrow\u2026", self._add_arrow_annotation)
+        ann_menu.addAction("Add Line\u2026", self._add_line_annotation)
 
         # Resize presets — dimensions at 100 dpi (pixels = inches × 100)
         size_menu = menu.addMenu("Size")
@@ -1874,7 +1874,13 @@ class EmbeddedChart(QWidget):
                         self._apply_template)
 
         menu.addSeparator()
-        menu.addAction("Update Plot", self._refresh_data)
+
+        menu.addAction("General Properties\u2026", self._open_general_props)
+        menu.addAction("Series Properties\u2026", self._open_plot_details)
+        menu.addAction("Axis Properties\u2026",
+                      lambda: self._open_axis_dialog("Left"))
+        menu.addAction("Edit Legend\u2026", self._open_legend_editor)
+
         menu.exec_(event.globalPos())
 
     def _toggle_pan_mode(self, checked):
