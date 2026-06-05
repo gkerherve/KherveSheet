@@ -3862,6 +3862,12 @@ class MainWindow(QMainWindow):
                     if result.get("number_format") is not None:
                         nf = result["number_format"]
                         cf.number_format = nf if nf != "General" else None
+                        # Refresh displayed text from raw value.
+                        raw = sheet._shadow.get((r, c), it.text())
+                        sheet.table.blockSignals(True)
+                        it.setText(sheet._apply_cell_number_format(
+                            raw, r, c))
+                        sheet.table.blockSignals(False)
 
                     # Font properties.
                     f = it.font()

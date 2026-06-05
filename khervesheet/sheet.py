@@ -133,6 +133,31 @@ def _format_value(raw: str, fmt: str) -> str:
     """Display-format a raw cell value according to the format string."""
     if fmt == "General" or fmt == "Text" or not raw:
         return raw
+
+    # Date / Time: interpret numeric values as Excel-style serial dates,
+    # or pass through text that already looks like a date/time.
+    if fmt == "Date":
+        try:
+            from datetime import datetime, timedelta
+            val = float(raw)
+            # Excel epoch: 1899-12-30
+            dt = datetime(1899, 12, 30) + timedelta(days=val)
+            return dt.strftime("%Y-%m-%d")
+        except (ValueError, TypeError, OverflowError):
+            return raw
+    if fmt == "Time":
+        try:
+            val = float(raw)
+            # Fractional part represents time of day.
+            frac = val - int(val)
+            total_secs = int(round(frac * 86400))
+            h = total_secs // 3600
+            m = (total_secs % 3600) // 60
+            s = total_secs % 60
+            return f"{h:02d}:{m:02d}:{s:02d}"
+        except (ValueError, TypeError):
+            return raw
+
     try:
         val = float(raw)
     except (ValueError, TypeError):
@@ -1331,12 +1356,7 @@ class SheetWidget(QWidget):
             nf = self._col_formats.get(col, "General")
         if nf in ("General", "Text") or not text:
             return text
-        # Only apply formats that go beyond decimal precision
-        # (those are handled by _format_number already).
-        if nf in ("Currency", "Percentage", "Scientific",
-                  "Date", "Time"):
-            return _format_value(text, nf)
-        return text
+        return _format_value(text, nf)
 
     # ── Cell formatting (fill + borders) ───────────────────────────
     def set_cell_bg(self, row: int, col: int,

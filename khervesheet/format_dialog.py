@@ -68,6 +68,27 @@ def _format_preview(raw: str, fmt: str) -> str:
     """Format a raw value for preview in the Number tab."""
     if not raw or fmt in ("General", "Text"):
         return raw or "0"
+
+    if fmt == "Date":
+        try:
+            from datetime import datetime, timedelta
+            val = float(raw)
+            dt = datetime(1899, 12, 30) + timedelta(days=val)
+            return dt.strftime("%Y-%m-%d")
+        except (ValueError, TypeError, OverflowError):
+            return raw or "0"
+    if fmt == "Time":
+        try:
+            val = float(raw)
+            frac = val - int(val)
+            total_secs = int(round(frac * 86400))
+            h = total_secs // 3600
+            m = (total_secs % 3600) // 60
+            s = total_secs % 60
+            return f"{h:02d}:{m:02d}:{s:02d}"
+        except (ValueError, TypeError):
+            return raw or "0"
+
     try:
         val = float(raw)
     except (ValueError, TypeError):
