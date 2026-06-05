@@ -193,19 +193,26 @@ class _RangeOverlay(QWidget):
         mode = self._drag_mode
 
         if mode == "move":
-            # Translate rows only — column stays locked.
+            # Translate both rows and columns.
             origin_local = vp.mapFromGlobal(self._drag_origin)
             orig_row = table.rowAt(origin_local.y())
-            if orig_row < 0:
+            orig_col = table.columnAt(origin_local.x())
+            if orig_row < 0 or orig_col < 0:
                 return
             dr = row - orig_row
+            dc = col - orig_col
             nr0 = max(0, r0 + dr)
+            nc0 = max(0, c0 + dc)
             nr1 = nr0 + (r1 - r0)
+            nc1 = nc0 + (c1 - c0)
             if nr1 >= table.rowCount():
                 nr1 = table.rowCount() - 1
                 nr0 = nr1 - (r1 - r0)
-            self._r0, self._r1 = nr0, nr1
-            # Columns unchanged.
+            if nc1 >= table.columnCount():
+                nc1 = table.columnCount() - 1
+                nc0 = nc1 - (c1 - c0)
+            self._r0, self._c0 = nr0, nc0
+            self._r1, self._c1 = nr1, nc1
         elif mode == "tr":
             # Resize top edge — rows only, column locked.
             self._r0 = min(row, self._r1)
