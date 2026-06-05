@@ -4125,7 +4125,7 @@ class SheetWidget(QWidget):
         If the current cell is non-empty, jump to the last non-empty cell
         in that direction.  If the current cell is empty, jump to the
         first non-empty cell.  If all cells in that direction are empty,
-        jump to the edge of the sheet.
+        stay put.
 
         *extend_selection*: if True, extend the selection (Shift held).
         """
@@ -4133,6 +4133,12 @@ class SheetWidget(QWidget):
         c = self.table.currentColumn()
         if r < 0 or c < 0:
             return
+
+        # When extending, start the walk from the current cursor
+        # position (the moving corner of the selection), not from
+        # the Qt current cell which may not have been updated.
+        if extend_selection and self._sel_cursor is not None:
+            r, c = self._sel_cursor
 
         dr, dc = {
             Qt.Key_Down: (1, 0), Qt.Key_Up: (-1, 0),
@@ -4144,8 +4150,6 @@ class SheetWidget(QWidget):
 
         nr, nc = r + dr, c + dc
         if self._cell_has_data(r, c):
-            # Current cell is filled: walk until we hit an empty cell
-            # or the edge, then stop at the last filled cell.
             last_r, last_c = r, c
             while 0 <= nr <= max_r and 0 <= nc <= max_c:
                 if not self._cell_has_data(nr, nc):
@@ -4153,9 +4157,6 @@ class SheetWidget(QWidget):
                 last_r, last_c = nr, nc
                 nr += dr
                 nc += dc
-            # If we didn't move (next cell is empty), skip the gap
-            # and land on the next filled cell.  If no filled cell
-            # exists in that direction, stay put.
             if (last_r, last_c) == (r, c):
                 while 0 <= nr <= max_r and 0 <= nc <= max_c:
                     if self._cell_has_data(nr, nc):
@@ -4163,11 +4164,8 @@ class SheetWidget(QWidget):
                         break
                     nr += dr
                     nc += dc
-                # else: no data found — stay on current cell
             dest_r, dest_c = last_r, last_c
         else:
-            # Current cell is empty: jump to the first filled cell.
-            # If none exists in that direction, stay put.
             dest_r, dest_c = r, c
             while 0 <= nr <= max_r and 0 <= nc <= max_c:
                 if self._cell_has_data(nr, nc):
@@ -4175,20 +4173,21 @@ class SheetWidget(QWidget):
                     break
                 nr += dr
                 nc += dc
-            # else: no data found — stay on current cell
 
         if extend_selection:
-            # Extend the existing selection bounding box toward dest.
-            # Anchor is the opposite corner from where we're moving.
+            # Anchor is the fixed corner (where the user started).
             if self._sel_anchor is not None:
                 anchor_r, anchor_c = self._sel_anchor
             else:
-                anchor_r, anchor_c = r, c
+                anchor_r, anchor_c = self.table.currentRow(), \
+                    self.table.currentColumn()
+
+            # Build the new range from anchor to destination, also
+            # preserving the existing selection extent.
             top = min(anchor_r, dest_r)
             bot = max(anchor_r, dest_r)
             left = min(anchor_c, dest_c)
             right = max(anchor_c, dest_c)
-            # Also include the existing selection extent.
             sel = self.table.selectedRanges()
             if sel:
                 s = sel[0]
@@ -4200,9 +4199,15 @@ class SheetWidget(QWidget):
             self.table.setRangeSelected(
                 QTableWidgetSelectionRange(top, left, bot, right), True)
             self._sel_anchor = (anchor_r, anchor_c)
-            self._sel_cursor = (dest_r, dest_c)
-            # Scroll to destination without resetting the selection.
-            idx = self.table.model().index(dest_r, dest_c)
+            # Cursor tracks the actual corner in the direction we moved.
+            cur_r = bot if dr >= 0 else top
+            cur_c = right if dc >= 0 else left
+            if dr == 0:
+                cur_r = dest_r
+            if dc == 0:
+                cur_c = dest_c
+            self._sel_cursor = (cur_r, cur_c)
+            idx = self.table.model().index(cur_r, cur_c)
             self.table.scrollTo(idx)
         else:
             self._sel_anchor = None
