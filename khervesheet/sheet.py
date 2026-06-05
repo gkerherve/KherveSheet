@@ -4876,6 +4876,9 @@ class SheetWidget(QWidget):
                             text = vals[src_idx]
                             self._cell_formulas.pop((r, c), None)
 
+                        self._shadow[(r, c)] = text
+                        text = self._apply_cell_number_format(
+                            text, r, c)
                         it = self.table.item(r, c)
                         old = it.text() if it else ""
                         if it is None:
@@ -4883,7 +4886,6 @@ class SheetWidget(QWidget):
                             self.table.setItem(r, c, it)
                         else:
                             it.setText(text)
-                        self._shadow[(r, c)] = text
                         if old != text:
                             changes.append((r, c, old, text))
                 else:
@@ -4893,6 +4895,9 @@ class SheetWidget(QWidget):
                         idx = r - src_top
                         text = self._pattern_value(
                             pattern, idx, vals)
+                        self._shadow[(r, c)] = text
+                        text = self._apply_cell_number_format(
+                            text, r, c)
                         it = self.table.item(r, c)
                         old = it.text() if it else ""
                         if it is None:
@@ -4900,7 +4905,6 @@ class SheetWidget(QWidget):
                             self.table.setItem(r, c, it)
                         else:
                             it.setText(text)
-                        self._shadow[(r, c)] = text
                         if old != text:
                             changes.append((r, c, old, text))
         finally:
@@ -4956,6 +4960,9 @@ class SheetWidget(QWidget):
                             text = vals[src_idx]
                             self._cell_formulas.pop((r, c), None)
 
+                        self._shadow[(r, c)] = text
+                        text = self._apply_cell_number_format(
+                            text, r, c)
                         it = self.table.item(r, c)
                         old = it.text() if it else ""
                         if it is None:
@@ -4963,7 +4970,6 @@ class SheetWidget(QWidget):
                             self.table.setItem(r, c, it)
                         else:
                             it.setText(text)
-                        self._shadow[(r, c)] = text
                         if old != text:
                             changes.append((r, c, old, text))
                 else:
@@ -4972,6 +4978,9 @@ class SheetWidget(QWidget):
                         idx = c - src_left
                         text = self._pattern_value(
                             pattern, idx, vals)
+                        self._shadow[(r, c)] = text
+                        text = self._apply_cell_number_format(
+                            text, r, c)
                         it = self.table.item(r, c)
                         old = it.text() if it else ""
                         if it is None:
@@ -4979,7 +4988,6 @@ class SheetWidget(QWidget):
                             self.table.setItem(r, c, it)
                         else:
                             it.setText(text)
-                        self._shadow[(r, c)] = text
                         if old != text:
                             changes.append((r, c, old, text))
         finally:
@@ -5056,13 +5064,10 @@ class SheetWidget(QWidget):
         src_n = len(source_vals)
         if pt == "linear":
             val = pattern["start"] + pattern["step"] * idx
-            if (pattern["step"] == int(pattern["step"])
-                    and pattern["start"] == int(pattern["start"])):
-                return str(int(val))
-            return f"{val:g}"
+            return f"{val:.2f}"
         elif pt == "constant":
             return pattern["value"]
         elif pt == "numeric_repeat":
-            return f"{pattern['values'][idx % src_n]:g}"
+            return f"{pattern['values'][idx % src_n]:.2f}"
         else:
             return pattern["values"][idx % src_n]
