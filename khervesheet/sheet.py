@@ -364,6 +364,190 @@ class DeleteRowsCmd(QUndoCommand):
         self.sheet._refresh_headers()
 
 
+class InsertCellsCmd(QUndoCommand):
+    """Undo/redo for inserting blank cells (shift down) in specific columns."""
+
+    def __init__(self, sheet, rows, cols):
+        super().__init__("Insert cells")
+        self.sheet = sheet
+        self.rows = rows  # sorted list of row indices
+        self.cols = cols  # sorted list of col indices
+
+    def _shift_down(self):
+        """Shift cells down in self.cols starting at the top selected row."""
+        s = self.sheet
+        n = len(self.rows)
+        start = self.rows[0]
+        total = s.table.rowCount()
+        s.table.blockSignals(True)
+        for c in self.cols:
+            # Move cells from bottom up to make room.
+            for r in range(total - 1, start + n - 1, -1):
+                src = r - n
+                it = s.table.item(src, c)
+                text = it.text() if it else ""
+                dst_it = s.table.item(r, c)
+                if dst_it is None:
+                    dst_it = QTableWidgetItem()
+                    s.table.setItem(r, c, dst_it)
+                dst_it.setText(text)
+                s._shadow[(r, c)] = text
+                # Shift formulas.
+                f = s._cell_formulas.pop((src, c), None)
+                if f:
+                    s._cell_formulas[(r, c)] = f
+                # Shift formats.
+                fmt = s._cell_formats.pop((src, c), None)
+                if fmt:
+                    s._cell_formats[(r, c)] = fmt
+            # Clear the inserted cells.
+            for r in range(start, start + n):
+                it = s.table.item(r, c)
+                if it:
+                    it.setText("")
+                s._shadow.pop((r, c), None)
+                s._cell_formulas.pop((r, c), None)
+                s._cell_formats.pop((r, c), None)
+        s.table.blockSignals(False)
+        s.table.viewport().update()
+
+    def _shift_up(self):
+        """Reverse: shift cells back up."""
+        s = self.sheet
+        n = len(self.rows)
+        start = self.rows[0]
+        total = s.table.rowCount()
+        s.table.blockSignals(True)
+        for c in self.cols:
+            for r in range(start, total - n):
+                src = r + n
+                it = s.table.item(src, c)
+                text = it.text() if it else ""
+                dst_it = s.table.item(r, c)
+                if dst_it is None:
+                    dst_it = QTableWidgetItem()
+                    s.table.setItem(r, c, dst_it)
+                dst_it.setText(text)
+                s._shadow[(r, c)] = text
+                f = s._cell_formulas.pop((src, c), None)
+                if f:
+                    s._cell_formulas[(r, c)] = f
+                fmt = s._cell_formats.pop((src, c), None)
+                if fmt:
+                    s._cell_formats[(r, c)] = fmt
+            # Clear the vacated cells at the bottom.
+            for r in range(total - n, total):
+                it = s.table.item(r, c)
+                if it:
+                    it.setText("")
+                s._shadow.pop((r, c), None)
+                s._cell_formulas.pop((r, c), None)
+                s._cell_formats.pop((r, c), None)
+        s.table.blockSignals(False)
+        s.table.viewport().update()
+
+    def undo(self):
+        self._shift_up()
+
+    def redo(self):
+        if not getattr(self, "_first_redo_done", False):
+            self._first_redo_done = True
+            return
+        self._shift_down()
+
+
+class DeleteCellsCmd(QUndoCommand):
+    """Undo/redo for deleting cells (shift up) in specific columns."""
+
+    def __init__(self, sheet, rows, cols, saved):
+        super().__init__("Delete cells")
+        self.sheet = sheet
+        self.rows = rows
+        self.cols = cols
+        # saved: {(r, c): (text, formula, fmt)} for deleted cells
+        self.saved = saved
+
+    def _shift_up(self):
+        s = self.sheet
+        n = len(self.rows)
+        start = self.rows[0]
+        total = s.table.rowCount()
+        s.table.blockSignals(True)
+        for c in self.cols:
+            for r in range(start, total - n):
+                src = r + n
+                it = s.table.item(src, c)
+                text = it.text() if it else ""
+                dst_it = s.table.item(r, c)
+                if dst_it is None:
+                    dst_it = QTableWidgetItem()
+                    s.table.setItem(r, c, dst_it)
+                dst_it.setText(text)
+                s._shadow[(r, c)] = text
+                f = s._cell_formulas.pop((src, c), None)
+                if f:
+                    s._cell_formulas[(r, c)] = f
+                fmt = s._cell_formats.pop((src, c), None)
+                if fmt:
+                    s._cell_formats[(r, c)] = fmt
+            for r in range(total - n, total):
+                it = s.table.item(r, c)
+                if it:
+                    it.setText("")
+                s._shadow.pop((r, c), None)
+                s._cell_formulas.pop((r, c), None)
+                s._cell_formats.pop((r, c), None)
+        s.table.blockSignals(False)
+        s.table.viewport().update()
+
+    def _shift_down_restore(self):
+        s = self.sheet
+        n = len(self.rows)
+        start = self.rows[0]
+        total = s.table.rowCount()
+        s.table.blockSignals(True)
+        for c in self.cols:
+            for r in range(total - 1, start + n - 1, -1):
+                src = r - n
+                it = s.table.item(src, c)
+                text = it.text() if it else ""
+                dst_it = s.table.item(r, c)
+                if dst_it is None:
+                    dst_it = QTableWidgetItem()
+                    s.table.setItem(r, c, dst_it)
+                dst_it.setText(text)
+                s._shadow[(r, c)] = text
+                f = s._cell_formulas.pop((src, c), None)
+                if f:
+                    s._cell_formulas[(r, c)] = f
+                fmt = s._cell_formats.pop((src, c), None)
+                if fmt:
+                    s._cell_formats[(r, c)] = fmt
+        # Restore deleted cells.
+        for (r, c), (text, formula, fmt) in self.saved.items():
+            it = s.table.item(r, c)
+            if it is None:
+                it = QTableWidgetItem()
+                s.table.setItem(r, c, it)
+            it.setText(text)
+            s._shadow[(r, c)] = text
+            if formula:
+                s._cell_formulas[(r, c)] = formula
+            if fmt:
+                s._cell_formats[(r, c)] = fmt
+        s.table.blockSignals(False)
+        s.table.viewport().update()
+
+    def undo(self):
+        self._shift_down_restore()
+
+    def redo(self):
+        if not getattr(self, "_first_redo_done", False):
+            self._first_redo_done = True
+            return
+        self._shift_up()
+
+
 class InsertColumnCmd(QUndoCommand):
     """Undo/redo for inserting a column."""
 
@@ -3160,8 +3344,8 @@ class SheetWidget(QWidget):
 
         menu.addSeparator()
 
-        menu.addAction("Insert Cells", self._insert_rows_from_selection)
-        menu.addAction("Delete Cells", self._delete_selected_rows)
+        menu.addAction("Insert Cells", self._insert_cells)
+        menu.addAction("Delete Cells", self._delete_cells)
 
         menu.addSeparator()
         menu.addAction("Format Cells\u2026",
@@ -3622,6 +3806,41 @@ class SheetWidget(QWidget):
         self._refresh_headers()
         if self._undo_stack is not None:
             self._undo_stack.push(InsertRowCmd(self, row + 1))
+
+    def _insert_cells(self):
+        """Insert blank cells, shifting existing cells down only in the
+        selected columns (like Excel's Insert > Shift cells down)."""
+        idxs = self.table.selectedIndexes()
+        if not idxs:
+            return
+        rows = sorted(set(idx.row() for idx in idxs))
+        cols = sorted(set(idx.column() for idx in idxs))
+        cmd = InsertCellsCmd(self, rows, cols)
+        cmd._shift_down()
+        if self._undo_stack is not None:
+            self._undo_stack.push(cmd)
+
+    def _delete_cells(self):
+        """Delete selected cells, shifting remaining cells up only in the
+        selected columns (like Excel's Delete > Shift cells up)."""
+        idxs = self.table.selectedIndexes()
+        if not idxs:
+            return
+        rows = sorted(set(idx.row() for idx in idxs))
+        cols = sorted(set(idx.column() for idx in idxs))
+        # Snapshot the cells about to be deleted.
+        saved = {}
+        for r in rows:
+            for c in cols:
+                it = self.table.item(r, c)
+                text = it.text() if it else ""
+                formula = self._cell_formulas.get((r, c))
+                fmt = self._cell_formats.get((r, c))
+                saved[(r, c)] = (text, formula, fmt)
+        cmd = DeleteCellsCmd(self, rows, cols, saved)
+        cmd._shift_up()
+        if self._undo_stack is not None:
+            self._undo_stack.push(cmd)
 
     def _delete_selected_rows(self):
         rows = sorted(set(idx.row() for idx in self.table.selectedIndexes()),
