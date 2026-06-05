@@ -253,7 +253,8 @@ def _emg_guess(x, y):
     else:
         width = (float(np.nanmax(x) - np.nanmin(x)) or 1.0) / 10.0
     sigma = max(width / 2.3548, 1e-3)
-    area = float(np.trapz(yy, x)) or (height * sigma)
+    _trapz = getattr(np, "trapezoid", np.trapz)
+    area = float(_trapz(yy, x)) or (height * sigma)
     return {"amplitude": area, "center": float(x[i]),
             "sigma": sigma, "gamma": 1.0 / sigma}
 

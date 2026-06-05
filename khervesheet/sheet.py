@@ -2330,8 +2330,10 @@ class SheetWidget(QWidget):
                 dy = savgol_filter(ya, int(window), int(poly), deriv=1)
                 return (dy / dx).tolist()
 
+            _np_trapz = getattr(np, "trapezoid", np.trapz)
+
             def _TRAPZ(y, x):
-                return float(np.trapz(
+                return float(_np_trapz(
                     np.array(_nums([y]), float),
                     np.array(_nums([x]), float)))
 
@@ -2407,7 +2409,7 @@ class SheetWidget(QWidget):
             def _NORM_AREA(y, x):
                 ya = np.array(_nums([y]), float)
                 xa = np.array(_nums([x]), float)
-                return (ya / np.trapz(ya, xa)).tolist()
+                return (ya / _np_trapz(ya, xa)).tolist()
 
             def _NORM_MINMAX(y):
                 ya = np.array(_nums([y]), float)

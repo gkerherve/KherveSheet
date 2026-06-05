@@ -315,9 +315,12 @@ class IntegrateDialog(ScienceToolDialog):
         form.addRow("Mode:", self._mode)
 
     def _compute(self, x, y):
-        from numpy import trapz
+        try:
+            from numpy import trapezoid as _trapz
+        except ImportError:
+            from numpy import trapz as _trapz
         if self._mode.currentIndex() == 1:
-            total = float(trapz(y, x))
+            total = float(_trapz(y, x))
             QMessageBox.information(
                 self, self.TITLE, f"Definite integral = {total:.6g}")
             return [("integral", np.array([total]))]
