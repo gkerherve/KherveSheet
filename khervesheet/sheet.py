@@ -4175,13 +4175,14 @@ class SheetWidget(QWidget):
                 dest_c = max(0, min(nc - dc, max_c))
 
         if extend_selection:
-            # Extend selection from current cell to destination.
+            # Extend selection from the anchor (original cell) to dest.
+            anchor_r, anchor_c = r, c
             sel = self.table.selectedRanges()
             if sel:
-                anchor_r = sel[0].topRow() if dr >= 0 else sel[0].bottomRow()
-                anchor_c = sel[0].leftColumn() if dc >= 0 else sel[0].rightColumn()
-            else:
-                anchor_r, anchor_c = r, c
+                # Anchor is the corner opposite to the direction.
+                s = sel[0]
+                anchor_r = s.topRow() if dr >= 0 else s.bottomRow()
+                anchor_c = s.leftColumn() if dc >= 0 else s.rightColumn()
             top = min(anchor_r, dest_r)
             bot = max(anchor_r, dest_r)
             left = min(anchor_c, dest_c)
@@ -4189,7 +4190,9 @@ class SheetWidget(QWidget):
             self.table.clearSelection()
             self.table.setRangeSelected(
                 QTableWidgetSelectionRange(top, left, bot, right), True)
-            self.table.setCurrentCell(dest_r, dest_c)
+            # Scroll to destination without resetting the selection.
+            idx = self.table.model().index(dest_r, dest_c)
+            self.table.scrollTo(idx)
         else:
             self.table.clearSelection()
             self.table.setCurrentCell(dest_r, dest_c)
