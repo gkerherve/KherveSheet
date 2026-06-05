@@ -23,7 +23,95 @@ from PyQt5.QtWidgets import (
     QMenu, QInputDialog, QLineEdit, QLabel, QAbstractItemView,
     QHeaderView, QStyledItemDelegate, QApplication,
     QTableWidgetSelectionRange, QAbstractItemDelegate,
+    QPlainTextEdit, QSizePolicy, QFrame,
 )
+
+
+# ── Resizable formula bar widget ─────────────────────────────────────
+
+class _FormulaEdit(QPlainTextEdit):
+    """QPlainTextEdit that exposes the same API as QLineEdit.
+
+    This lets the formula bar be resized vertically (by dragging the
+    grip below it) while keeping the rest of SheetWidget's code unchanged.
+    """
+
+    returnPressed = pyqtSignal()
+    textChanged = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setTabChangesFocus(True)
+        self.setWordWrapMode(0)  # QTextOption.NoWrap — horizontal scroll
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setFrameShape(QFrame.NoFrame)
+        # Start as a single-line bar; user can drag the grip to enlarge.
+        self.setMinimumHeight(22)
+        self.setMaximumHeight(22)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        # Forward the built-in signal with the text payload QLineEdit uses.
+        super().textChanged.connect(lambda: self.__class__.textChanged.emit(
+            self, self.toPlainText()))
+
+    # ── QLineEdit-compatible API ─────────────────────────────────────
+    def text(self):
+        return self.toPlainText()
+
+    def setText(self, t):
+        self.setPlainText(t)
+
+    def cursorPosition(self):
+        return self.textCursor().position()
+
+    def setCursorPosition(self, pos):
+        tc = self.textCursor()
+        tc.setPosition(min(pos, len(self.toPlainText())))
+        self.setTextCursor(tc)
+
+    # Enter applies the formula; Ctrl+Enter / Alt+Enter insert a newline.
+    def keyPressEvent(self, event):
+        if (event.key() in (Qt.Key_Return, Qt.Key_Enter)
+                and not event.modifiers() & (Qt.ControlModifier
+                                             | Qt.AltModifier)):
+            self.returnPressed.emit()
+            return
+        super().keyPressEvent(event)
+
+
+class _FormulaBarGrip(QWidget):
+    """Thin drag-handle between the formula bar and the table.
+
+    Dragging it vertically resizes the formula bar (``_FormulaEdit``).
+    """
+
+    def __init__(self, formula_edit, parent=None):
+        super().__init__(parent)
+        self._fe = formula_edit
+        self.setFixedHeight(4)
+        self.setCursor(Qt.SplitVCursor)
+        self.setStyleSheet(
+            "background: qlineargradient(y1:0, y2:1, "
+            "stop:0 #d0d0d0, stop:1 #c0c0c0);")
+        self._drag_y = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_y = event.globalY()
+            self._start_h = self._fe.maximumHeight()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_y is not None:
+            delta = event.globalY() - self._drag_y
+            new_h = max(22, self._start_h + delta)
+            self._fe.setMaximumHeight(new_h)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_y = None
+
+    def mouseDoubleClickEvent(self, event):
+        # Double-click resets to single-line height.
+        self._fe.setMaximumHeight(22)
 
 
 # ── Number format constants ──────────────────────────────────────────
@@ -1064,7 +1152,7 @@ class SheetWidget(QWidget):
             "QToolButton:hover { background:#e0ecf8; }")
         self._fx_btn.setToolTip("Insert Function (Shift+F3)")
         self._fx_btn.clicked.connect(self._open_insert_function)
-        self._formula_bar = QLineEdit()
+        self._formula_bar = _FormulaEdit()
         self._formula_bar.setPlaceholderText(
             "Value or =formula  (e.g. =SUM(A1:A10), =B1+C1)")
         self._formula_bar.returnPressed.connect(self._apply_formula_bar)
@@ -1075,6 +1163,8 @@ class SheetWidget(QWidget):
         fbar.addWidget(self._fx_btn)
         fbar.addWidget(self._formula_bar, stretch=1)
         layout.addWidget(fbar_widget)
+        self._fbar_grip = _FormulaBarGrip(self._formula_bar)
+        layout.addWidget(self._fbar_grip)
 
         # ── Table ────────────────────────────────────────────────────
         self.table = QTableWidget(rows, cols)
