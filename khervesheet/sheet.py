@@ -2546,6 +2546,8 @@ class SheetWidget(QWidget):
         from PyQt5.QtWidgets import QTableWidgetItem
         written = []
         rows = values if two_d else [[v] for v in values]
+        was_blocked = self.table.signalsBlocked()
+        self.table.blockSignals(True)
         for i, rowvals in enumerate(rows):
             for j, v in enumerate(rowvals):
                 if i == 0 and j == 0:
@@ -2559,21 +2561,26 @@ class SheetWidget(QWidget):
                 if it is None:
                     it = QTableWidgetItem()
                     self.table.setItem(r, c, it)
-                it.setData(Qt.EditRole, _format_number(v)
-                           if not isinstance(v, str) else v)
+                text = v if isinstance(v, str) else str(_format_number(v))
+                it.setText(text)
+                self._shadow[(r, c)] = text
                 written.append((r, c))
+        self.table.blockSignals(was_blocked)
         if written:
             self._py_spills[(row, col)] = written
 
     def _clear_py_outputs(self, row, col):
         """Clear the previous spill range and embedded figure for a cell."""
-        for (r, c) in self._py_spills.pop((row, col), ()):
-            it = self.table.item(r, c)
-            if it is not None:
-                self.table.blockSignals(True)
-                it.setText("")
-                self.table.blockSignals(False)
-                self._shadow[(r, c)] = ""
+        spilled = self._py_spills.pop((row, col), ())
+        if spilled:
+            was_blocked = self.table.signalsBlocked()
+            self.table.blockSignals(True)
+            for (r, c) in spilled:
+                it = self.table.item(r, c)
+                if it is not None:
+                    it.setText("")
+                    self._shadow[(r, c)] = ""
+            self.table.blockSignals(was_blocked)
         fig = self._py_figures.pop((row, col), None) if hasattr(
             self, "_py_figures") else None
         if fig is not None:
