@@ -28,9 +28,10 @@ from PyQt5.QtGui import (
 # persistence (``_cell_formulas``) unchanged.
 PY_MARKER = "=PY"
 
-# Matches xl("A1"), cell('A1:B10'), xl("Sheet1!A1") inside source so the
-# referenced cells can be registered as dependencies.
-_XL_CALL = re.compile(r"\b(?:xl|cell)\s*\(\s*([\"'])(.+?)\1")
+# Matches ks("A1"), cell('A1:B10'), ks("Sheet1!A1") inside source so the
+# referenced cells can be registered as dependencies.  (xl is kept as an
+# alias for users coming from Excel.)
+_XL_CALL = re.compile(r"\b(?:ks|xl|cell)\s*\(\s*([\"'])(.+?)\1")
 
 
 def is_python_source(text) -> bool:
@@ -175,6 +176,8 @@ class PythonRuntime:
         except Exception:
             pass
         # Range/cell access helpers — late-bound to the running sheet.
+        # ks() is the KherveSheet accessor; xl()/cell() are aliases.
+        g["ks"] = self._xl
         g["xl"] = self._xl
         g["cell"] = self._xl
         self._globals = g
@@ -189,7 +192,7 @@ class PythonRuntime:
         """Resolve an A1-style ref against the sheet bound for this run."""
         sheet = self._sheet
         if sheet is None:
-            raise RuntimeError("xl() is only available inside a =PY cell")
+            raise RuntimeError("ks() is only available inside a =PY cell")
         return resolve_ref(sheet, str(ref))
 
     # ── execution ────────────────────────────────────────────────────
@@ -357,3 +360,142 @@ class PythonHighlighter(QSyntaxHighlighter):
         for pattern, fmt in self._rules:
             for m in pattern.finditer(text):
                 self.setFormat(m.start(), m.end() - m.start(), fmt)
+
+
+# ── Help ─────────────────────────────────────────────────────────────
+
+PYTHON_HELP_HTML = """
+<h2>Python in KherveSheet</h2>
+<p>A cell can run real Python instead of an Excel formula. Type
+<code>=PY</code> in a cell (or use <b>Insert &rarr; Python Cell</b>) and the
+formula bar turns into a multi-line code editor. Press
+<b>Ctrl+Enter</b> to run (plain Enter adds a new line).</p>
+
+<p>The cell's value is the value of the <b>last line</b>, if that line is an
+expression &mdash; just like Excel's Python. Assignments, <code>import</code>s
+and <code>def</code>s produce no output on their own.</p>
+
+<h3>Reading the grid with <code>ks()</code></h3>
+<p>Use <code>ks("...")</code> to pull cell values into your code
+(<code>xl()</code> and <code>cell()</code> are aliases):</p>
+<table border="1" cellpadding="4" cellspacing="0">
+<tr><th align="left"><code>ks("A1")</code></th><td>the value in A1</td></tr>
+<tr><th align="left"><code>ks("A1:A10")</code></th>
+    <td>a 1-D NumPy array</td></tr>
+<tr><th align="left"><code>ks("A1:C5")</code></th>
+    <td>a 2-D NumPy array</td></tr>
+<tr><th align="left"><code>ks("Sheet2!B2")</code></th>
+    <td>a value from another sheet</td></tr>
+</table>
+
+<h3>What a cell can output</h3>
+<ul>
+<li><b>A number or text</b> &mdash; shown directly in the cell.</li>
+<li><b>A list</b> &mdash; spills into the cell and the cells below/right.</li>
+<li><b>A NumPy array / DataFrame / any object</b> &mdash; kept <i>live in the
+cell</i> (shown as a badge like <code>&#9646; ndarray(100,)</code>) and reused
+elsewhere with <code>ks("C1")</code>. To spill an array instead, end with
+<code>list(my_array)</code> or <code>my_array.tolist()</code>.</li>
+<li><b>A matplotlib figure</b> &mdash; embedded as a picture next to the
+cell.</li>
+</ul>
+
+<h3>Shared namespace</h3>
+<p>All Python cells in a workbook share one namespace, so a function defined
+in one cell is callable from any other:</p>
+<pre>=PY
+def celsius_to_f(c):
+    return c * 9 / 5 + 32</pre>
+<pre>=PY
+celsius_to_f(ks("A1"))</pre>
+
+<h3>Examples &mdash; calculations</h3>
+<pre>=PY
+import numpy as np
+np.mean(ks("A1:A10"))            # average of a column</pre>
+<pre>=PY
+[x ** 2 for x in range(1, 6)]    # spills 1, 4, 9, 16, 25</pre>
+<pre>=PY
+import numpy as np
+np.linspace(0, 1, 100)           # stored as an object in the cell</pre>
+
+<h3>Examples &mdash; matplotlib plots</h3>
+<p>Build a figure and return it (or just create one &mdash; KherveSheet
+captures the current figure automatically).</p>
+
+<p><b>Simple line plot of a column</b></p>
+<pre>=PY
+import matplotlib.pyplot as plt
+plt.plot(ks("A1:A20"))
+plt.title("My data")
+plt.gcf()</pre>
+
+<p><b>X vs Y with labels and a grid</b></p>
+<pre>=PY
+import matplotlib.pyplot as plt
+x = ks("A2:A50")
+y = ks("B2:B50")
+fig, ax = plt.subplots()
+ax.plot(x, y, "o-", color="#4472C4")
+ax.set_xlabel("Time (s)")
+ax.set_ylabel("Signal (V)")
+ax.grid(True)
+fig</pre>
+
+<p><b>Histogram</b></p>
+<pre>=PY
+import matplotlib.pyplot as plt
+plt.hist(ks("A1:A200"), bins=30, color="#E07B39")
+plt.gcf()</pre>
+
+<p><b>Curve from a formula</b></p>
+<pre>=PY
+import numpy as np, matplotlib.pyplot as plt
+x = np.linspace(0, 2 * np.pi, 200)
+plt.plot(x, np.sin(x), label="sin")
+plt.plot(x, np.cos(x), label="cos")
+plt.legend()
+plt.gcf()</pre>
+
+<p><b>Bar chart from two columns</b></p>
+<pre>=PY
+import matplotlib.pyplot as plt
+labels = [str(v) for v in ks("A1:A6")]
+plt.bar(labels, ks("B1:B6"))
+plt.gcf()</pre>
+
+<h3>Good to know</h3>
+<ul>
+<li>Editing a cell that <code>ks()</code> reads re-runs dependent Python
+cells automatically.</li>
+<li>Errors show <code>#PYERR</code> &mdash; hover the cell for the message.</li>
+<li>Code is saved in the <code>.ksheet</code> file. Reopening a file with
+Python cells asks for permission before running it.</li>
+<li>Ready to use: <code>math</code>, <code>numpy as np</code>,
+<code>matplotlib.pyplot as plt</code>, and <code>pandas as pd</code> /
+<code>scipy</code> if installed. You can <code>import</code> anything else
+you have.</li>
+<li>The AI assistant can also write Python cells for you &mdash; just ask it
+to "write a Python cell that&hellip;".</li>
+</ul>
+"""
+
+
+def show_python_help(parent=None):
+    """Open a dialog explaining how to use Python cells."""
+    from PyQt5.QtWidgets import (
+        QDialog, QVBoxLayout, QTextBrowser, QDialogButtonBox,
+    )
+    dlg = QDialog(parent)
+    dlg.setWindowTitle("Python in KherveSheet")
+    dlg.resize(640, 640)
+    layout = QVBoxLayout(dlg)
+    browser = QTextBrowser()
+    browser.setOpenExternalLinks(True)
+    browser.setHtml(PYTHON_HELP_HTML)
+    layout.addWidget(browser)
+    bb = QDialogButtonBox(QDialogButtonBox.Close)
+    bb.rejected.connect(dlg.reject)
+    bb.accepted.connect(dlg.accept)
+    layout.addWidget(bb)
+    dlg.exec_()

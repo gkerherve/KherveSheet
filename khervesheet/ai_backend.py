@@ -135,6 +135,46 @@ TOOLS = [
         },
     },
     {
+        "name": "set_python_cell",
+        "description": (
+            "Write a Python program into a cell (a '=PY' cell). The code "
+            "runs real Python in a workbook-wide shared namespace, so a "
+            "function or variable defined in one cell is visible to later "
+            "cells. The value of the LAST line (if it is an expression) "
+            "becomes the cell's result. Read grid values inside the code "
+            "with ks(\"A1\") for one cell or ks(\"A1:B10\") for a range "
+            "(returns a NumPy array). Return a list to spill values into "
+            "the grid; return a NumPy array / object to keep it live in the "
+            "cell (re-read it elsewhere with ks); build a matplotlib figure "
+            "to embed a plot. numpy (np), matplotlib.pyplot (plt) and "
+            "pandas (pd) are available. Use this for tasks that are easier "
+            "as code than as spreadsheet formulas."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {
+                    "type": "string",
+                    "description": "Name of the sheet tab.",
+                },
+                "cell": {
+                    "type": "string",
+                    "description": "Cell reference, e.g. 'B5'.",
+                },
+                "code": {
+                    "type": "string",
+                    "description": (
+                        "Python source. May be multi-line. Do NOT include "
+                        "the '=PY' marker — just the code. End with a bare "
+                        "expression to set the cell's value, e.g. a number, "
+                        "a list (spills), or plt.gcf() for a plot."
+                    ),
+                },
+            },
+            "required": ["sheet_name", "cell", "code"],
+        },
+    },
+    {
         "name": "format_cells",
         "description": "Apply visual formatting to a range of cells.",
         "input_schema": {
@@ -481,6 +521,19 @@ existing data, formatting, and charts untouched unless asked.
 (for example at the start of a new conversation), use read_cells to \
 check before writing — do not blindly recreate data.
 - Use set_formula for calculated cells (formulas start with =).
+- For logic that is awkward or impossible as a spreadsheet formula \
+(loops, custom algorithms, data processing, generating a plot, building \
+or transforming arrays/tables), use set_python_cell to write a real \
+Python program into a cell. Python cells share one workbook-wide \
+namespace, so you can define a helper function in one cell and call it \
+from others. Inside the code, read grid values with ks("A1") (one cell) \
+or ks("A1:B10") (a range → NumPy array). The LAST line's value is the \
+cell result: return a number/text to display it, a list to spill values \
+into neighbouring cells, a NumPy array/object to keep it live in the cell \
+(re-read with ks elsewhere), or build a matplotlib figure (plt) to embed \
+a plot. numpy (np), matplotlib.pyplot (plt) and pandas (pd) are \
+available. After writing a Python cell, check its result is not #PYERR; \
+if it is, read the error and fix the code.
 - Always read_cells first if you need to understand existing data \
 before modifying.
 - TEMPLATES MUST BE POLISHED, matching KherveSheet's shipped example \
@@ -783,6 +836,8 @@ class AiBackend(QObject):
             return f"Wrote {n} cell{'s' if n != 1 else ''}"
         if name == "set_formula":
             return f"Set {inp.get('cell', '?')} = {inp.get('formula', '?')}"
+        if name == "set_python_cell":
+            return f"Wrote Python in {inp.get('cell', '?')}"
         if name == "format_cells":
             n = result.get("cells_formatted", 0)
             return f"Formatted {n} cell{'s' if n != 1 else ''}"

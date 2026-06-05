@@ -88,6 +88,7 @@ class AiToolExecutor:
             "read_selection": self.tool_read_selection,
             "write_cells": self.tool_write_cells,
             "set_formula": self.tool_set_formula,
+            "set_python_cell": self.tool_set_python_cell,
             "format_cells": self.tool_format_cells,
             "insert_chart": self.tool_insert_chart,
             "add_sheet": self.tool_add_sheet,
@@ -229,6 +230,29 @@ class AiToolExecutor:
         r, c = parse_a1(inp["cell"])
         self._commit_cell(sheet, r, c, formula)
         return {"cell": inp["cell"], "formula": formula}
+
+    def tool_set_python_cell(self, inp: dict) -> dict:
+        """Write a Python (=PY) program into a cell.
+
+        The *code* runs in the workbook-wide shared namespace; the value of
+        its trailing expression becomes the cell's result.  Use ks("A1") /
+        ks("A1:B10") inside the code to read grid values.
+        """
+        sheet = self._sheet(inp["sheet_name"])
+        code = inp["code"]
+        # Strip a leading =PY marker if the model included one.
+        stripped = code.lstrip()
+        if stripped[:3].upper() == "=PY":
+            code = stripped[3:].lstrip("\n")
+        text = "=PY\n" + code
+        r, c = parse_a1(inp["cell"])
+        self._commit_cell(sheet, r, c, text)
+        result = sheet.cell_text(r, c)
+        out = {"cell": inp["cell"], "result": result}
+        if result == "#PYERR":
+            out["error"] = sheet._py_errors.get(
+                (r, c), "Python error").strip().splitlines()[-1]
+        return out
 
     def tool_format_cells(self, inp: dict) -> dict:
         sheet = self._sheet(inp["sheet_name"])

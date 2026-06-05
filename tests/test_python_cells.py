@@ -43,7 +43,7 @@ def test_strip_marker():
 
 
 def test_extract_refs():
-    refs = extract_refs('xl("A1") + cell(\'B2:C3\') + xl("Sheet1!D4")')
+    refs = extract_refs('ks("A1") + cell(\'B2:C3\') + xl("Sheet1!D4")')
     assert refs == ["A1", "B2:C3", "Sheet1!D4"]
 
 
@@ -180,3 +180,40 @@ def test_sheet_python_error_shows_pyerr(qapp):
     _put(s, 0, 0, "=PY\n1 / 0")
     assert s.table.item(0, 0).text() == "#PYERR"
     assert "ZeroDivisionError" in s.table.item(0, 0).toolTip()
+
+
+def test_ks_alias_resolves(qapp):
+    from khervesheet.workbook import WorkbookWidget
+    wb = WorkbookWidget()
+    s = wb.tabs.widget(0)
+    _put(s, 0, 0, "7")
+    _put(s, 1, 0, "8")
+    _put(s, 0, 1, '=PY\nint(sum(ks("A1:A2")))')
+    assert s.table.item(0, 1).text() == "15"
+
+
+def test_ai_set_python_cell_tool(qapp):
+    from khervesheet.mainwindow import MainWindow
+    from khervesheet.ai_tools import AiToolExecutor
+    mw = MainWindow()
+    ex = AiToolExecutor(mw)
+    sheet_name = mw._workbook.name_of_sheet(mw._active_sheet())
+    out = ex.execute("set_python_cell", {
+        "sheet_name": sheet_name, "cell": "A1", "code": "6 * 7"})
+    assert out["result"] == "42"
+    # A leading =PY marker from the model is tolerated.
+    out2 = ex.execute("set_python_cell", {
+        "sheet_name": sheet_name, "cell": "A2", "code": "=PY\n2 ** 5"})
+    assert out2["result"] == "32"
+    # Errors are reported back to the model.
+    out3 = ex.execute("set_python_cell", {
+        "sheet_name": sheet_name, "cell": "A3", "code": "1 / 0"})
+    assert out3["result"] == "#PYERR"
+    assert "ZeroDivisionError" in out3["error"]
+
+
+def test_python_help_html_has_examples():
+    from khervesheet.python_engine import PYTHON_HELP_HTML
+    assert "matplotlib" in PYTHON_HELP_HTML
+    assert "ks(" in PYTHON_HELP_HTML
+    assert "plt.gcf()" in PYTHON_HELP_HTML

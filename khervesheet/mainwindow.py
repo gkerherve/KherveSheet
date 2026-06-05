@@ -427,6 +427,7 @@ class MainWindow(QMainWindow):
         # ── Help ─────────────────────────────────────────────────────
         help_menu = mb.addMenu("&Help")
         help_menu.addAction("&User Guide", self._open_user_guide)
+        help_menu.addAction("Python in KherveSheet", self._show_python_help)
         help_menu.addSeparator()
         help_menu.addAction("&About", self._show_about)
         help_menu.addAction("GitHub Repository", self._open_github)
@@ -4286,6 +4287,10 @@ class MainWindow(QMainWindow):
             f"Licensed under the "
             f"<a href='https://www.gnu.org/licenses/gpl-3.0.html'>"
             f"GNU General Public License v3.0</a></p>")
+
+    def _show_python_help(self):
+        from .python_engine import show_python_help
+        show_python_help(self)
 
     def _open_user_guide(self):
         from PyQt5.QtGui import QDesktopServices
