@@ -1632,6 +1632,10 @@ class MainWindow(QMainWindow):
                         if d.get('legend_props'):
                             cg.attrs['legend_props'] = json.dumps(
                                 d['legend_props'])
+                        # Trendlines.
+                        if d.get('trendlines'):
+                            cg.attrs['trendlines'] = json.dumps(
+                                d['trendlines'])
                         for ki, s in enumerate(d['series']):
                             srg = cg.create_group(f"series_{ki}")
                             srg.create_dataset("x", data=s['x'])
@@ -1997,6 +2001,12 @@ class MainWindow(QMainWindow):
                         yc_json = cg.attrs.get('y_cols', '')
                         if yc_json:
                             cd["y_cols"] = json.loads(yc_json)
+                        # Trendlines.
+                        tl_json = cg.attrs.get('trendlines', '')
+                        if isinstance(tl_json, bytes):
+                            tl_json = tl_json.decode('utf-8')
+                        if tl_json:
+                            cd["trendlines"] = json.loads(tl_json)
                         deferred_charts.append(cd)
                     if deferred_charts:
                         sheet._deferred_charts = deferred_charts
