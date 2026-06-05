@@ -72,15 +72,27 @@ def _lighten(hex_color: str, factor: float = 0.75) -> str:
     return QColor(r, g, b).name()
 
 
+def _darken(hex_color: str, factor: float = 0.3) -> str:
+    """Darken a hex colour toward black by *factor* (0=unchanged,
+    1=black)."""
+    c = QColor(hex_color)
+    r = int(c.red() * (1 - factor))
+    g = int(c.green() * (1 - factor))
+    b = int(c.blue() * (1 - factor))
+    return QColor(r, g, b).name()
+
+
 def _build_styles() -> list:
     """Generate all built-in table styles."""
     styles = []
 
     # ── Plain Tables ──────────────────────────────────────────────
+    # Variant 1 — Light: white background, coloured header underline,
+    #   very light banded rows.
     for accent, aname in _ACCENT_COLORS:
         light = _lighten(accent, 0.85)
         styles.append(TableStyle(
-            name=f"Plain {aname}",
+            name=f"Plain Light {aname}",
             category="Plain",
             header_bg="#ffffff",
             header_fg=accent,
@@ -93,12 +105,29 @@ def _build_styles() -> list:
             border_outer=False,
             border_inner=False,
         ))
+    # Variant 2 — Medium: coloured header with white text, light rows,
+    #   top-and-bottom border.
+    for accent, aname in _ACCENT_COLORS:
+        light = _lighten(accent, 0.85)
+        styles.append(TableStyle(
+            name=f"Plain Medium {aname}",
+            category="Plain",
+            header_bg=accent,
+            header_fg="#ffffff",
+            header_bold=True,
+            even_bg="#ffffff",
+            odd_bg=light,
+            text_fg="#000000",
+            border_color=accent,
+            border_header_bottom=True,
+            border_outer=True,
+            border_inner=False,
+        ))
 
     # ── Grid Tables ───────────────────────────────────────────────
-    for i, (accent, aname) in enumerate(_ACCENT_COLORS):
+    # Variant 1 — Light: coloured header, white/light rows, all borders.
+    for accent, aname in _ACCENT_COLORS:
         light = _lighten(accent, 0.7)
-        med = _lighten(accent, 0.4)
-        # Light grid
         styles.append(TableStyle(
             name=f"Grid Light {aname}",
             category="Grid",
@@ -112,7 +141,28 @@ def _build_styles() -> list:
             border_outer=True,
             border_inner=True,
         ))
-        # Dark grid
+    # Variant 2 — Medium: coloured header, banded medium rows,
+    #   outer border only.
+    for accent, aname in _ACCENT_COLORS:
+        light = _lighten(accent, 0.75)
+        med = _lighten(accent, 0.55)
+        styles.append(TableStyle(
+            name=f"Grid Medium {aname}",
+            category="Grid",
+            header_bg=accent,
+            header_fg="#ffffff",
+            even_bg=light,
+            odd_bg=med,
+            text_fg="#000000",
+            border_color=accent,
+            border_header_bottom=True,
+            border_outer=True,
+            border_inner=False,
+        ))
+    # Variant 3 — Dark: coloured header, medium/dark rows, all borders.
+    for accent, aname in _ACCENT_COLORS:
+        light = _lighten(accent, 0.7)
+        med = _lighten(accent, 0.4)
         styles.append(TableStyle(
             name=f"Grid Dark {aname}",
             category="Grid",
@@ -126,12 +176,32 @@ def _build_styles() -> list:
             border_outer=True,
             border_inner=True,
         ))
+    # Variant 4 — Accent: deeply coloured, dark header, strong banding,
+    #   all borders.
+    for accent, aname in _ACCENT_COLORS:
+        dark = _darken(accent, 0.25)
+        med = _lighten(accent, 0.2)
+        light = _lighten(accent, 0.45)
+        styles.append(TableStyle(
+            name=f"Grid Accent {aname}",
+            category="Grid",
+            header_bg=dark,
+            header_fg="#ffffff",
+            even_bg=med,
+            odd_bg=light,
+            text_fg="#ffffff",
+            border_color=dark,
+            border_header_bottom=True,
+            border_outer=True,
+            border_inner=True,
+        ))
 
     # ── List Tables ───────────────────────────────────────────────
+    # Variant 1 — Light: no borders, coloured header text, light banding.
     for accent, aname in _ACCENT_COLORS:
-        light = _lighten(accent, 0.8)
+        light = _lighten(accent, 0.85)
         styles.append(TableStyle(
-            name=f"List {aname}",
+            name=f"List Light {aname}",
             category="List",
             header_bg="#ffffff",
             header_fg=accent,
@@ -139,8 +209,45 @@ def _build_styles() -> list:
             even_bg="#ffffff",
             odd_bg=light,
             text_fg="#000000",
+            border_color=accent,
+            border_header_bottom=True,
+            border_outer=False,
+            border_inner=False,
+        ))
+    # Variant 2 — Medium: coloured header fill, white text, medium banding,
+    #   bottom border on header.
+    for accent, aname in _ACCENT_COLORS:
+        light = _lighten(accent, 0.75)
+        styles.append(TableStyle(
+            name=f"List Medium {aname}",
+            category="List",
+            header_bg=accent,
+            header_fg="#ffffff",
+            header_bold=True,
+            even_bg="#ffffff",
+            odd_bg=light,
+            text_fg="#000000",
             border_color=None,
             border_header_bottom=True,
+            border_outer=False,
+            border_inner=False,
+        ))
+    # Variant 3 — Dark: dark header, strong coloured banding, no borders.
+    for accent, aname in _ACCENT_COLORS:
+        dark = _darken(accent, 0.2)
+        med = _lighten(accent, 0.55)
+        light = _lighten(accent, 0.75)
+        styles.append(TableStyle(
+            name=f"List Dark {aname}",
+            category="List",
+            header_bg=dark,
+            header_fg="#ffffff",
+            header_bold=True,
+            even_bg=light,
+            odd_bg=med,
+            text_fg="#000000",
+            border_color=None,
+            border_header_bottom=False,
             border_outer=False,
             border_inner=False,
         ))
@@ -178,8 +285,9 @@ def _render_thumbnail(style: TableStyle, size: QSize = QSize(72, 52)
             p.fillRect(x, y, cw, rh, bg)
 
     # Draw borders.
+    bc = style.border_color or style.header_bg
     if style.border_color:
-        pen = QPen(QColor(style.border_color), 1)
+        pen = QPen(QColor(bc), 1)
         p.setPen(pen)
         if style.border_outer:
             p.drawRect(0, 0, size.width() - 1, size.height() - 1)
@@ -188,10 +296,10 @@ def _render_thumbnail(style: TableStyle, size: QSize = QSize(72, 52)
                 p.drawLine(col * cw, 0, col * cw, size.height())
             for row in range(1, rows):
                 p.drawLine(0, row * rh, size.width(), row * rh)
-        if style.border_header_bottom:
-            pen.setWidth(2)
-            p.setPen(pen)
-            p.drawLine(0, rh, size.width(), rh)
+    if style.border_header_bottom:
+        pen = QPen(QColor(bc), 2)
+        p.setPen(pen)
+        p.drawLine(0, rh, size.width(), rh)
 
     # Draw text lines.
     p.setPen(QPen(QColor(style.header_fg if True else "#000"), 1))
@@ -219,7 +327,7 @@ class TableDesignDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Table Design")
-        self.resize(560, 480)
+        self.resize(680, 560)
         self._selected_style = None
 
         outer = QVBoxLayout(self)
