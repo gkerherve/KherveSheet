@@ -72,6 +72,7 @@ class _RangeOverlay(QWidget):
         self._color = QColor(color_hex)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self.setAutoFillBackground(False)
+        self.setMouseTracking(True)
         self.setCursor(Qt.ArrowCursor)
 
         # Cell range this overlay represents (set by the chart).
@@ -93,11 +94,10 @@ class _RangeOverlay(QWidget):
         p.setRenderHint(QPainter.Antialiasing, False)
         hp = self._HP
         w, h = self.width(), self.height()
-        # The widget is padded by hp on top and right so handles fit.
-        # The cell-aligned border rectangle sits at (0, hp) with size
-        # (w - hp, h - hp).
+        # The widget is padded by hp on top, bottom, and right so
+        # handles are fully visible.  Border rect sits at (0, hp).
         bx, by = 0, hp
-        bw, bh = w - hp - 1, h - hp - 1
+        bw, bh = w - hp - 1, h - 2 * hp - 1
         # Semi-transparent fill inside the border rect
         fill = QColor(self._color)
         fill.setAlpha(25)
@@ -122,16 +122,13 @@ class _RangeOverlay(QWidget):
         x, y = pos.x(), pos.y()
         hp = self._HP
         w, h = self.width(), self.height()
-        # Border right edge is at w - hp - 1; handle extends hp either
-        # side, so test x within [right - hp - 2, right + hp + 2].
+        # Border right edge x = w - hp - 1; top y = hp; bottom y = h - hp - 1
         rx = w - hp - 1
         margin = hp + 3
         if abs(x - rx) > margin:
             return None
-        # Top-right handle centred at y = hp (border top)
         if abs(y - hp) <= margin:
             return "tr"
-        # Bottom-right handle centred at y = h - hp - 1 (border bottom)
         if abs(y - (h - hp - 1)) <= margin:
             return "br"
         return None
@@ -234,9 +231,9 @@ class _RangeOverlay(QWidget):
             return
         hp = self._HP
         x = top.left() - 1
-        y = top.top() - 1 - hp   # extra padding top for handle
-        w = bot.right() - x + 2 + hp  # extra padding right for handle
-        h = bot.bottom() - (top.top() - 1) + 2 + hp
+        y = top.top() - 1 - hp        # padding top
+        w = bot.right() - x + 2 + hp  # padding right
+        h = bot.bottom() - (top.top() - 1) + 2 + 2 * hp  # padding top+bottom
         self.setGeometry(x, y, w, h)
         self.update()
 
@@ -1767,9 +1764,9 @@ class EmbeddedChart(QWidget):
             return None
         hp = _RangeOverlay._HP
         x = top_rect.left() - 1
-        y = top_rect.top() - 1 - hp   # padding top for handle
-        w = bot_rect.right() - x + 2 + hp  # padding right for handle
-        h = bot_rect.bottom() - (top_rect.top() - 1) + 2 + hp
+        y = top_rect.top() - 1 - hp        # padding top
+        w = bot_rect.right() - x + 2 + hp  # padding right
+        h = bot_rect.bottom() - (top_rect.top() - 1) + 2 + 2 * hp  # top+bottom
 
         overlay = _RangeOverlay(table.viewport(), color_hex)
         overlay._r0 = r0
