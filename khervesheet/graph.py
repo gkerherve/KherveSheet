@@ -164,10 +164,10 @@ class _RangeOverlay(QWidget):
             event.ignore()
             return
         self._apply_drag(event.globalPos())
+        self._commit_range()
         self._drag_mode = None
         self._drag_origin = None
         self._orig_range = None
-        self._commit_range()
         event.accept()
 
     # ── core drag logic ─────────────────────────────────────────────
@@ -1572,21 +1572,21 @@ class EmbeddedChart(QWidget):
 
     def _refresh_data(self):
         """Re-read source columns and update all series, preserving
-        every visual property (title, labels, scales, limits, colours,
-        line styles, legend, fills, axis props)."""
+        visual properties but autoscaling to fit the (possibly new)
+        data range."""
         if not self._source_sheet:
             return
         sheet = self._source_sheet
-        # Snapshot current axis state so we can restore it.
-        title = self._ax.get_title()
-        xlabel = self._ax.get_xlabel()
-        ylabel = self._ax.get_ylabel()
-        xscale = self._ax.get_xscale()
-        yscale = self._ax.get_yscale()
-        xlim = self._ax.get_xlim()
-        ylim = self._ax.get_ylim()
-        grid_on = bool(self._ax.xaxis.get_gridlines()[0].get_visible()
-                       if self._ax.xaxis.get_gridlines() else False)
+        ax = self._ax
+        # Snapshot axis labels/scales/grid (not limits — those must
+        # autoscale so a changed data range is always visible).
+        title = ax.get_title()
+        xlabel = ax.get_xlabel()
+        ylabel = ax.get_ylabel()
+        xscale = ax.get_xscale()
+        yscale = ax.get_yscale()
+        grid_on = bool(ax.xaxis.get_gridlines()[0].get_visible()
+                       if ax.xaxis.get_gridlines() else False)
 
         for i, (s, yc) in enumerate(
                 zip(self._series, self._y_cols)):
@@ -1612,24 +1612,31 @@ class EmbeddedChart(QWidget):
             artist = s.get("artist")
             if artist is None:
                 continue
-            if hasattr(artist, 'set_data'):
+            if hasattr(artist, 'set_data') and hasattr(artist, 'get_data'):
                 artist.set_data(x, y)
             elif hasattr(artist, 'set_offsets'):
                 artist.set_offsets(np.column_stack([x, y]))
+            else:
+                try:
+                    artist.remove()
+                except Exception:
+                    pass
+                new_artist = self._plot_one(
+                    ax, x, y, s["label"], s["plot_type"])
+                s["artist"] = new_artist
 
-        # Restore axis state (don't autoscale — keep user's view).
-        self._ax.set_title(title)
-        self._ax.set_xlabel(xlabel)
-        self._ax.set_ylabel(ylabel)
+        ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
         try:
-            self._ax.set_xscale(xscale)
-            self._ax.set_yscale(yscale)
+            ax.set_xscale(xscale)
+            ax.set_yscale(yscale)
         except Exception:
             pass
-        self._ax.set_xlim(xlim)
-        self._ax.set_ylim(ylim)
-        self._ax.grid(grid_on)
-        self._canvas.draw_idle()
+        ax.relim(visible_only=True)
+        ax.autoscale_view(True, True, True)
+        ax.grid(grid_on)
+        self._canvas.draw()
 
     def _replot_from_source(self):
         """Re-read source data after a range overlay drag/resize and
@@ -1637,6 +1644,8 @@ class EmbeddedChart(QWidget):
         if not self._source_sheet:
             return
         sheet = self._source_sheet
+        ax = self._ax
+
         for i, (s, yc) in enumerate(
                 zip(self._series, self._y_cols)):
             xc = s.get("x_col", self._x_col)
@@ -1655,19 +1664,34 @@ class EmbeddedChart(QWidget):
             x_data, y_data = x_data[:n], y_data[:n]
             mask = ~(np.isnan(x_data) | np.isnan(y_data))
             s["x"], s["y"] = x_data[mask], y_data[mask]
+
             artist = s.get("artist")
             if artist is None:
                 continue
-            if hasattr(artist, 'set_data'):
+
+            # For Line2D, set_data works; for bar / other types, remove
+            # the old artist and re-plot from scratch.
+            if hasattr(artist, 'set_data') and hasattr(artist, 'get_data'):
                 artist.set_data(s["x"], s["y"])
             elif hasattr(artist, 'set_offsets'):
                 artist.set_offsets(
                     np.column_stack([s["x"], s["y"]]))
-        self._ax.relim()
-        self._ax.autoscale_view()
+            else:
+                # Bar, stem, etc. — remove old artist and re-create.
+                try:
+                    artist.remove()
+                except Exception:
+                    pass
+                new_artist = self._plot_one(
+                    ax, s["x"], s["y"], s["label"], s["plot_type"])
+                s["artist"] = new_artist
+
+        # Force full data-limit recalculation so autoscale works.
+        ax.relim(visible_only=True)
+        ax.autoscale_view(True, True, True)
         if self._header_row:
             self._apply_header_labels()
-        self._canvas.draw_idle()
+        self._canvas.draw()
 
     # ── Show Data highlight ────────────────────────────────────────────
 
