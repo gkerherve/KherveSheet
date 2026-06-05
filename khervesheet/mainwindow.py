@@ -27,6 +27,7 @@ from .workbook import WorkbookWidget
 from .sheet import SheetWidget, col_index_to_letter
 from . import icons
 from .formulas import build_formulas_menu
+from .python_engine import is_python_source
 
 
 # References to extra windows opened via "New Window" so they are not
@@ -118,34 +119,24 @@ class MainWindow(QMainWindow):
         file_menu.addAction("&New", self._new_workbook, "Ctrl+N")
         file_menu.addAction("New &Window", self._new_window,
                             "Ctrl+Shift+N")
-        file_menu.addAction("&Open…", self._open_file, "Ctrl+O")
         file_menu.addSeparator()
-
-        imp = file_menu.addMenu("Import")
-        imp.addAction("Text/CSV…", self._import_text)
-        imp.addAction("Excel…", self._import_excel)
-
+        file_menu.addAction("&Open…", self._open_file, "Ctrl+O")
+        self._recent_menu = file_menu.addMenu("Recent Files")
+        self._rebuild_recent_menu()
+        file_menu.addAction("Open File Location",
+                            self._open_file_location)
         file_menu.addSeparator()
         file_menu.addAction("&Save", self._save_file, "Ctrl+S")
         file_menu.addAction("Save &As…", self._save_file_as, "Ctrl+Shift+S")
         file_menu.addSeparator()
-
+        imp = file_menu.addMenu("Import")
+        imp.addAction("Text/CSV…", self._import_text)
+        imp.addAction("Excel…", self._import_excel)
         exp = file_menu.addMenu("Export")
         exp.addAction("CSV…", self._export_csv)
         exp.addAction("Excel…", self._export_excel)
-
         file_menu.addSeparator()
-        # One entry for everything print-related: preview, page setup,
-        # orientation, paper, margins, scaling, print area, print and PDF.
         file_menu.addAction("&Print…", self._open_print_dialog, "Ctrl+P")
-
-        file_menu.addSeparator()
-        file_menu.addAction("Open File Location",
-                            self._open_file_location)
-        file_menu.addSeparator()
-        self._recent_menu = file_menu.addMenu("Recent Files")
-        self._rebuild_recent_menu()
-
         file_menu.addSeparator()
         vc_menu = file_menu.addMenu("Version Control")
         vc_menu.setIcon(icons.themed_icon("mdi.source-branch"))
@@ -155,7 +146,6 @@ class MainWindow(QMainWindow):
         vc_menu.addAction("Pull", self._vc_pull)
         vc_menu.addSeparator()
         vc_menu.addAction("Configure Remote…", self._vc_configure_remote)
-
         file_menu.addSeparator()
         file_menu.addAction("E&xit", self.close, "Ctrl+Q")
 
@@ -271,6 +261,10 @@ class MainWindow(QMainWindow):
             for fn in funcs:
                 cat_sub.addAction(
                     fn, lambda f=fn: self._insert_function(f))
+
+        # Python cell.
+        insert_menu.addAction("Python Cell", self._insert_python_cell)
+        insert_menu.addSeparator()
 
         # Link.
         insert_menu.addAction(
@@ -1738,6 +1732,30 @@ class MainWindow(QMainWindow):
         shutil.copy2(str(p), str(repo_dir / p.name))
         git_backend.commit_all(repo_dir, file_stem=p.stem)
 
+    def _confirm_python_trust(self, path: str) -> bool:
+        """Ask once per session whether to run a file's Python (=PY) cells.
+
+        Opening a workbook authored elsewhere must not silently execute the
+        code it carries.  The user's choice is remembered per file path for
+        the rest of the session.
+        """
+        trusted = getattr(self, "_trusted_py_paths", None)
+        if trusted is None:
+            trusted = self._trusted_py_paths = set()
+        if path in trusted:
+            return True
+        from PyQt5.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self, "Python in workbook",
+            "This workbook contains Python (=PY) cells.\n\n"
+            "Python cells run real code on your computer.  Only run them "
+            "if you trust the source of this file.\n\nRun the Python cells?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.Yes:
+            trusted.add(path)
+            return True
+        return False
+
     def _load_ksheet(self, path: str):
         try:
             import h5py
@@ -1798,6 +1816,7 @@ class MainWindow(QMainWindow):
                     # record formulas for a second evaluation pass.
                     cells = sg["cells"][:]
                     pending_formulas = []
+                    pending_python = []
                     idx = 0
                     for r in range(n_rows):
                         self._progress.setValue(
@@ -1809,7 +1828,14 @@ class MainWindow(QMainWindow):
                             if isinstance(val, bytes):
                                 val = val.decode('utf-8')
                             if val:
-                                if val.startswith("="):
+                                if is_python_source(val):
+                                    # =PY cell: store source, defer to the
+                                    # trust-gated row-major pass below.
+                                    sheet._cell_formulas[(r, c)] = val
+                                    sheet.table.setItem(
+                                        r, c, QTableWidgetItem(""))
+                                    pending_python.append((r, c, val))
+                                elif val.startswith("="):
                                     # Store formula; set placeholder.
                                     sheet._cell_formulas[(r, c)] = val
                                     sheet.table.setItem(
@@ -1835,6 +1861,26 @@ class MainWindow(QMainWindow):
                             if it:
                                 it.setText(str(result))
                             sheet._shadow[(r, c)] = str(result)
+
+                    # Python (=PY) cells: run in row-major order (so earlier
+                    # defs precede later uses), but only if the user trusts
+                    # this file — opening a workbook must not silently run
+                    # code it carries.
+                    if pending_python and self._confirm_python_trust(path):
+                        for r, c, src in pending_python:
+                            sheet._register_py_deps(r, c, src)
+                            display = sheet._evaluate_python(src, r, c)
+                            it = sheet.table.item(r, c)
+                            if it:
+                                it.setText(display)
+                            sheet._shadow[(r, c)] = display
+                    elif pending_python:
+                        # Not trusted: show the source, do not execute.
+                        for r, c, src in pending_python:
+                            it = sheet.table.item(r, c)
+                            if it:
+                                it.setText("⟨Python — not run⟩")
+                            sheet._shadow[(r, c)] = "⟨Python — not run⟩"
                     # NB: keep table signals blocked through the
                     # designation / insert-ops / cell-format restore
                     # below.  Those steps mutate items (setBackground,
@@ -3974,6 +4020,17 @@ class MainWindow(QMainWindow):
         bar.setFocus()
         # Place cursor between the parentheses.
         bar.setCursorPosition(len(bar.text()) - 1)
+
+    def _insert_python_cell(self):
+        """Switch the active sheet's formula bar into Python (=PY) mode."""
+        s = self._active_sheet()
+        if not s:
+            return
+        bar = s._formula_bar
+        bar.set_python_mode(True)
+        bar.setText("=PY\n")
+        bar.setFocus()
+        bar.setCursorPosition(len(bar.text()))
 
     def _open_insert_function_dialog(self):
         """Open the Insert Function dialog (Shift+F3)."""
