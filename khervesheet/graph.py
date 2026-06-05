@@ -261,6 +261,13 @@ class _RangeOverlay(QWidget):
                 s = chart._series[idx]
                 s["y_row_start"] = self._r0
                 s["y_row_end"] = self._r1
+                # When there is no explicit X column the X row range
+                # must stay in sync with the Y row range so the chart
+                # reads the correct slice of data.
+                xc = s.get("x_col", chart._x_col)
+                if xc is None:
+                    s["x_row_start"] = self._r0
+                    s["x_row_end"] = self._r1
             if idx < len(chart._y_cols):
                 chart._y_cols[idx] = self._c0
 
@@ -3227,7 +3234,10 @@ class PlotDetailsDialog(QDialog):
                 self.x_range_edit.setText(
                     f"{letter}{x_r1 + 1}:{letter}{x_r2 + 1}")
             else:
-                self.x_range_edit.setText(f"1:{n_pts}  (row index)")
+                # No explicit X column — show the row range that
+                # matches the Y range (1-based display).
+                self.x_range_edit.setText(
+                    f"{x_r1 + 1}:{x_r2 + 1}  (row index)")
             if row < len(y_cols):
                 y_r1 = s.get("y_row_start", 0)
                 y_r2 = s.get("y_row_end", n_pts - 1) if n_pts else 0
