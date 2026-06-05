@@ -193,33 +193,25 @@ class _RangeOverlay(QWidget):
         mode = self._drag_mode
 
         if mode == "move":
-            # Translate: compute offset from origin press cell.
+            # Translate rows only — column stays locked.
             origin_local = vp.mapFromGlobal(self._drag_origin)
             orig_row = table.rowAt(origin_local.y())
-            orig_col = table.columnAt(origin_local.x())
-            if orig_row < 0 or orig_col < 0:
+            if orig_row < 0:
                 return
             dr = row - orig_row
-            dc = col - orig_col
             nr0 = max(0, r0 + dr)
-            nc0 = max(0, c0 + dc)
             nr1 = nr0 + (r1 - r0)
-            nc1 = nc0 + (c1 - c0)
-            # Clamp to table bounds.
             if nr1 >= table.rowCount():
                 nr1 = table.rowCount() - 1
                 nr0 = nr1 - (r1 - r0)
-            if nc1 >= table.columnCount():
-                nc1 = table.columnCount() - 1
-                nc0 = nc1 - (c1 - c0)
-            self._r0, self._c0 = nr0, nc0
-            self._r1, self._c1 = nr1, nc1
+            self._r0, self._r1 = nr0, nr1
+            # Columns unchanged.
         elif mode == "tr":
+            # Resize top edge — rows only, column locked.
             self._r0 = min(row, self._r1)
-            self._c1 = max(col, self._c0)
         elif mode == "br":
+            # Resize bottom edge — rows only, column locked.
             self._r1 = max(row, self._r0)
-            self._c1 = max(col, self._c0)
 
         self._reposition(table)
 
@@ -261,13 +253,10 @@ class _RangeOverlay(QWidget):
                 s = chart._series[idx]
                 s["y_row_start"] = self._r0
                 s["y_row_end"] = self._r1
-                # When there is no explicit X column the X row range
-                # must stay in sync with the Y row range so the chart
-                # reads the correct slice of data.
-                xc = s.get("x_col", chart._x_col)
-                if xc is None:
-                    s["x_row_start"] = self._r0
-                    s["x_row_end"] = self._r1
+                # X row range always follows Y so both axes cover
+                # the same rows (whether X is a column or row-index).
+                s["x_row_start"] = self._r0
+                s["x_row_end"] = self._r1
             if idx < len(chart._y_cols):
                 chart._y_cols[idx] = self._c0
 
