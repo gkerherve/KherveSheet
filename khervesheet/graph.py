@@ -494,24 +494,47 @@ class EmbeddedChart(QWidget):
     def _update_artist(self, s, x, y):
         """Update the artist for series *s* with new data.
 
-        Line2D artists use set_data (fast, relim-compatible).  All other
-        artist types (scatter PathCollection, bar containers, etc.) are
-        removed and re-created because set_offsets / bar patches do not
-        update the axes data limits that relim() reads.
+        Line2D uses set_data.  Scatter PathCollection uses set_offsets
+        with a manual data-limit update so relim() sees the new extent.
+        Everything else (bar, stem, …) is removed and re-created with
+        visual properties preserved.
         """
         from matplotlib.lines import Line2D
+        from matplotlib.collections import PathCollection
         artist = s.get("artist")
         if artist is None:
             return
         if isinstance(artist, Line2D):
             artist.set_data(x, y)
+        elif isinstance(artist, PathCollection):
+            artist.set_offsets(np.column_stack([x, y]))
+            # Manually update axes data limits so relim() works.
+            if len(x) and len(y):
+                ax = self._ax
+                ax.update_datalim(
+                    np.column_stack([x, y]))
         else:
+            # Bar, stem, etc. — snapshot visual props, remove, re-plot.
+            old_color = None
+            try:
+                if hasattr(artist, 'get_facecolor'):
+                    fc = artist.get_facecolor()
+                    if hasattr(fc, '__len__') and len(fc) > 0:
+                        old_color = fc[0]
+            except Exception:
+                pass
             try:
                 artist.remove()
             except Exception:
                 pass
             new = self._plot_one(self._ax, x, y, s["label"],
                                  s["plot_type"])
+            if old_color is not None and new is not None:
+                try:
+                    if hasattr(new, 'set_facecolor'):
+                        new.set_facecolor(old_color)
+                except Exception:
+                    pass
             s["artist"] = new
 
     @staticmethod
@@ -1529,7 +1552,12 @@ class EmbeddedChart(QWidget):
             y = y_data[mask]
             s["x"], s["y"] = x, y
             self._update_artist(s, x, y)
-        self._ax.relim()
+        self._ax.dataLim.set_points(np.array(
+            [[np.inf, np.inf], [-np.inf, -np.inf]]))
+        for s2 in self._series:
+            sx, sy = s2.get("x", []), s2.get("y", [])
+            if len(sx) and len(sy):
+                self._ax.update_datalim(np.column_stack([sx, sy]))
         self._ax.autoscale_view()
         if self._header_row:
             self._apply_header_labels()
@@ -1639,14 +1667,20 @@ class EmbeddedChart(QWidget):
             ax.set_yscale(yscale)
         except Exception:
             pass
-        ax.relim(visible_only=True)
+        # Reset data limits from scratch for all artist types.
+        ax.dataLim.set_points(np.array(
+            [[np.inf, np.inf], [-np.inf, -np.inf]]))
+        for s in self._series:
+            sx, sy = s.get("x", []), s.get("y", [])
+            if len(sx) and len(sy):
+                ax.update_datalim(np.column_stack([sx, sy]))
         ax.autoscale_view(True, True, True)
         ax.grid(grid_on)
         self._canvas.draw()
 
     def _replot_from_source(self):
         """Re-read source data after a range overlay drag/resize and
-        autoscale to fit the new data."""
+        autoscale to fit the new data.  Works for all plot types."""
         if not self._source_sheet:
             return
         sheet = self._source_sheet
@@ -1672,8 +1706,13 @@ class EmbeddedChart(QWidget):
             s["x"], s["y"] = x_data[mask], y_data[mask]
             self._update_artist(s, s["x"], s["y"])
 
-        # Force full data-limit recalculation so autoscale works.
-        ax.relim(visible_only=True)
+        # Reset data limits from scratch so autoscale sees all artists.
+        ax.dataLim.set_points(np.array(
+            [[np.inf, np.inf], [-np.inf, -np.inf]]))
+        for s in self._series:
+            x, y = s.get("x", []), s.get("y", [])
+            if len(x) and len(y):
+                ax.update_datalim(np.column_stack([x, y]))
         ax.autoscale_view(True, True, True)
         if self._header_row:
             self._apply_header_labels()
