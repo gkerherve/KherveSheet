@@ -4225,15 +4225,20 @@ class SheetWidget(QWidget):
         c = self.table.currentColumn()
 
         # Determine anchor (fixed corner) and cursor (moving corner).
-        if self._sel_cursor is not None:
-            cur_r, cur_c = self._sel_cursor
-        else:
-            cur_r, cur_c = r, c
+        # If not already tracked (e.g. mouse selection), infer from the
+        # current selection: anchor = top-left, cursor = bottom-right.
+        if self._sel_anchor is None or self._sel_cursor is None:
+            sel = self.table.selectedRanges()
+            if sel:
+                s = sel[0]
+                self._sel_anchor = (s.topRow(), s.leftColumn())
+                self._sel_cursor = (s.bottomRow(), s.rightColumn())
+            else:
+                self._sel_anchor = (r, c)
+                self._sel_cursor = (r, c)
 
-        if self._sel_anchor is not None:
-            anc_r, anc_c = self._sel_anchor
-        else:
-            anc_r, anc_c = r, c
+        anc_r, anc_c = self._sel_anchor
+        cur_r, cur_c = self._sel_cursor
 
         # Move cursor by one cell.
         new_cur_r = min(max(cur_r + dr, 0), max_r)
