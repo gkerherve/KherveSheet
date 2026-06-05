@@ -4186,10 +4186,12 @@ class SheetWidget(QWidget):
             bot = max(anchor_r, dest_r)
             left = min(anchor_c, dest_c)
             right = max(anchor_c, dest_c)
+            self.table.clearSelection()
             self.table.setRangeSelected(
                 QTableWidgetSelectionRange(top, left, bot, right), True)
             self.table.setCurrentCell(dest_r, dest_c)
         else:
+            self.table.clearSelection()
             self.table.setCurrentCell(dest_r, dest_c)
 
     def _fill_handle_rect(self):
