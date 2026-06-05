@@ -4175,18 +4175,19 @@ class SheetWidget(QWidget):
                 dest_c = max(0, min(nc - dc, max_c))
 
         if extend_selection:
-            # Extend selection from the anchor (original cell) to dest.
-            anchor_r, anchor_c = r, c
+            # Extend the existing selection bounding box toward dest.
             sel = self.table.selectedRanges()
             if sel:
-                # Anchor is the corner opposite to the direction.
                 s = sel[0]
-                anchor_r = s.topRow() if dr >= 0 else s.bottomRow()
-                anchor_c = s.leftColumn() if dc >= 0 else s.rightColumn()
-            top = min(anchor_r, dest_r)
-            bot = max(anchor_r, dest_r)
-            left = min(anchor_c, dest_c)
-            right = max(anchor_c, dest_c)
+                top = min(s.topRow(), dest_r)
+                bot = max(s.bottomRow(), dest_r)
+                left = min(s.leftColumn(), dest_c)
+                right = max(s.rightColumn(), dest_c)
+            else:
+                top = min(r, dest_r)
+                bot = max(r, dest_r)
+                left = min(c, dest_c)
+                right = max(c, dest_c)
             self.table.clearSelection()
             self.table.setRangeSelected(
                 QTableWidgetSelectionRange(top, left, bot, right), True)
