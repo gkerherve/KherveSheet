@@ -646,9 +646,9 @@ def main():
         pass
     from PyQt5.QtCore import QSettings
     settings = QSettings("KherveSheet", "KherveSheet")
-    saved_theme = settings.value("theme", "Light")
+    saved_theme = settings.value("theme", "Emerald")
     if saved_theme not in THEMES:
-        saved_theme = "Light"
+        saved_theme = "Emerald"
     apply_theme(app, saved_theme)
 
     icon = _make_app_icon()
