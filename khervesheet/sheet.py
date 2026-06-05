@@ -4964,12 +4964,23 @@ class SheetWidget(QWidget):
             col = self.table.columnAt(event.pos().x())
             s = self._fill_anchor_range
             if s is not None:
-                # Determine direction from dominant axis on first move
+                # Determine direction from dominant axis on first move.
+                # Positive dr/dc = down/right, negative = up/left.
                 dr = (row - s.bottomRow()) if row >= 0 else 0
                 dc = (col - s.rightColumn()) if col >= 0 else 0
-                if self._fill_direction is None and (dr or dc):
+                if dr >= 0 and row >= 0:
+                    dr_top = 0
+                else:
+                    dr_top = (row - s.topRow()) if row >= 0 else 0
+                if dc >= 0 and col >= 0:
+                    dc_left = 0
+                else:
+                    dc_left = (col - s.leftColumn()) if col >= 0 else 0
+                eff_dr = dr if dr != 0 else dr_top
+                eff_dc = dc if dc != 0 else dc_left
+                if self._fill_direction is None and (eff_dr or eff_dc):
                     self._fill_direction = (
-                        "right" if abs(dc) > abs(dr) else "down")
+                        "right" if abs(eff_dc) > abs(eff_dr) else "down")
                 if self._fill_direction == "right":
                     if col >= 0:
                         self._fill_end_col = col
@@ -4994,23 +5005,29 @@ class SheetWidget(QWidget):
             return
         self.table.clearSelection()
         if self._fill_direction == "right":
+            left = min(s.leftColumn(), self._fill_end_col)
+            right = max(s.rightColumn(), self._fill_end_col)
             self.table.setRangeSelected(
                 QTableWidgetSelectionRange(
-                    s.topRow(), s.leftColumn(),
-                    s.bottomRow(), self._fill_end_col),
-                True)
+                    s.topRow(), left, s.bottomRow(), right), True)
         else:
+            top = min(s.topRow(), self._fill_end_row)
+            bot = max(s.bottomRow(), self._fill_end_row)
             self.table.setRangeSelected(
                 QTableWidgetSelectionRange(
-                    s.topRow(), s.leftColumn(),
-                    self._fill_end_row, s.rightColumn()),
-                True)
+                    top, s.leftColumn(), bot, s.rightColumn()), True)
 
     def _apply_fill(self):
         if self._fill_direction == "right":
-            self._apply_fill_right()
+            if self._fill_end_col > self._fill_anchor_range.rightColumn():
+                self._apply_fill_right()
+            elif self._fill_end_col < self._fill_anchor_range.leftColumn():
+                self._apply_fill_left()
             return
-        self._apply_fill_down()
+        if self._fill_end_row > self._fill_anchor_range.bottomRow():
+            self._apply_fill_down()
+        elif self._fill_end_row < self._fill_anchor_range.topRow():
+            self._apply_fill_up()
 
     def _apply_fill_down(self):
         s = self._fill_anchor_range
@@ -5179,6 +5196,164 @@ class SheetWidget(QWidget):
         self._refresh_cross_sheet()
         self._fill_anchor_range = None
 
+    def _apply_fill_up(self):
+        """Fill upward — mirrors _apply_fill_down."""
+        s = self._fill_anchor_range
+        if s is None:
+            return
+        src_top = s.topRow()
+        src_bot = s.bottomRow()
+        fill_end = self._fill_end_row
+        if fill_end >= src_top:
+            return
+
+        src_len = src_bot - src_top + 1
+        changes = []
+        self.table.blockSignals(True)
+        try:
+            for c in range(s.leftColumn(), s.rightColumn() + 1):
+                formulas = []
+                vals = []
+                for r in range(src_top, src_bot + 1):
+                    it = self.table.item(r, c)
+                    vals.append(it.text() if it else "")
+                    formulas.append(self._cell_formulas.get((r, c)))
+
+                has_formulas = any(f is not None for f in formulas)
+
+                if has_formulas:
+                    for r in range(src_top - 1, fill_end - 1, -1):
+                        src_idx = (src_top - r) % src_len
+                        src_r = src_top + (src_len - 1 - src_idx) % src_len
+                        f = formulas[(src_len - 1 - src_idx) % src_len]
+                        if f:
+                            d_row = r - src_r
+                            shifted = shift_formula(f, d_row, 0)
+                            self._cell_formulas[(r, c)] = shifted
+                            result = self._evaluate_formula(
+                                shifted, r, c)
+                            text = str(result)
+                        else:
+                            text = vals[(src_len - 1 - src_idx) % src_len]
+                            self._cell_formulas.pop((r, c), None)
+
+                        self._shadow[(r, c)] = text
+                        text = self._apply_cell_number_format(text, r, c)
+                        it = self.table.item(r, c)
+                        old = it.text() if it else ""
+                        if it is None:
+                            it = QTableWidgetItem(text)
+                            self.table.setItem(r, c, it)
+                        else:
+                            it.setText(text)
+                        if old != text:
+                            changes.append((r, c, old, text))
+                else:
+                    pattern = self._detect_pattern(vals)
+                    for r in range(src_top - 1, fill_end - 1, -1):
+                        idx = -(r - src_top)
+                        text = self._pattern_value_reverse(
+                            pattern, idx, vals)
+                        self._shadow[(r, c)] = text
+                        text = self._apply_cell_number_format(text, r, c)
+                        it = self.table.item(r, c)
+                        old = it.text() if it else ""
+                        if it is None:
+                            it = QTableWidgetItem(text)
+                            self.table.setItem(r, c, it)
+                        else:
+                            it.setText(text)
+                        if old != text:
+                            changes.append((r, c, old, text))
+        finally:
+            self.table.blockSignals(False)
+        if changes and self._undo_stack is not None:
+            self._undo_stack.push(
+                BulkCellEditCmd(self, changes, "Drag fill up"))
+        for r, c, _old, _new in changes:
+            self._recalc_dependents(r, c)
+        self._refresh_cross_sheet()
+        self._fill_anchor_range = None
+
+    def _apply_fill_left(self):
+        """Fill leftward — mirrors _apply_fill_right."""
+        s = self._fill_anchor_range
+        if s is None:
+            return
+        src_left = s.leftColumn()
+        src_right = s.rightColumn()
+        fill_end = self._fill_end_col
+        if fill_end >= src_left:
+            return
+
+        src_len = src_right - src_left + 1
+        changes = []
+        self.table.blockSignals(True)
+        try:
+            for r in range(s.topRow(), s.bottomRow() + 1):
+                formulas = []
+                vals = []
+                for c in range(src_left, src_right + 1):
+                    it = self.table.item(r, c)
+                    vals.append(it.text() if it else "")
+                    formulas.append(self._cell_formulas.get((r, c)))
+
+                has_formulas = any(f is not None for f in formulas)
+
+                if has_formulas:
+                    for c in range(src_left - 1, fill_end - 1, -1):
+                        src_idx = (src_left - c) % src_len
+                        src_c = src_left + (src_len - 1 - src_idx) % src_len
+                        f = formulas[(src_len - 1 - src_idx) % src_len]
+                        if f:
+                            d_col = c - src_c
+                            shifted = shift_formula(f, 0, d_col)
+                            self._cell_formulas[(r, c)] = shifted
+                            result = self._evaluate_formula(
+                                shifted, r, c)
+                            text = str(result)
+                        else:
+                            text = vals[(src_len - 1 - src_idx) % src_len]
+                            self._cell_formulas.pop((r, c), None)
+
+                        self._shadow[(r, c)] = text
+                        text = self._apply_cell_number_format(text, r, c)
+                        it = self.table.item(r, c)
+                        old = it.text() if it else ""
+                        if it is None:
+                            it = QTableWidgetItem(text)
+                            self.table.setItem(r, c, it)
+                        else:
+                            it.setText(text)
+                        if old != text:
+                            changes.append((r, c, old, text))
+                else:
+                    pattern = self._detect_pattern(vals)
+                    for c in range(src_left - 1, fill_end - 1, -1):
+                        idx = -(c - src_left)
+                        text = self._pattern_value_reverse(
+                            pattern, idx, vals)
+                        self._shadow[(r, c)] = text
+                        text = self._apply_cell_number_format(text, r, c)
+                        it = self.table.item(r, c)
+                        old = it.text() if it else ""
+                        if it is None:
+                            it = QTableWidgetItem(text)
+                            self.table.setItem(r, c, it)
+                        else:
+                            it.setText(text)
+                        if old != text:
+                            changes.append((r, c, old, text))
+        finally:
+            self.table.blockSignals(False)
+        if changes and self._undo_stack is not None:
+            self._undo_stack.push(
+                BulkCellEditCmd(self, changes, "Drag fill left"))
+        for r, c, _old, _new in changes:
+            self._recalc_dependents(r, c)
+        self._refresh_cross_sheet()
+        self._fill_anchor_range = None
+
     def _auto_fill_down(self):
         """Double-click fill handle: auto-fill down to match the extent
         of the adjacent column's data (Excel behaviour)."""
@@ -5250,3 +5425,18 @@ class SheetWidget(QWidget):
             return f"{pattern['values'][idx % src_n]:.2f}"
         else:
             return pattern["values"][idx % src_n]
+
+    def _pattern_value_reverse(self, pattern, idx, source_vals):
+        """Like _pattern_value but for filling in the reverse direction.
+        idx=1 is one step before the source start, idx=2 is two steps, etc."""
+        pt = pattern["type"]
+        src_n = len(source_vals)
+        if pt == "linear":
+            val = pattern["start"] - pattern["step"] * idx
+            return f"{val:.2f}"
+        elif pt == "constant":
+            return pattern["value"]
+        elif pt == "numeric_repeat":
+            return f"{pattern['values'][(-idx) % src_n]:.2f}"
+        else:
+            return pattern["values"][(-idx) % src_n]
