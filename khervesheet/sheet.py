@@ -4103,6 +4103,95 @@ class SheetWidget(QWidget):
     # ── Drag-fill (Excel-style auto-fill) ────────────────────────────
     _HANDLE_PX = 6
 
+    # ── Ctrl+Arrow navigation (Excel-style jump to data boundary) ──
+
+    def _cell_has_data(self, r, c):
+        """Return True if cell (r, c) contains non-empty text."""
+        if r < 0 or c < 0:
+            return False
+        it = self.table.item(r, c)
+        return bool(it and it.text())
+
+    def _ctrl_arrow_jump(self, key, extend_selection):
+        """Jump to the next data boundary in the arrow direction.
+
+        If the current cell is non-empty, jump to the last non-empty cell
+        in that direction.  If the current cell is empty, jump to the
+        first non-empty cell.  If all cells in that direction are empty,
+        jump to the edge of the sheet.
+
+        *extend_selection*: if True, extend the selection (Shift held).
+        """
+        r = self.table.currentRow()
+        c = self.table.currentColumn()
+        if r < 0 or c < 0:
+            return
+
+        dr, dc = {
+            Qt.Key_Down: (1, 0), Qt.Key_Up: (-1, 0),
+            Qt.Key_Right: (0, 1), Qt.Key_Left: (0, -1),
+        }[key]
+
+        max_r = self.table.rowCount() - 1
+        max_c = self.table.columnCount() - 1
+
+        nr, nc = r + dr, c + dc
+        if self._cell_has_data(r, c):
+            # Current cell is filled: walk until we hit an empty cell
+            # or the edge, then stop at the last filled cell.
+            last_r, last_c = r, c
+            while 0 <= nr <= max_r and 0 <= nc <= max_c:
+                if not self._cell_has_data(nr, nc):
+                    break
+                last_r, last_c = nr, nc
+                nr += dr
+                nc += dc
+            # If we didn't move (next cell is empty), skip the gap
+            # and land on the next filled cell or the edge.
+            if (last_r, last_c) == (r, c):
+                while 0 <= nr <= max_r and 0 <= nc <= max_c:
+                    if self._cell_has_data(nr, nc):
+                        last_r, last_c = nr, nc
+                        break
+                    nr += dr
+                    nc += dc
+                else:
+                    # Reached the edge without finding data.
+                    last_r = max(0, min(nr - dr, max_r))
+                    last_c = max(0, min(nc - dc, max_c))
+            dest_r, dest_c = last_r, last_c
+        else:
+            # Current cell is empty: jump to the first filled cell.
+            dest_r, dest_c = r, c
+            while 0 <= nr <= max_r and 0 <= nc <= max_c:
+                if self._cell_has_data(nr, nc):
+                    dest_r, dest_c = nr, nc
+                    break
+                nr += dr
+                nc += dc
+            else:
+                # No data found — jump to edge.
+                dest_r = max(0, min(nr - dr, max_r))
+                dest_c = max(0, min(nc - dc, max_c))
+
+        if extend_selection:
+            # Extend selection from current cell to destination.
+            sel = self.table.selectedRanges()
+            if sel:
+                anchor_r = sel[0].topRow() if dr >= 0 else sel[0].bottomRow()
+                anchor_c = sel[0].leftColumn() if dc >= 0 else sel[0].rightColumn()
+            else:
+                anchor_r, anchor_c = r, c
+            top = min(anchor_r, dest_r)
+            bot = max(anchor_r, dest_r)
+            left = min(anchor_c, dest_c)
+            right = max(anchor_c, dest_c)
+            self.table.setRangeSelected(
+                QTableWidgetSelectionRange(top, left, bot, right), True)
+            self.table.setCurrentCell(dest_r, dest_c)
+        else:
+            self.table.setCurrentCell(dest_r, dest_c)
+
     def _fill_handle_rect(self):
         sel = self.table.selectedRanges()
         if not sel:
@@ -4514,6 +4603,15 @@ class SheetWidget(QWidget):
                     if wb is not None:
                         wb.set_active_formula(self)
                     return True          # eat the key
+
+            # ── Ctrl+Arrow / Ctrl+Shift+Arrow: jump to data boundary ──
+            if (key in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right)
+                    and (event.modifiers() & Qt.ControlModifier)
+                    and editor is None
+                    and self._formula_entry_cell is None):
+                extend = bool(event.modifiers() & Qt.ShiftModifier)
+                self._ctrl_arrow_jump(key, extend)
+                return True
 
             if key == Qt.Key_Escape:
                 if editor:
