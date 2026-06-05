@@ -514,10 +514,15 @@ class EmbeddedChart(QWidget):
                 ax.update_datalim(
                     np.column_stack([x, y]))
         else:
-            # Bar, stem, etc. — snapshot visual props, remove, re-plot.
+            # Bar, stem, etc. — snapshot face colour, remove, re-plot.
+            from matplotlib.container import BarContainer
             old_color = None
             try:
-                if hasattr(artist, 'get_facecolor'):
+                if isinstance(artist, BarContainer):
+                    # BarContainer stores colour on individual patches.
+                    if artist.patches:
+                        old_color = artist.patches[0].get_facecolor()
+                elif hasattr(artist, 'get_facecolor'):
                     fc = artist.get_facecolor()
                     if hasattr(fc, '__len__') and len(fc) > 0:
                         old_color = fc[0]
@@ -531,7 +536,10 @@ class EmbeddedChart(QWidget):
                                  s["plot_type"])
             if old_color is not None and new is not None:
                 try:
-                    if hasattr(new, 'set_facecolor'):
+                    if isinstance(new, BarContainer):
+                        for patch in new.patches:
+                            patch.set_facecolor(old_color)
+                    elif hasattr(new, 'set_facecolor'):
                         new.set_facecolor(old_color)
                 except Exception:
                     pass
