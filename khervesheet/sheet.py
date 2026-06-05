@@ -4194,6 +4194,83 @@ class SheetWidget(QWidget):
             self.table.clearSelection()
             self.table.setCurrentCell(dest_r, dest_c)
 
+    def _shift_arrow_extend(self, key):
+        """Extend (or contract) the selection by one cell in the arrow
+        direction, keeping the anchor corner fixed — like Excel's
+        Shift+Arrow."""
+        dr, dc = {
+            Qt.Key_Down: (1, 0), Qt.Key_Up: (-1, 0),
+            Qt.Key_Right: (0, 1), Qt.Key_Left: (0, -1),
+        }[key]
+        max_r = self.table.rowCount() - 1
+        max_c = self.table.columnCount() - 1
+
+        sel = self.table.selectedRanges()
+        r = self.table.currentRow()
+        c = self.table.currentColumn()
+
+        if sel:
+            s = sel[0]
+            # The anchor is the corner opposite to the current cell.
+            # Determine which edge the current cell sits on and move it.
+            if dr != 0:
+                # Vertical: move the row edge closest to current cell.
+                if abs(r - s.bottomRow()) <= abs(r - s.topRow()):
+                    # Current cell is near the bottom — move bottom edge.
+                    new_bot = min(max(s.bottomRow() + dr, 0), max_r)
+                    new_top = s.topRow()
+                    if new_bot < new_top:
+                        new_top, new_bot = new_bot, new_top
+                    dest_r = s.bottomRow() + dr
+                else:
+                    # Current cell is near the top — move top edge.
+                    new_top = min(max(s.topRow() + dr, 0), max_r)
+                    new_bot = s.bottomRow()
+                    if new_top > new_bot:
+                        new_top, new_bot = new_bot, new_top
+                    dest_r = s.topRow() + dr
+                dest_r = min(max(dest_r, 0), max_r)
+                new_left = s.leftColumn()
+                new_right = s.rightColumn()
+            else:
+                # Horizontal: move the column edge closest to current cell.
+                if abs(c - s.rightColumn()) <= abs(c - s.leftColumn()):
+                    new_right = min(max(s.rightColumn() + dc, 0), max_c)
+                    new_left = s.leftColumn()
+                    if new_right < new_left:
+                        new_left, new_right = new_right, new_left
+                    dest_r = r
+                else:
+                    new_left = min(max(s.leftColumn() + dc, 0), max_c)
+                    new_right = s.rightColumn()
+                    if new_left > new_right:
+                        new_left, new_right = new_right, new_left
+                    dest_r = r
+                new_top = s.topRow()
+                new_bot = s.bottomRow()
+
+            self.table.clearSelection()
+            self.table.setRangeSelected(
+                QTableWidgetSelectionRange(
+                    new_top, new_left, new_bot, new_right), True)
+            idx = self.table.model().index(
+                dest_r if dr != 0 else r,
+                min(max(c + dc, 0), max_c) if dc != 0 else c)
+            self.table.scrollTo(idx)
+        else:
+            # No selection yet — start one from current cell.
+            dest_r = min(max(r + dr, 0), max_r)
+            dest_c = min(max(c + dc, 0), max_c)
+            top = min(r, dest_r)
+            bot = max(r, dest_r)
+            left = min(c, dest_c)
+            right = max(c, dest_c)
+            self.table.clearSelection()
+            self.table.setRangeSelected(
+                QTableWidgetSelectionRange(top, left, bot, right), True)
+            idx = self.table.model().index(dest_r, dest_c)
+            self.table.scrollTo(idx)
+
     def _fill_handle_rect(self):
         sel = self.table.selectedRanges()
         if not sel:
@@ -4613,6 +4690,15 @@ class SheetWidget(QWidget):
                     and self._formula_entry_cell is None):
                 extend = bool(event.modifiers() & Qt.ShiftModifier)
                 self._ctrl_arrow_jump(key, extend)
+                return True
+
+            # ── Shift+Arrow: extend selection by one cell ──
+            if (key in (Qt.Key_Up, Qt.Key_Down, Qt.Key_Left, Qt.Key_Right)
+                    and (event.modifiers() & Qt.ShiftModifier)
+                    and not (event.modifiers() & Qt.ControlModifier)
+                    and editor is None
+                    and self._formula_entry_cell is None):
+                self._shift_arrow_extend(key)
                 return True
 
             if key == Qt.Key_Escape:
