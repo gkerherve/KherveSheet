@@ -4147,7 +4147,8 @@ class SheetWidget(QWidget):
                 nr += dr
                 nc += dc
             # If we didn't move (next cell is empty), skip the gap
-            # and land on the next filled cell or the edge.
+            # and land on the next filled cell.  If no filled cell
+            # exists in that direction, stay put.
             if (last_r, last_c) == (r, c):
                 while 0 <= nr <= max_r and 0 <= nc <= max_c:
                     if self._cell_has_data(nr, nc):
@@ -4155,13 +4156,11 @@ class SheetWidget(QWidget):
                         break
                     nr += dr
                     nc += dc
-                else:
-                    # Reached the edge without finding data.
-                    last_r = max(0, min(nr - dr, max_r))
-                    last_c = max(0, min(nc - dc, max_c))
+                # else: no data found — stay on current cell
             dest_r, dest_c = last_r, last_c
         else:
             # Current cell is empty: jump to the first filled cell.
+            # If none exists in that direction, stay put.
             dest_r, dest_c = r, c
             while 0 <= nr <= max_r and 0 <= nc <= max_c:
                 if self._cell_has_data(nr, nc):
@@ -4169,10 +4168,7 @@ class SheetWidget(QWidget):
                     break
                 nr += dr
                 nc += dc
-            else:
-                # No data found — jump to edge.
-                dest_r = max(0, min(nr - dr, max_r))
-                dest_c = max(0, min(nc - dc, max_c))
+            # else: no data found — stay on current cell
 
         if extend_selection:
             # Extend the existing selection bounding box toward dest.
