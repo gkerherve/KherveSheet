@@ -91,35 +91,48 @@ class _RangeOverlay(QWidget):
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, False)
+        hp = self._HP
         w, h = self.width(), self.height()
-        # Semi-transparent fill
+        # The widget is padded by hp on top and right so handles fit.
+        # The cell-aligned border rectangle sits at (0, hp) with size
+        # (w - hp, h - hp).
+        bx, by = 0, hp
+        bw, bh = w - hp - 1, h - hp - 1
+        # Semi-transparent fill inside the border rect
         fill = QColor(self._color)
         fill.setAlpha(25)
-        p.fillRect(0, 0, w, h, fill)
+        p.fillRect(bx, by, bw + 1, bh + 1, fill)
         # Solid border
         pen = QPen(self._color, 2, Qt.SolidLine)
         p.setPen(pen)
-        p.drawRect(0, 0, w - 1, h - 1)
-        # Handle squares — top-right and bottom-right only
-        hp = self._HP
+        p.drawRect(bx, by, bw, bh)
+        # Handle squares — top-right and bottom-right, fully visible
+        hs = hp * 2  # full side length of handle square
         p.setPen(Qt.NoPen)
         p.setBrush(self._color)
-        for cx, cy in ((w - 1, 0), (w - 1, h - 1)):
-            p.drawRect(cx - hp, cy - hp, hp * 2, hp * 2)
+        # Top-right: centred on (right edge, top edge) of border
+        p.drawRect(bx + bw - hp, by - hp, hs, hs)
+        # Bottom-right: centred on (right edge, bottom edge) of border
+        p.drawRect(bx + bw - hp, by + bh - hp, hs, hs)
         p.end()
 
     # ── hit-testing ─────────────────────────────────────────────────
     def _handle_at(self, pos):
         """Return 'tr'|'br' if *pos* is on a handle, else None."""
         x, y = pos.x(), pos.y()
+        hp = self._HP
         w, h = self.width(), self.height()
-        margin = self._HP + 4
-        right = x > w - margin
-        if not right:
+        # Border right edge is at w - hp - 1; handle extends hp either
+        # side, so test x within [right - hp - 2, right + hp + 2].
+        rx = w - hp - 1
+        margin = hp + 3
+        if abs(x - rx) > margin:
             return None
-        if y < margin:
+        # Top-right handle centred at y = hp (border top)
+        if abs(y - hp) <= margin:
             return "tr"
-        if y > h - margin:
+        # Bottom-right handle centred at y = h - hp - 1 (border bottom)
+        if abs(y - (h - hp - 1)) <= margin:
             return "br"
         return None
 
@@ -141,10 +154,8 @@ class _RangeOverlay(QWidget):
         if self._drag_mode is None:
             # Update cursor on hover.
             handle = self._handle_at(event.pos())
-            if handle == "tr":
-                self.setCursor(Qt.SizeBDiagCursor)
-            elif handle == "br":
-                self.setCursor(Qt.SizeFDiagCursor)
+            if handle:
+                self.setCursor(Qt.CrossCursor)
             else:
                 self.setCursor(Qt.SizeAllCursor)
             return
@@ -221,10 +232,11 @@ class _RangeOverlay(QWidget):
         bot = table.visualRect(table.model().index(self._r1, self._c1))
         if top.isNull() or bot.isNull():
             return
+        hp = self._HP
         x = top.left() - 1
-        y = top.top() - 1
-        w = bot.right() - x + 2
-        h = bot.bottom() - y + 2
+        y = top.top() - 1 - hp   # extra padding top for handle
+        w = bot.right() - x + 2 + hp  # extra padding right for handle
+        h = bot.bottom() - (top.top() - 1) + 2 + hp
         self.setGeometry(x, y, w, h)
         self.update()
 
@@ -1747,17 +1759,17 @@ class EmbeddedChart(QWidget):
 
     @staticmethod
     def _create_range_overlay(table, r0, c0, r1, c1, color_hex):
-        """Create a transparent QWidget overlay with a coloured dashed
+        """Create a transparent QWidget overlay with a coloured solid
         border around the cell range (r0,c0)–(r1,c1)."""
-        # Compute pixel rectangle from cell geometry.
         top_rect = table.visualRect(table.model().index(r0, c0))
         bot_rect = table.visualRect(table.model().index(r1, c1))
         if top_rect.isNull() or bot_rect.isNull():
             return None
+        hp = _RangeOverlay._HP
         x = top_rect.left() - 1
-        y = top_rect.top() - 1
-        w = bot_rect.right() - x + 2
-        h = bot_rect.bottom() - y + 2
+        y = top_rect.top() - 1 - hp   # padding top for handle
+        w = bot_rect.right() - x + 2 + hp  # padding right for handle
+        h = bot_rect.bottom() - (top_rect.top() - 1) + 2 + hp
 
         overlay = _RangeOverlay(table.viewport(), color_hex)
         overlay._r0 = r0
