@@ -1185,6 +1185,10 @@ class SheetWidget(QWidget):
         self.table.horizontalHeader().installEventFilter(self)
         self.table.verticalHeader().installEventFilter(self)
 
+        # ── Selection anchor/cursor for Shift+Arrow ───────────────────
+        self._sel_anchor = None   # (row, col) fixed corner of selection
+        self._sel_cursor = None   # (row, col) moving corner of selection
+
         # ── Drag-fill state ──────────────────────────────────────────
         self._fill_dragging = False
         self._fill_anchor_range = None
@@ -1504,6 +1508,9 @@ class SheetWidget(QWidget):
     # ── Cell ref display ─────────────────────────────────────────────
     def _on_current_cell_changed(self, row, col, prev_row, prev_col):
         self._update_sel_overlay()
+        # Reset Shift+Arrow anchor when navigating normally.
+        self._sel_anchor = None
+        self._sel_cursor = None
         # Clear formula highlights when navigating away (unless in
         # formula entry mode where clicking inserts a ref).
         if self._formula_entry_cell is None:
@@ -4172,25 +4179,34 @@ class SheetWidget(QWidget):
 
         if extend_selection:
             # Extend the existing selection bounding box toward dest.
+            # Anchor is the opposite corner from where we're moving.
+            if self._sel_anchor is not None:
+                anchor_r, anchor_c = self._sel_anchor
+            else:
+                anchor_r, anchor_c = r, c
+            top = min(anchor_r, dest_r)
+            bot = max(anchor_r, dest_r)
+            left = min(anchor_c, dest_c)
+            right = max(anchor_c, dest_c)
+            # Also include the existing selection extent.
             sel = self.table.selectedRanges()
             if sel:
                 s = sel[0]
-                top = min(s.topRow(), dest_r)
-                bot = max(s.bottomRow(), dest_r)
-                left = min(s.leftColumn(), dest_c)
-                right = max(s.rightColumn(), dest_c)
-            else:
-                top = min(r, dest_r)
-                bot = max(r, dest_r)
-                left = min(c, dest_c)
-                right = max(c, dest_c)
+                top = min(top, s.topRow())
+                bot = max(bot, s.bottomRow())
+                left = min(left, s.leftColumn())
+                right = max(right, s.rightColumn())
             self.table.clearSelection()
             self.table.setRangeSelected(
                 QTableWidgetSelectionRange(top, left, bot, right), True)
+            self._sel_anchor = (anchor_r, anchor_c)
+            self._sel_cursor = (dest_r, dest_c)
             # Scroll to destination without resetting the selection.
             idx = self.table.model().index(dest_r, dest_c)
             self.table.scrollTo(idx)
         else:
+            self._sel_anchor = None
+            self._sel_cursor = None
             self.table.clearSelection()
             self.table.setCurrentCell(dest_r, dest_c)
 
@@ -4205,71 +4221,38 @@ class SheetWidget(QWidget):
         max_r = self.table.rowCount() - 1
         max_c = self.table.columnCount() - 1
 
-        sel = self.table.selectedRanges()
         r = self.table.currentRow()
         c = self.table.currentColumn()
 
-        if sel:
-            s = sel[0]
-            # The anchor is the corner opposite to the current cell.
-            # Determine which edge the current cell sits on and move it.
-            if dr != 0:
-                # Vertical: move the row edge closest to current cell.
-                if abs(r - s.bottomRow()) <= abs(r - s.topRow()):
-                    # Current cell is near the bottom — move bottom edge.
-                    new_bot = min(max(s.bottomRow() + dr, 0), max_r)
-                    new_top = s.topRow()
-                    if new_bot < new_top:
-                        new_top, new_bot = new_bot, new_top
-                    dest_r = s.bottomRow() + dr
-                else:
-                    # Current cell is near the top — move top edge.
-                    new_top = min(max(s.topRow() + dr, 0), max_r)
-                    new_bot = s.bottomRow()
-                    if new_top > new_bot:
-                        new_top, new_bot = new_bot, new_top
-                    dest_r = s.topRow() + dr
-                dest_r = min(max(dest_r, 0), max_r)
-                new_left = s.leftColumn()
-                new_right = s.rightColumn()
-            else:
-                # Horizontal: move the column edge closest to current cell.
-                if abs(c - s.rightColumn()) <= abs(c - s.leftColumn()):
-                    new_right = min(max(s.rightColumn() + dc, 0), max_c)
-                    new_left = s.leftColumn()
-                    if new_right < new_left:
-                        new_left, new_right = new_right, new_left
-                    dest_r = r
-                else:
-                    new_left = min(max(s.leftColumn() + dc, 0), max_c)
-                    new_right = s.rightColumn()
-                    if new_left > new_right:
-                        new_left, new_right = new_right, new_left
-                    dest_r = r
-                new_top = s.topRow()
-                new_bot = s.bottomRow()
-
-            self.table.clearSelection()
-            self.table.setRangeSelected(
-                QTableWidgetSelectionRange(
-                    new_top, new_left, new_bot, new_right), True)
-            idx = self.table.model().index(
-                dest_r if dr != 0 else r,
-                min(max(c + dc, 0), max_c) if dc != 0 else c)
-            self.table.scrollTo(idx)
+        # Determine anchor (fixed corner) and cursor (moving corner).
+        if self._sel_cursor is not None:
+            cur_r, cur_c = self._sel_cursor
         else:
-            # No selection yet — start one from current cell.
-            dest_r = min(max(r + dr, 0), max_r)
-            dest_c = min(max(c + dc, 0), max_c)
-            top = min(r, dest_r)
-            bot = max(r, dest_r)
-            left = min(c, dest_c)
-            right = max(c, dest_c)
-            self.table.clearSelection()
-            self.table.setRangeSelected(
-                QTableWidgetSelectionRange(top, left, bot, right), True)
-            idx = self.table.model().index(dest_r, dest_c)
-            self.table.scrollTo(idx)
+            cur_r, cur_c = r, c
+
+        if self._sel_anchor is not None:
+            anc_r, anc_c = self._sel_anchor
+        else:
+            anc_r, anc_c = r, c
+
+        # Move cursor by one cell.
+        new_cur_r = min(max(cur_r + dr, 0), max_r)
+        new_cur_c = min(max(cur_c + dc, 0), max_c)
+
+        top = min(anc_r, new_cur_r)
+        bot = max(anc_r, new_cur_r)
+        left = min(anc_c, new_cur_c)
+        right = max(anc_c, new_cur_c)
+
+        self.table.clearSelection()
+        self.table.setRangeSelected(
+            QTableWidgetSelectionRange(top, left, bot, right), True)
+
+        self._sel_anchor = (anc_r, anc_c)
+        self._sel_cursor = (new_cur_r, new_cur_c)
+
+        idx = self.table.model().index(new_cur_r, new_cur_c)
+        self.table.scrollTo(idx)
 
     def _fill_handle_rect(self):
         sel = self.table.selectedRanges()
