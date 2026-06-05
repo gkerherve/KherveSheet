@@ -16,6 +16,11 @@ from typing import List, Optional
 
 import numpy as np
 
+from .python_engine import (
+    PY_MARKER, PythonHighlighter, badge_for, extract_refs,
+    is_python_source, strip_marker,
+)
+
 from PyQt5.QtCore import Qt, QEvent, QRect, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPixmap, QBrush
 from PyQt5.QtWidgets import (
@@ -37,7 +42,7 @@ class _FormulaEdit(QPlainTextEdit):
     """
 
     returnPressed = pyqtSignal()
-    textChanged = pyqtSignal(str)
+    textEdited = pyqtSignal(str)       # renamed to avoid shadowing QPlainTextEdit.textChanged
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -50,9 +55,39 @@ class _FormulaEdit(QPlainTextEdit):
         self.setMinimumHeight(22)
         self.setMaximumHeight(22)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-        # Forward the built-in signal with the text payload QLineEdit uses.
-        super().textChanged.connect(lambda: self.__class__.textChanged.emit(
-            self, self.toPlainText()))
+        # Forward the built-in textChanged (no args) as textEdited(str)
+        # so callers get the QLineEdit-compatible signature.
+        super().textChanged.connect(
+            lambda: self.textEdited.emit(self.toPlainText()))
+        # Python-cell mode: monospace + syntax highlight + Enter=newline,
+        # Ctrl+Enter=commit (the inverse of normal-formula behaviour).
+        self._python_mode = False
+        self._highlighter = None
+        self._normal_font = self.font()
+
+    def set_python_mode(self, on: bool):
+        """Switch the bar between Excel-formula and Python-cell editing."""
+        if on == self._python_mode:
+            return
+        self._python_mode = on
+        if on:
+            mono = QFont("Consolas")
+            mono.setStyleHint(QFont.Monospace)
+            mono.setPointSize(10)
+            self.setFont(mono)
+            if self._highlighter is None:
+                self._highlighter = PythonHighlighter(self.document())
+            # Grow to a few lines so multi-line code is comfortable.
+            if self.maximumHeight() <= 22:
+                self.setMaximumHeight(96)
+            self.setMinimumHeight(72)
+        else:
+            if self._highlighter is not None:
+                self._highlighter.setDocument(None)
+                self._highlighter = None
+            self.setFont(self._normal_font)
+            self.setMinimumHeight(22)
+            self.setMaximumHeight(22)
 
     # ── QLineEdit-compatible API ─────────────────────────────────────
     def text(self):
@@ -70,10 +105,18 @@ class _FormulaEdit(QPlainTextEdit):
         self.setTextCursor(tc)
 
     # Enter applies the formula; Ctrl+Enter / Alt+Enter insert a newline.
+    # In Python mode the two are swapped: Enter inserts a newline and
+    # Ctrl+Enter commits, so multi-line code is the natural case.
     def keyPressEvent(self, event):
-        if (event.key() in (Qt.Key_Return, Qt.Key_Enter)
-                and not event.modifiers() & (Qt.ControlModifier
-                                             | Qt.AltModifier)):
+        is_return = event.key() in (Qt.Key_Return, Qt.Key_Enter)
+        ctrl_alt = event.modifiers() & (Qt.ControlModifier | Qt.AltModifier)
+        if self._python_mode:
+            if is_return and (event.modifiers() & Qt.ControlModifier):
+                self.returnPressed.emit()
+                return
+            super().keyPressEvent(event)
+            return
+        if is_return and not ctrl_alt:
             self.returnPressed.emit()
             return
         super().keyPressEvent(event)
@@ -1156,7 +1199,7 @@ class SheetWidget(QWidget):
         self._formula_bar.setPlaceholderText(
             "Value or =formula  (e.g. =SUM(A1:A10), =B1+C1)")
         self._formula_bar.returnPressed.connect(self._apply_formula_bar)
-        self._formula_bar.textChanged.connect(self._on_formula_bar_text)
+        self._formula_bar.textEdited.connect(self._on_formula_bar_text)
 
         fbar.addWidget(cell_lbl)
         fbar.addWidget(self._cell_ref_label)
@@ -1221,6 +1264,10 @@ class SheetWidget(QWidget):
         # ── Internal state ───────────────────────────────────────────
         self._shadow: dict = {}          # (row, col) → last-known text
         self._cell_formulas: dict = {}   # (row, col) → "=formula"
+        self._cell_objects: dict = {}    # (row, col) → live Python value (=PY)
+        self._py_spills: dict = {}       # (row, col) → list of spilled cells
+        self._py_errors: dict = {}       # (row, col) → traceback string
+        self._py_figures: dict = {}      # (row, col) → EmbeddedImage (plot)
         self._dependents: dict = {}      # (row, col) → set of (r, c) that depend on it
         self._xref_cells: set = set()    # formula cells using Sheet!ref
         self._col_formats: dict = {}     # col → format string
@@ -1323,6 +1370,10 @@ class SheetWidget(QWidget):
         self.table.blockSignals(False)
         self._shadow.clear()
         self._cell_formulas.clear()
+        self._cell_objects.clear()
+        self._py_spills.clear()
+        self._py_errors.clear()
+        self._py_figures.clear()
         self._dependents.clear()
         self._xref_cells.clear()
         self._cell_formats.clear()
@@ -1627,8 +1678,10 @@ class SheetWidget(QWidget):
         # Show formula if cell has one, otherwise show value.
         formula = self._cell_formulas.get((row, col))
         if formula:
+            self._formula_bar.set_python_mode(is_python_source(formula))
             self._formula_bar.setText(formula)
         else:
+            self._formula_bar.set_python_mode(False)
             it = self.table.item(row, col)
             self._formula_bar.setText(it.text() if it else "")
 
@@ -1758,7 +1811,36 @@ class SheetWidget(QWidget):
             self.table.blockSignals(False)
             self._shadow[(row, col)] = ""
             return
-        if new_text.startswith("="):
+        if is_python_source(new_text):
+            if not strip_marker(new_text).strip():
+                # "=PY" with no code yet — switch the bar to Python mode
+                # and let the user type code there.
+                self.table.blockSignals(True)
+                if it:
+                    it.setText("")
+                self.table.blockSignals(False)
+                self._shadow[(row, col)] = ""
+                self._cell_formulas.pop((row, col), None)
+                self._formula_entry_cell = (row, col)
+                self._formula_bar.set_python_mode(True)
+                self._formula_bar.blockSignals(True)
+                self._formula_bar.setText(PY_MARKER + "\n")
+                self._formula_bar.blockSignals(False)
+                self._formula_bar.setFocus()
+                self._formula_bar.setCursorPosition(len(PY_MARKER) + 1)
+                return
+            self._cell_formulas[(row, col)] = new_text
+            self._register_py_deps(row, col, new_text)
+            display = self._evaluate_python(new_text, row, col, dec)
+            self.table.blockSignals(True)
+            if it is None:
+                it = QTableWidgetItem(display)
+                self.table.setItem(row, col, it)
+            else:
+                it.setText(display)
+            self.table.blockSignals(False)
+            new_text = display
+        elif new_text.startswith("="):
             self._cell_formulas[(row, col)] = new_text
             self._register_deps(row, col, new_text)
             result = self._evaluate_formula(new_text, row, col, dec)
@@ -1826,6 +1908,21 @@ class SheetWidget(QWidget):
             self._dependents.setdefault(ref_key, set()).add((row, col))
         # Track cross-sheet formula cells so the workbook can refresh them.
         if _XREF_PATTERN.search(formula or ""):
+            self._xref_cells.add((row, col))
+        else:
+            self._xref_cells.discard((row, col))
+
+    def _register_py_deps(self, row, col, source):
+        """Register dependencies for a =PY cell from its xl()/cell() refs."""
+        self._unregister_deps(row, col)
+        has_xref = False
+        for ref in extract_refs(strip_marker(source)):
+            if "!" in ref:
+                has_xref = True
+                continue
+            for ref_key in self._parse_cell_refs("=" + ref):
+                self._dependents.setdefault(ref_key, set()).add((row, col))
+        if has_xref:
             self._xref_cells.add((row, col))
         else:
             self._xref_cells.discard((row, col))
@@ -1903,9 +2000,12 @@ class SheetWidget(QWidget):
                 continue
             dec = (decimals if decimals is not None
                    else self._cell_decimals(dr, dc))
-            result = str(self._evaluate_formula(formula, dr, dc, dec))
+            if is_python_source(formula):
+                result = self._evaluate_python(formula, dr, dc, dec)
+            else:
+                result = str(self._evaluate_formula(formula, dr, dc, dec))
             # Apply per-cell number format (skip during solver).
-            if decimals is None:
+            if decimals is None and not is_python_source(formula):
                 result = self._apply_cell_number_format(result, dr, dc)
             self.table.blockSignals(True)
             it = self.table.item(dr, dc)
@@ -2384,6 +2484,132 @@ class SheetWidget(QWidget):
                 item = QTableWidgetItem()
                 self.table.setItem(r, col, item)
             item.setData(Qt.EditRole, _format_number(v))
+
+    # ── Python (=PY) cell evaluation ─────────────────────────────────
+    def _py_runtime(self):
+        """The PythonRuntime shared across this workbook (or this sheet)."""
+        from .python_engine import PythonRuntime
+        wb = self._workbook()
+        host = wb if wb is not None else self
+        rt = getattr(host, "_py_runtime_obj", None)
+        if rt is None:
+            rt = PythonRuntime()
+            host._py_runtime_obj = rt
+        return rt
+
+    def _evaluate_python(self, source, row, col, decimals=3):
+        """Run a =PY cell, store its live value, and return display text."""
+        from .python_engine import PyResult, badge_for, strip_marker
+        self._clear_py_outputs(row, col)
+        res = self._py_runtime().run(strip_marker(source), self, row, col)
+        if not res.ok:
+            self._py_errors[(row, col)] = res.error
+            self._cell_objects.pop((row, col), None)
+            it = self.table.item(row, col)
+            if it is not None:
+                # Show the last traceback line as the cell tooltip.
+                last = res.error.strip().splitlines()[-1]
+                it.setToolTip(last)
+            return "#PYERR"
+        self._py_errors.pop((row, col), None)
+        it = self.table.item(row, col)
+        if it is not None and it.toolTip():
+            it.setToolTip("")
+        val = res.value
+        self._cell_objects[(row, col)] = val
+
+        if res.kind == PyResult.FIGURE:
+            self._embed_py_figure(res.figure, row, col)
+            return "📈 plot"
+        if res.kind == PyResult.NONE:
+            self._cell_objects.pop((row, col), None)
+            return ""
+        if res.kind == PyResult.SCALAR:
+            return val if isinstance(val, str) else str(
+                _format_number(val, decimals))
+        if res.kind == PyResult.ARRAY1D:
+            self._py_spill(val, row, col, two_d=False)
+            head = val[0] if val else ""
+            return head if isinstance(head, str) else str(
+                _format_number(head, decimals))
+        if res.kind == PyResult.ARRAY2D:
+            self._py_spill(val, row, col, two_d=True)
+            head = val[0][0] if (val and val[0]) else ""
+            return head if isinstance(head, str) else str(
+                _format_number(head, decimals))
+        return badge_for(val)
+
+    def _py_spill(self, values, row, col, two_d=False):
+        """Spill a list (1-D down a column, 2-D as a block); the anchor
+        cell keeps the first element.  Records written cells so a later
+        re-evaluation can clear them."""
+        from PyQt5.QtWidgets import QTableWidgetItem
+        written = []
+        rows = values if two_d else [[v] for v in values]
+        for i, rowvals in enumerate(rows):
+            for j, v in enumerate(rowvals):
+                if i == 0 and j == 0:
+                    continue  # anchor handled by caller
+                r, c = row + i, col + j
+                if r >= self.table.rowCount():
+                    self.table.setRowCount(r + 1)
+                if c >= self.table.columnCount():
+                    continue
+                it = self.table.item(r, c)
+                if it is None:
+                    it = QTableWidgetItem()
+                    self.table.setItem(r, c, it)
+                it.setData(Qt.EditRole, _format_number(v)
+                           if not isinstance(v, str) else v)
+                written.append((r, c))
+        if written:
+            self._py_spills[(row, col)] = written
+
+    def _clear_py_outputs(self, row, col):
+        """Clear the previous spill range and embedded figure for a cell."""
+        for (r, c) in self._py_spills.pop((row, col), ()):
+            it = self.table.item(r, c)
+            if it is not None:
+                self.table.blockSignals(True)
+                it.setText("")
+                self.table.blockSignals(False)
+                self._shadow[(r, c)] = ""
+        fig = self._py_figures.pop((row, col), None) if hasattr(
+            self, "_py_figures") else None
+        if fig is not None:
+            if fig in self._images:
+                self._images.remove(fig)
+            fig.deleteLater()
+
+    def _embed_py_figure(self, figure, row, col):
+        """Render a matplotlib Figure to an EmbeddedImage near the cell."""
+        from io import BytesIO
+        from PyQt5.QtGui import QPixmap
+        from .embedded_image import EmbeddedImage
+        if not hasattr(self, "_py_figures"):
+            self._py_figures = {}
+        buf = BytesIO()
+        try:
+            figure.savefig(buf, format="png", dpi=100, bbox_inches="tight")
+        except Exception:
+            return
+        pm = QPixmap()
+        pm.loadFromData(buf.getvalue(), "PNG")
+        try:
+            import matplotlib.pyplot as plt
+            plt.close(figure)
+        except Exception:
+            pass
+        if pm.isNull():
+            return
+        img = EmbeddedImage(pm, self.table.viewport())
+        x = (self.table.columnViewportPosition(col)
+             + self.table.columnWidth(col) + 4)
+        y = self.table.rowViewportPosition(row)
+        img.move(max(0, x), max(0, y))
+        img.show()
+        self._images.append(img)
+        self._py_figures[(row, col)] = img
 
     def _build_eval_ns(self):
         """Build the evaluation namespace once and cache it on self."""
@@ -3146,8 +3372,11 @@ class SheetWidget(QWidget):
         if not formula:
             return
         dec = self._cell_decimals(r, c)
-        result = self._apply_cell_number_format(
-            str(self._evaluate_formula(formula, r, c, dec)), r, c)
+        if is_python_source(formula):
+            result = self._evaluate_python(formula, r, c, dec)
+        else:
+            result = self._apply_cell_number_format(
+                str(self._evaluate_formula(formula, r, c, dec)), r, c)
         self._set_cell_quiet(r, c, result)
 
     def _XC(self, name, r, c):
