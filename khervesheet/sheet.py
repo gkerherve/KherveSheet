@@ -3141,9 +3141,11 @@ class SheetWidget(QWidget):
 
         menu.addSeparator()
 
-        menu.addAction("Insert Row Above", self._insert_row_above)
-        menu.addAction("Insert Row Below", self._insert_row_below)
-        menu.addAction("Add 10 Rows", self._add_10_rows)
+        sel_rows = sorted(set(idx.row() for idx in self.table.selectedIndexes()))
+        n_rows = max(len(sel_rows), 1)
+        lbl = f"Insert {n_rows} Row{'s' if n_rows > 1 else ''}"
+        menu.addAction(lbl, self._insert_rows_from_selection)
+        menu.addAction("Delete Row", self._delete_selected_rows)
 
         menu.addSeparator()
         menu.addAction("Format Cells\u2026",
@@ -3574,6 +3576,19 @@ class SheetWidget(QWidget):
         self.table.viewport().update()
 
     # ── Row/column operations ────────────────────────────────────────
+    def _insert_rows_from_selection(self):
+        """Insert N rows above the first selected row, where N = number of
+        selected rows (minimum 1)."""
+        sel_rows = sorted(set(idx.row() for idx in self.table.selectedIndexes()))
+        n = max(len(sel_rows), 1)
+        start = sel_rows[0] if sel_rows else max(self.table.currentRow(), 0)
+        for i in range(n):
+            self.table.insertRow(start)
+        self._refresh_headers()
+        if self._undo_stack is not None:
+            for i in range(n):
+                self._undo_stack.push(InsertRowCmd(self, start + i))
+
     def _insert_row_above(self):
         row = self.table.currentRow()
         if row < 0:
