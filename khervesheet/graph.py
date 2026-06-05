@@ -57,15 +57,37 @@ _chart_clipboard = None
 
 class _RangeOverlay(QWidget):
     """Transparent overlay that draws a coloured dashed border around
-    a cell range, like Excel's data-highlight rectangles."""
+    a cell range, like Excel's data-highlight rectangles.
+
+    The overlay is interactive: corner handles allow resizing the range
+    and dragging inside the overlay moves it to a different cell region.
+    When the interaction finishes the owning chart re-reads data from the
+    new range.
+    """
+
+    _HP = 4   # half-size of corner handle squares
 
     def __init__(self, parent, color_hex):
         super().__init__(parent)
         self._color = QColor(color_hex)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.setAttribute(Qt.WA_NoSystemBackground, True)
         self.setAutoFillBackground(False)
+        self.setCursor(Qt.ArrowCursor)
 
+        # Cell range this overlay represents (set by the chart).
+        self._r0 = self._c0 = self._r1 = self._c1 = 0
+
+        # Back-references set by _apply_show_data after creation.
+        self._chart = None        # EmbeddedChart
+        self._axis = None         # "x" or "y"
+        self._series_idx = None   # index into chart._series (for Y)
+
+        # Drag / resize state.
+        self._drag_mode = None    # "move", "tl", "tr", "bl", "br"
+        self._drag_origin = None  # QPoint (global)
+        self._orig_range = None   # (r0, c0, r1, c1) at press
+
+    # ── painting ────────────────────────────────────────────────────
     def paintEvent(self, event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, False)
@@ -78,7 +100,176 @@ class _RangeOverlay(QWidget):
         pen = QPen(self._color, 2, Qt.DashLine)
         p.setPen(pen)
         p.drawRect(0, 0, w - 1, h - 1)
+        # Corner handle squares
+        hp = self._HP
+        p.setPen(Qt.NoPen)
+        p.setBrush(self._color)
+        for cx, cy in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)):
+            p.drawRect(cx - hp, cy - hp, hp * 2, hp * 2)
         p.end()
+
+    # ── hit-testing ─────────────────────────────────────────────────
+    def _corner_at(self, pos):
+        """Return 'tl'|'tr'|'bl'|'br' if *pos* is on a corner handle."""
+        x, y = pos.x(), pos.y()
+        w, h = self.width(), self.height()
+        margin = self._HP + 4
+        top = y < margin
+        bot = y > h - margin
+        left = x < margin
+        right = x > w - margin
+        if top and left:
+            return "tl"
+        if top and right:
+            return "tr"
+        if bot and left:
+            return "bl"
+        if bot and right:
+            return "br"
+        return None
+
+    # ── mouse interaction ───────────────────────────────────────────
+    def mousePressEvent(self, event):
+        if event.button() != Qt.LeftButton:
+            event.ignore()
+            return
+        corner = self._corner_at(event.pos())
+        if corner:
+            self._drag_mode = corner
+        else:
+            self._drag_mode = "move"
+        self._drag_origin = event.globalPos()
+        self._orig_range = (self._r0, self._c0, self._r1, self._c1)
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._drag_mode is None:
+            # Update cursor on hover.
+            corner = self._corner_at(event.pos())
+            if corner in ("tl", "br"):
+                self.setCursor(Qt.SizeFDiagCursor)
+            elif corner in ("tr", "bl"):
+                self.setCursor(Qt.SizeBDiagCursor)
+            else:
+                self.setCursor(Qt.SizeAllCursor)
+            return
+        self._apply_drag(event.globalPos())
+        event.accept()
+
+    def mouseReleaseEvent(self, event):
+        if self._drag_mode is None:
+            event.ignore()
+            return
+        self._apply_drag(event.globalPos())
+        self._drag_mode = None
+        self._drag_origin = None
+        self._orig_range = None
+        self._commit_range()
+        event.accept()
+
+    # ── core drag logic ─────────────────────────────────────────────
+    def _apply_drag(self, global_pos):
+        """Translate pixel drag into cell-range changes and reposition."""
+        table = self.parentWidget()  # QTableWidget viewport's parent
+        if table is None or self._chart is None:
+            return
+        # Find the actual QTableWidget (parent of the viewport).
+        while table is not None and not hasattr(table, 'rowAt'):
+            table = table.parentWidget()
+        if table is None:
+            return
+
+        vp = table.viewport()
+        local = vp.mapFromGlobal(global_pos)
+        row = table.rowAt(local.y())
+        col = table.columnAt(local.x())
+        if row < 0 or col < 0:
+            return
+
+        r0, c0, r1, c1 = self._orig_range
+        mode = self._drag_mode
+
+        if mode == "move":
+            # Translate: compute offset from origin press cell.
+            origin_local = vp.mapFromGlobal(self._drag_origin)
+            orig_row = table.rowAt(origin_local.y())
+            orig_col = table.columnAt(origin_local.x())
+            if orig_row < 0 or orig_col < 0:
+                return
+            dr = row - orig_row
+            dc = col - orig_col
+            nr0 = max(0, r0 + dr)
+            nc0 = max(0, c0 + dc)
+            nr1 = nr0 + (r1 - r0)
+            nc1 = nc0 + (c1 - c0)
+            # Clamp to table bounds.
+            if nr1 >= table.rowCount():
+                nr1 = table.rowCount() - 1
+                nr0 = nr1 - (r1 - r0)
+            if nc1 >= table.columnCount():
+                nc1 = table.columnCount() - 1
+                nc0 = nc1 - (c1 - c0)
+            self._r0, self._c0 = nr0, nc0
+            self._r1, self._c1 = nr1, nc1
+        elif mode == "tl":
+            self._r0 = min(row, self._r1)
+            self._c0 = min(col, self._c1)
+        elif mode == "tr":
+            self._r0 = min(row, self._r1)
+            self._c1 = max(col, self._c0)
+        elif mode == "bl":
+            self._r1 = max(row, self._r0)
+            self._c0 = min(col, self._c1)
+        elif mode == "br":
+            self._r1 = max(row, self._r0)
+            self._c1 = max(col, self._c0)
+
+        self._reposition(table)
+
+    def _reposition(self, table):
+        """Move/resize the overlay widget to match the current cell range."""
+        top = table.visualRect(table.model().index(self._r0, self._c0))
+        bot = table.visualRect(table.model().index(self._r1, self._c1))
+        if top.isNull() or bot.isNull():
+            return
+        x = top.left() - 1
+        y = top.top() - 1
+        w = bot.right() - x + 2
+        h = bot.bottom() - y + 2
+        self.setGeometry(x, y, w, h)
+        self.update()
+
+    # ── commit the new range back to the chart ──────────────────────
+    def _commit_range(self):
+        """Push the new cell range into the chart's series and re-plot."""
+        chart = self._chart
+        if chart is None or chart._source_sheet is None:
+            return
+        sheet = chart._source_sheet
+
+        if self._axis == "x":
+            # Update X range for every series that shares this X column.
+            for s in chart._series:
+                xc = s.get("x_col", chart._x_col)
+                if xc == self._c0 or xc == self._orig_range[1]:
+                    s["x_col"] = self._c0
+                    s["x_row_start"] = self._r0
+                    s["x_row_end"] = self._r1
+            if chart._x_col is not None:
+                chart._x_col = self._c0
+        elif self._axis == "y" and self._series_idx is not None:
+            idx = self._series_idx
+            if idx < len(chart._series):
+                s = chart._series[idx]
+                s["y_row_start"] = self._r0
+                s["y_row_end"] = self._r1
+            if idx < len(chart._y_cols):
+                chart._y_cols[idx] = self._c0
+
+        # Re-read data and refresh the chart.
+        chart._replot_from_source()
+        # Refresh all overlays to match new positions.
+        chart._apply_show_data()
 
 
 class _HandleOverlay(QWidget):
@@ -1442,6 +1633,44 @@ class EmbeddedChart(QWidget):
         self._ax.grid(grid_on)
         self._canvas.draw_idle()
 
+    def _replot_from_source(self):
+        """Re-read source data after a range overlay drag/resize and
+        autoscale to fit the new data."""
+        if not self._source_sheet:
+            return
+        sheet = self._source_sheet
+        for i, (s, yc) in enumerate(
+                zip(self._series, self._y_cols)):
+            xc = s.get("x_col", self._x_col)
+            if xc is not None:
+                x_full = sheet.numeric_column(xc)
+            else:
+                x_full = np.arange(sheet.row_count(), dtype=float)
+            y_full = sheet.numeric_column(yc)
+            x_r0 = s.get("x_row_start", 0)
+            x_r1 = s.get("x_row_end", len(x_full) - 1)
+            y_r0 = s.get("y_row_start", 0)
+            y_r1 = s.get("y_row_end", len(y_full) - 1)
+            x_data = x_full[x_r0:x_r1 + 1]
+            y_data = y_full[y_r0:y_r1 + 1]
+            n = min(len(x_data), len(y_data))
+            x_data, y_data = x_data[:n], y_data[:n]
+            mask = ~(np.isnan(x_data) | np.isnan(y_data))
+            s["x"], s["y"] = x_data[mask], y_data[mask]
+            artist = s.get("artist")
+            if artist is None:
+                continue
+            if hasattr(artist, 'set_data'):
+                artist.set_data(s["x"], s["y"])
+            elif hasattr(artist, 'set_offsets'):
+                artist.set_offsets(
+                    np.column_stack([s["x"], s["y"]]))
+        self._ax.relim()
+        self._ax.autoscale_view()
+        if self._header_row:
+            self._apply_header_labels()
+        self._canvas.draw_idle()
+
     # ── Show Data highlight ────────────────────────────────────────────
 
     def _toggle_show_data(self, checked):
@@ -1499,6 +1728,9 @@ class EmbeddedChart(QWidget):
                 ov = self._create_range_overlay(
                     table, xr0, xc, xr1, xc, self._X_RANGE_COLOR)
                 if ov:
+                    ov._chart = self
+                    ov._axis = "x"
+                    ov._series_idx = i
                     overlays.append(ov)
 
             # Y column overlay — use actual line/artist colour
@@ -1508,6 +1740,9 @@ class EmbeddedChart(QWidget):
             ov = self._create_range_overlay(
                 table, r0, yc, r1, yc, line_color)
             if ov:
+                ov._chart = self
+                ov._axis = "y"
+                ov._series_idx = i
                 overlays.append(ov)
 
         self._show_data_active = True
@@ -1536,6 +1771,10 @@ class EmbeddedChart(QWidget):
         h = bot_rect.bottom() - y + 2
 
         overlay = _RangeOverlay(table.viewport(), color_hex)
+        overlay._r0 = r0
+        overlay._c0 = c0
+        overlay._r1 = r1
+        overlay._c1 = c1
         overlay.setGeometry(x, y, w, h)
         overlay.show()
         overlay.raise_()
