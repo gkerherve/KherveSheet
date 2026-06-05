@@ -2330,7 +2330,10 @@ class SheetWidget(QWidget):
                 dy = savgol_filter(ya, int(window), int(poly), deriv=1)
                 return (dy / dx).tolist()
 
-            _np_trapz = getattr(np, "trapezoid", np.trapz)
+            try:
+                _np_trapz = np.trapezoid
+            except AttributeError:
+                _np_trapz = np.trapz
 
             def _TRAPZ(y, x):
                 return float(_np_trapz(
