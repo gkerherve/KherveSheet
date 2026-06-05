@@ -491,6 +491,29 @@ class EmbeddedChart(QWidget):
         ax.set_ylabel("Y")
         self._canvas.draw_idle()
 
+    def _update_artist(self, s, x, y):
+        """Update the artist for series *s* with new data.
+
+        Line2D artists use set_data (fast, relim-compatible).  All other
+        artist types (scatter PathCollection, bar containers, etc.) are
+        removed and re-created because set_offsets / bar patches do not
+        update the axes data limits that relim() reads.
+        """
+        from matplotlib.lines import Line2D
+        artist = s.get("artist")
+        if artist is None:
+            return
+        if isinstance(artist, Line2D):
+            artist.set_data(x, y)
+        else:
+            try:
+                artist.remove()
+            except Exception:
+                pass
+            new = self._plot_one(self._ax, x, y, s["label"],
+                                 s["plot_type"])
+            s["artist"] = new
+
     @staticmethod
     def _plot_one(ax, x, y, label, plot_type):
         """Plot a single series and return the artist."""
@@ -1505,18 +1528,12 @@ class EmbeddedChart(QWidget):
             x = x_data[mask]
             y = y_data[mask]
             s["x"], s["y"] = x, y
-            artist = s.get("artist")
-            if artist is None:
-                continue
-            if hasattr(artist, 'set_data'):
-                artist.set_data(x, y)
-            elif hasattr(artist, 'set_offsets'):
-                artist.set_offsets(np.column_stack([x, y]))
+            self._update_artist(s, x, y)
         self._ax.relim()
         self._ax.autoscale_view()
         if self._header_row:
             self._apply_header_labels()
-        self._canvas.draw_idle()
+        self._canvas.draw()
 
     def shift_column_refs(self, at, delta):
         """Shift stored source-column indices when a column is inserted
@@ -1612,21 +1629,7 @@ class EmbeddedChart(QWidget):
             x = x_data[mask]
             y = y_data[mask]
             s["x"], s["y"] = x, y
-            artist = s.get("artist")
-            if artist is None:
-                continue
-            if hasattr(artist, 'set_data') and hasattr(artist, 'get_data'):
-                artist.set_data(x, y)
-            elif hasattr(artist, 'set_offsets'):
-                artist.set_offsets(np.column_stack([x, y]))
-            else:
-                try:
-                    artist.remove()
-                except Exception:
-                    pass
-                new_artist = self._plot_one(
-                    ax, x, y, s["label"], s["plot_type"])
-                s["artist"] = new_artist
+            self._update_artist(s, x, y)
 
         ax.set_title(title)
         ax.set_xlabel(xlabel)
@@ -1667,27 +1670,7 @@ class EmbeddedChart(QWidget):
             x_data, y_data = x_data[:n], y_data[:n]
             mask = ~(np.isnan(x_data) | np.isnan(y_data))
             s["x"], s["y"] = x_data[mask], y_data[mask]
-
-            artist = s.get("artist")
-            if artist is None:
-                continue
-
-            # For Line2D, set_data works; for bar / other types, remove
-            # the old artist and re-plot from scratch.
-            if hasattr(artist, 'set_data') and hasattr(artist, 'get_data'):
-                artist.set_data(s["x"], s["y"])
-            elif hasattr(artist, 'set_offsets'):
-                artist.set_offsets(
-                    np.column_stack([s["x"], s["y"]]))
-            else:
-                # Bar, stem, etc. — remove old artist and re-create.
-                try:
-                    artist.remove()
-                except Exception:
-                    pass
-                new_artist = self._plot_one(
-                    ax, s["x"], s["y"], s["label"], s["plot_type"])
-                s["artist"] = new_artist
+            self._update_artist(s, s["x"], s["y"])
 
         # Force full data-limit recalculation so autoscale works.
         ax.relim(visible_only=True)
@@ -3524,14 +3507,10 @@ class PlotDetailsDialog(QDialog):
         s["x_row_end"] = xr2
         s["y_row_start"] = yr1
         s["y_row_end"] = yr2
-        artist = s.get("artist")
-        if artist is not None:
-            if hasattr(artist, 'set_data'):
-                artist.set_data(x, y)
-            elif hasattr(artist, 'set_offsets'):
-                artist.set_offsets(np.column_stack([x, y]))
+        chart._update_artist(s, x, y)
         chart._ax.relim()
         chart._ax.autoscale_view()
+        chart._canvas.draw()
 
 
 # ── Legend Editor Dialog ──────────────────────────────────────────
