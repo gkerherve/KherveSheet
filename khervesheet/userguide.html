@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KherveSheet User Guide</title>
+<style>
+  :root {
+    --accent: #3a78b4;
+    --accent-light: #e6efff;
+    --bg: #fafbfc;
+    --fg: #23272e;
+    --border: #d0d7de;
+    --code-bg: #f0f2f5;
+    --section-bg: #ffffff;
+    --heading-bar: #3a78b4;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    color: var(--fg); background: var(--bg);
+    line-height: 1.6; padding: 0;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── Header ─────────────────────────────────────────── */
+  header {
+    background: linear-gradient(135deg, #2c5f8a 0%, #3a78b4 60%, #4a8fd4 100%);
+    color: #fff; padding: 36px 40px 28px; text-align: center;
+  }
+  header h1 { font-size: 2.2rem; font-weight: 700; letter-spacing: .5px; }
+  header p { font-size: 1.05rem; opacity: .88; margin-top: 6px; }
+
+  /* ── Layout ─────────────────────────────────────────── */
+  .wrap { max-width: 960px; margin: 0 auto; padding: 0 24px 60px; }
+
+  /* ── Table of Contents ──────────────────────────────── */
+  nav.toc {
+    background: var(--section-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 20px 28px; margin: 28px 0 36px;
+  }
+  nav.toc h2 { font-size: 1.15rem; margin-bottom: 10px; color: var(--accent); }
+  nav.toc ol { padding-left: 22px; }
+  nav.toc li { margin: 3px 0; }
+  nav.toc a { font-size: .97rem; }
+
+  /* ── Sections ───────────────────────────────────────── */
+  section {
+    background: var(--section-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 24px 28px; margin-bottom: 24px;
+  }
+  h2 {
+    font-size: 1.45rem; color: var(--accent); margin-bottom: 14px;
+    padding-bottom: 6px; border-bottom: 2px solid var(--accent-light);
+  }
+  h3 { font-size: 1.12rem; color: #34495e; margin: 18px 0 8px; }
+  h4 { font-size: 1rem; color: #555; margin: 12px 0 6px; }
+  p, li { font-size: .95rem; }
+  p { margin-bottom: 8px; }
+  ul, ol { padding-left: 22px; margin-bottom: 10px; }
+  li { margin: 3px 0; }
+
+  /* ── Tables ─────────────────────────────────────────── */
+  table {
+    width: 100%; border-collapse: collapse; margin: 10px 0 16px;
+    font-size: .92rem;
+  }
+  th, td { padding: 7px 12px; border: 1px solid var(--border); text-align: left; }
+  th { background: var(--accent-light); font-weight: 600; }
+  tr:nth-child(even) td { background: #f7f8fa; }
+
+  /* ── Keyboard shortcuts ─────────────────────────────── */
+  kbd {
+    display: inline-block; padding: 2px 7px; font-size: .85rem;
+    font-family: "Consolas", "Courier New", monospace;
+    background: var(--code-bg); border: 1px solid #bbb; border-radius: 4px;
+    box-shadow: 0 1px 0 #999; line-height: 1.5;
+  }
+  code {
+    font-family: "Consolas", "Courier New", monospace;
+    background: var(--code-bg); padding: 1px 5px; border-radius: 3px;
+    font-size: .9em;
+  }
+
+  /* ── Tip / Note boxes ───────────────────────────────── */
+  .tip, .note {
+    border-left: 4px solid; border-radius: 4px;
+    padding: 10px 14px; margin: 12px 0; font-size: .93rem;
+  }
+  .tip  { border-color: #27ae60; background: #eafaf1; }
+  .note { border-color: #e67e22; background: #fef5e7; }
+
+  /* ── Function grid ──────────────────────────────────── */
+  .func-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 4px 8px; margin: 6px 0 14px;
+  }
+  .func-grid code { display: block; text-align: center; padding: 3px 4px; }
+
+  /* ── Footer ─────────────────────────────────────────── */
+  footer {
+    text-align: center; padding: 20px; font-size: .85rem; color: #888;
+    border-top: 1px solid var(--border); margin-top: 40px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>KherveSheet User Guide</h1>
+  <p>A powerful spreadsheet workbench with scientific analysis and publication-quality charts</p>
+</header>
+
+<div class="wrap">
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<nav class="toc">
+<h2>Contents</h2>
+<ol>
+  <li><a href="#getting-started">Getting Started</a></li>
+  <li><a href="#interface">Interface Overview</a></li>
+  <li><a href="#file-ops">File Operations</a></li>
+  <li><a href="#editing">Editing Cells</a></li>
+  <li><a href="#formatting">Formatting</a></li>
+  <li><a href="#formulas">Formulas &amp; Functions</a></li>
+  <li><a href="#charts">Charts &amp; Plotting</a></li>
+  <li><a href="#trendlines">Trendlines &amp; Curve Fitting</a></li>
+  <li><a href="#peak-fitting">Peak Fitting</a></li>
+  <li><a href="#science">Science Tools</a></li>
+  <li><a href="#solver">Solver</a></li>
+  <li><a href="#insert">Insert Menu</a></li>
+  <li><a href="#data">Data Operations</a></li>
+  <li><a href="#view">View &amp; Themes</a></li>
+  <li><a href="#version-control">Version Control</a></li>
+  <li><a href="#examples">Examples &amp; Templates</a></li>
+  <li><a href="#printing">Printing</a></li>
+  <li><a href="#shortcuts">Keyboard Shortcuts</a></li>
+</ol>
+</nav>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="getting-started">
+<h2>1. Getting Started</h2>
+<p>KherveSheet is an Excel-inspired spreadsheet workbench built on Python, PyQt5 and matplotlib. It combines familiar spreadsheet editing with scientific data analysis tools and publication-quality plotting.</p>
+
+<h3>Requirements</h3>
+<ul>
+  <li>Python 3.12 or 3.13</li>
+  <li>PyQt5, matplotlib, numpy (core)</li>
+  <li>openpyxl (optional &mdash; Excel import/export)</li>
+  <li>h5py (optional &mdash; native <code>.ksheet</code> format)</li>
+  <li>scipy (optional &mdash; Solver, trendlines, peak fitting)</li>
+  <li>lmfit (optional &mdash; advanced peak fitting models)</li>
+</ul>
+
+<h3>Launching</h3>
+<p>Run <code>python KherveSheet.py</code> or <code>python -m khervesheet</code> from the project directory.</p>
+
+<h3>Native File Format</h3>
+<p>KherveSheet saves workbooks as <code>.ksheet</code> files (HDF5-based). This format preserves all cell data, formatting, charts, images, shapes, equations, and version history.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="interface">
+<h2>2. Interface Overview</h2>
+<p>The main window follows a familiar spreadsheet layout:</p>
+
+<h3>Title Bar</h3>
+<p>Shows the application name, current file, and version string (e.g. <code>KherveSheet v0.1.42+abc1234</code>).</p>
+
+<h3>Menu Bar</h3>
+<p>Eleven menus: <b>File</b>, <b>Edit</b>, <b>View</b>, <b>Insert</b>, <b>Format</b>, <b>Formulas</b>, <b>Data</b>, <b>Science</b>, <b>Tools</b>, <b>Examples</b>, <b>Help</b>.</p>
+
+<h3>Toolbars</h3>
+<ul>
+  <li><b>Standard toolbar</b> &mdash; New, Open, Save, Print, Undo, Redo, Solver, Curve Fitting, Science tools.</li>
+  <li><b>Font toolbar</b> &mdash; Font family, font size, Bold, Italic, Underline, alignment (Left/Centre/Right), fill colour, font colour, borders, merge cells.</li>
+  <li><b>Plot/Insert toolbar</b> &mdash; Chart type dropdown, table design, image, shapes, equation, symbol, and insert controls (checkbox, dropdown, emoji, comment, note).</li>
+</ul>
+
+<h3>Formula Bar</h3>
+<p>Located below the toolbars: shows the active cell reference on the left and the cell contents/formula on the right. Click the cell reference to navigate to a specific cell.</p>
+
+<h3>Grid</h3>
+<p>Columns labelled A, B, C, &hellip; Z, AA, AB, &hellip; and rows numbered from 1. Click a cell to select it; drag to select a range. Column and row headers can be resized by dragging their borders.</p>
+
+<h3>Sheet Tabs</h3>
+<p>At the bottom: Sheet1, Sheet2, Sheet3, etc. Double-click a tab to rename it. Right-click for options. Use the <b>+</b> button or <b>Insert &gt; Sheet</b> to add new sheets.</p>
+
+<h3>Status Bar</h3>
+<p>Shows a status message, a progress bar (when active), and a selection summary displaying <b>Average</b>, <b>Count</b>, and <b>Sum</b> of the selected numeric cells.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="file-ops">
+<h2>3. File Operations</h2>
+
+<table>
+<tr><th>Action</th><th>Shortcut</th><th>Description</th></tr>
+<tr><td>New</td><td><kbd>Ctrl+N</kbd></td><td>Create a new workbook</td></tr>
+<tr><td>New Window</td><td><kbd>Ctrl+Shift+N</kbd></td><td>Open a new window instance</td></tr>
+<tr><td>Open</td><td><kbd>Ctrl+O</kbd></td><td>Open a <code>.ksheet</code>, CSV, or Excel file</td></tr>
+<tr><td>Save</td><td><kbd>Ctrl+S</kbd></td><td>Save the current file</td></tr>
+<tr><td>Save As</td><td><kbd>Ctrl+Shift+S</kbd></td><td>Save with a new name or location</td></tr>
+<tr><td>Import &gt; Text/CSV</td><td></td><td>Import data from a text or CSV file</td></tr>
+<tr><td>Import &gt; Excel</td><td></td><td>Import data from an Excel workbook</td></tr>
+<tr><td>Export &gt; CSV</td><td></td><td>Export the active sheet as CSV</td></tr>
+<tr><td>Export &gt; Excel</td><td></td><td>Export the workbook as an Excel file</td></tr>
+<tr><td>Print</td><td><kbd>Ctrl+P</kbd></td><td>Print with preview and page setup</td></tr>
+<tr><td>Recent Files</td><td></td><td>Quick access to recently opened files</td></tr>
+<tr><td>Exit</td><td><kbd>Ctrl+Q</kbd></td><td>Close the application</td></tr>
+</table>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="editing">
+<h2>4. Editing Cells</h2>
+
+<h3>Basic Editing</h3>
+<ul>
+  <li>Click a cell and start typing to replace its contents.</li>
+  <li>Double-click or press <kbd>F2</kbd> to enter edit mode (cursor within existing text).</li>
+  <li>Press <kbd>Enter</kbd> to confirm and move down, <kbd>Tab</kbd> to confirm and move right.</li>
+  <li>Press <kbd>Escape</kbd> to cancel the edit.</li>
+</ul>
+
+<h3>Selection</h3>
+<ul>
+  <li>Click and drag to select a range of cells.</li>
+  <li>Hold <kbd>Shift</kbd> and click to extend the selection.</li>
+  <li>Hold <kbd>Ctrl</kbd> and click to select non-contiguous cells.</li>
+  <li>Click a column header to select the entire column; click a row header to select the entire row.</li>
+</ul>
+
+<h3>Clipboard</h3>
+<table>
+<tr><th>Action</th><th>Shortcut</th><th>Description</th></tr>
+<tr><td>Cut</td><td><kbd>Ctrl+X</kbd></td><td>Cut selection to clipboard</td></tr>
+<tr><td>Copy</td><td><kbd>Ctrl+C</kbd></td><td>Copy selection to clipboard</td></tr>
+<tr><td>Paste</td><td><kbd>Ctrl+V</kbd></td><td>Paste from clipboard (with formatting)</td></tr>
+<tr><td>Paste Values Only</td><td><kbd>Ctrl+Shift+V</kbd></td><td>Paste values without formatting</td></tr>
+<tr><td>Clear</td><td><kbd>Del</kbd></td><td>Clear selected cell contents</td></tr>
+</table>
+
+<h3>Fill Handle</h3>
+<p>Select one or more cells, then drag the small cross at the bottom-right corner of the selection to auto-fill adjacent cells. The fill handle supports number sequences, dates, and pattern continuation.</p>
+
+<h3>Undo / Redo</h3>
+<p>Every editing action is undoable. Press <kbd>Ctrl+Z</kbd> to undo and <kbd>Ctrl+Y</kbd> to redo. The undo history covers cell edits, formatting changes, row/column insertion and deletion, sorting, merging, and more.</p>
+
+<h3>Rows &amp; Columns</h3>
+<ul>
+  <li><b>Insert &gt; Row Above / Row Below</b> &mdash; Insert a new row.</li>
+  <li><b>Insert &gt; Column</b> &mdash; Insert a new column.</li>
+  <li>Right-click a row or column header for additional options.</li>
+  <li>Resize columns and rows by dragging the header borders, or use <b>Format &gt; Column Width / Row Height</b>.</li>
+</ul>
+
+<h3>Merge Cells</h3>
+<p>Select a range and use <b>Format &gt; Merge Cells</b> (or the toolbar button) to merge. Use <b>Format &gt; Unmerge Cells</b> to reverse.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="formatting">
+<h2>5. Formatting</h2>
+
+<h3>Quick Formatting (Toolbar)</h3>
+<ul>
+  <li><b>Font family</b> &mdash; dropdown selector.</li>
+  <li><b>Font size</b> &mdash; dropdown with presets (8&ndash;72 pt).</li>
+  <li><b>Bold</b> (<kbd>Ctrl+B</kbd>), <b>Italic</b> (<kbd>Ctrl+I</kbd>), <b>Underline</b> (<kbd>Ctrl+U</kbd>).</li>
+  <li><b>Alignment</b> &mdash; Left, Centre, Right.</li>
+  <li><b>Fill Colour</b> &mdash; click for last colour, dropdown for palette.</li>
+  <li><b>Font Colour</b> &mdash; click for last colour, dropdown for palette.</li>
+  <li><b>Borders</b> &mdash; dropdown with 15 preset styles.</li>
+</ul>
+
+<h3>Format Cells Dialog (<kbd>Ctrl+1</kbd>)</h3>
+<p>The comprehensive formatting dialog has five tabs:</p>
+
+<h4>Number</h4>
+<p>Choose from: General, Number (configurable decimal places), Currency, Percentage, Scientific, Date, Time, Text. A live preview shows how the value will appear.</p>
+
+<h4>Alignment</h4>
+<p>Horizontal (General, Left, Centre, Right) and vertical (Bottom, Centre, Top) alignment. Wrap text option.</p>
+
+<h4>Font</h4>
+<p>Font family, style (Regular/Bold/Italic/Bold Italic), size, underline, and colour. A live preview displays the selected formatting.</p>
+
+<h4>Border</h4>
+<p>Presets (None, Outline, Inside) plus per-edge control. Fourteen line styles from Hair to Double, with colour selection. Click the interactive preview to toggle individual edges.</p>
+
+<h4>Fill</h4>
+<p>Colour palette grid, "No Fill" option, and custom colour picker.</p>
+
+<h3>Number Formats (Format Menu)</h3>
+<table>
+<tr><th>Format</th><th>Example</th></tr>
+<tr><td>General</td><td>123.456</td></tr>
+<tr><td>0</td><td>123</td></tr>
+<tr><td>0.0</td><td>123.5</td></tr>
+<tr><td>0.00</td><td>123.46</td></tr>
+<tr><td>0.000</td><td>123.456</td></tr>
+<tr><td>0.0000</td><td>123.4560</td></tr>
+<tr><td>Scientific</td><td>1.2346e+02</td></tr>
+<tr><td>Percentage</td><td>12345.6%</td></tr>
+<tr><td>Currency</td><td>$123.46</td></tr>
+<tr><td>Date</td><td>2026-01-15</td></tr>
+<tr><td>Time</td><td>14:30:00</td></tr>
+<tr><td>Text</td><td>123.456 (as text)</td></tr>
+</table>
+
+<h3>Table Design</h3>
+<p>Use <b>Format &gt; Table Design</b> or the toolbar dropdown to apply pre-built table styles with alternating row colours and header formatting.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="formulas">
+<h2>6. Formulas &amp; Functions</h2>
+
+<h3>Entering Formulas</h3>
+<p>Type <code>=</code> followed by an expression. Cell references use the standard A1 notation (e.g. <code>=A1+B2</code>). Ranges use a colon (e.g. <code>=SUM(A1:A10)</code>).</p>
+
+<h3>AutoSum</h3>
+<p>Press <kbd>Alt+Shift+=</kbd> or use <b>Formulas &gt; AutoSum</b> to quickly insert a SUM formula for the cells above or to the left of the active cell.</p>
+
+<h3>Insert Function Dialog (<kbd>Shift+F3</kbd>)</h3>
+<p>Browse or search all available functions by category. Select a function to see its syntax and description, then click OK to insert it.</p>
+
+<h3>Function Reference</h3>
+<p>KherveSheet supports 200+ functions across 10 categories:</p>
+
+<h4>Math &amp; Trig (63 functions)</h4>
+<div class="func-grid">
+  <code>ABS</code><code>ACOS</code><code>ACOSH</code><code>ACOT</code><code>ACOTH</code>
+  <code>ASIN</code><code>ASINH</code><code>ATAN</code><code>ATAN2</code><code>ATANH</code>
+  <code>BASE</code><code>CEILING.MATH</code><code>COMBIN</code><code>COMBINA</code><code>COS</code>
+  <code>COSH</code><code>COT</code><code>COTH</code><code>CSC</code><code>CSCH</code>
+  <code>DECIMAL</code><code>DEGREES</code><code>EVEN</code><code>EXP</code><code>FACT</code>
+  <code>FACTDOUBLE</code><code>FLOOR.MATH</code><code>GCD</code><code>INT</code><code>LCM</code>
+  <code>LN</code><code>LOG</code><code>LOG10</code><code>MDETERM</code><code>MINVERSE</code>
+  <code>MMULT</code><code>MOD</code><code>MROUND</code><code>MULTINOMIAL</code><code>ODD</code>
+  <code>PI</code><code>POWER</code><code>PRODUCT</code><code>QUOTIENT</code><code>RADIANS</code>
+  <code>RAND</code><code>RANDBETWEEN</code><code>ROMAN</code><code>ROUND</code><code>ROUNDDOWN</code>
+  <code>ROUNDUP</code><code>SEC</code><code>SECH</code><code>SIGN</code><code>SIN</code>
+  <code>SINH</code><code>SQRT</code><code>SQRTPI</code><code>SUBTOTAL</code><code>SUM</code>
+  <code>SUMIF</code><code>SUMIFS</code><code>SUMPRODUCT</code><code>SUMSQ</code><code>SUMX2MY2</code>
+  <code>SUMX2PY2</code><code>SUMXMY2</code><code>TAN</code><code>TANH</code><code>TRUNC</code>
+</div>
+
+<h4>Text (28 functions)</h4>
+<div class="func-grid">
+  <code>CHAR</code><code>CLEAN</code><code>CODE</code><code>CONCAT</code><code>CONCATENATE</code>
+  <code>DOLLAR</code><code>EXACT</code><code>FIND</code><code>FIXED</code><code>LEFT</code>
+  <code>LEN</code><code>LOWER</code><code>MID</code><code>NUMBERVALUE</code><code>PROPER</code>
+  <code>REPLACE</code><code>REPT</code><code>RIGHT</code><code>SEARCH</code><code>SUBSTITUTE</code>
+  <code>T</code><code>TEXT</code><code>TEXTJOIN</code><code>TRIM</code><code>UNICHAR</code>
+  <code>UNICODE</code><code>UPPER</code><code>VALUE</code>
+</div>
+
+<h4>Date &amp; Time (25 functions)</h4>
+<div class="func-grid">
+  <code>DATE</code><code>DATEVALUE</code><code>DAY</code><code>DAYS</code><code>DAYS360</code>
+  <code>EDATE</code><code>EOMONTH</code><code>HOUR</code><code>ISOWEEKNUM</code><code>MINUTE</code>
+  <code>MONTH</code><code>NETWORKDAYS</code><code>NETWORKDAYS.INTL</code><code>NOW</code><code>SECOND</code>
+  <code>TIME</code><code>TIMEVALUE</code><code>TODAY</code><code>WEEKDAY</code><code>WEEKNUM</code>
+  <code>WORKDAY</code><code>WORKDAY.INTL</code><code>YEAR</code><code>YEARFRAC</code>
+</div>
+
+<h4>Logical (11 functions)</h4>
+<div class="func-grid">
+  <code>AND</code><code>FALSE</code><code>IF</code><code>IFERROR</code><code>IFNA</code>
+  <code>IFS</code><code>NOT</code><code>OR</code><code>SWITCH</code><code>TRUE</code><code>XOR</code>
+</div>
+
+<h4>Lookup &amp; Reference (16 functions)</h4>
+<div class="func-grid">
+  <code>ADDRESS</code><code>AREAS</code><code>CHOOSE</code><code>COLUMN</code><code>COLUMNS</code>
+  <code>HLOOKUP</code><code>INDEX</code><code>INDIRECT</code><code>LOOKUP</code><code>MATCH</code>
+  <code>OFFSET</code><code>ROW</code><code>ROWS</code><code>TRANSPOSE</code><code>VLOOKUP</code>
+  <code>XLOOKUP</code>
+</div>
+
+<h4>Financial (35 functions)</h4>
+<div class="func-grid">
+  <code>ACCRINT</code><code>ACCRINTM</code><code>DB</code><code>DDB</code><code>DISC</code>
+  <code>DOLLARDE</code><code>DOLLARFR</code><code>DURATION</code><code>EFFECT</code><code>FV</code>
+  <code>FVSCHEDULE</code><code>INTRATE</code><code>IPMT</code><code>IRR</code><code>ISPMT</code>
+  <code>MDURATION</code><code>MIRR</code><code>NOMINAL</code><code>NPER</code><code>NPV</code>
+  <code>PMT</code><code>PPMT</code><code>PRICE</code><code>PRICEDISC</code><code>PRICEMAT</code>
+  <code>PV</code><code>RATE</code><code>RECEIVED</code><code>SLN</code><code>SYD</code>
+  <code>XIRR</code><code>XNPV</code><code>YIELD</code><code>YIELDDISC</code><code>YIELDMAT</code>
+</div>
+
+<h4>Statistical (40 functions)</h4>
+<div class="func-grid">
+  <code>AVERAGE</code><code>AVERAGEA</code><code>AVERAGEIF</code><code>AVERAGEIFS</code><code>CORREL</code>
+  <code>COUNT</code><code>COUNTA</code><code>COUNTBLANK</code><code>COUNTIF</code><code>COUNTIFS</code>
+  <code>FORECAST</code><code>FREQUENCY</code><code>GEOMEAN</code><code>HARMEAN</code><code>INTERCEPT</code>
+  <code>LARGE</code><code>LINEST</code><code>MAX</code><code>MAXA</code><code>MEDIAN</code>
+  <code>MIN</code><code>MINA</code><code>MODE</code><code>PERCENTILE</code><code>PERCENTRANK</code>
+  <code>QUARTILE</code><code>RANK</code><code>RSQ</code><code>SLOPE</code><code>SMALL</code>
+  <code>STDEV</code><code>STDEVA</code><code>STDEVP</code><code>STDEVPA</code><code>TREND</code>
+  <code>TRIMMEAN</code><code>VAR</code><code>VARA</code><code>VARP</code><code>VARPA</code>
+</div>
+
+<h4>Engineering (35 functions)</h4>
+<div class="func-grid">
+  <code>BIN2DEC</code><code>BIN2HEX</code><code>BIN2OCT</code><code>COMPLEX</code><code>CONVERT</code>
+  <code>DEC2BIN</code><code>DEC2HEX</code><code>DEC2OCT</code><code>DELTA</code><code>ERF</code>
+  <code>ERFC</code><code>GESTEP</code><code>HEX2BIN</code><code>HEX2DEC</code><code>HEX2OCT</code>
+  <code>IMABS</code><code>IMAGINARY</code><code>IMARGUMENT</code><code>IMCONJUGATE</code><code>IMCOS</code>
+  <code>IMDIV</code><code>IMEXP</code><code>IMLN</code><code>IMLOG10</code><code>IMLOG2</code>
+  <code>IMPOWER</code><code>IMPRODUCT</code><code>IMREAL</code><code>IMSIN</code><code>IMSQRT</code>
+  <code>IMSUB</code><code>IMSUM</code><code>OCT2BIN</code><code>OCT2DEC</code><code>OCT2HEX</code>
+</div>
+
+<h4>Information (15 functions)</h4>
+<div class="func-grid">
+  <code>ERROR.TYPE</code><code>ISBLANK</code><code>ISERR</code><code>ISERROR</code><code>ISEVEN</code>
+  <code>ISLOGICAL</code><code>ISNA</code><code>ISNONTEXT</code><code>ISNUMBER</code><code>ISODD</code>
+  <code>ISREF</code><code>ISTEXT</code><code>N</code><code>NA</code><code>TYPE</code>
+</div>
+
+<h4>Data Analysis (34 functions)</h4>
+<p>Scientific and signal-processing functions unique to KherveSheet:</p>
+<table>
+<tr><th>Category</th><th>Functions</th></tr>
+<tr><td>Derivative</td><td><code>DERIV</code>, <code>DERIV2</code>, <code>DERIV.SMOOTH</code></td></tr>
+<tr><td>Integration</td><td><code>TRAPZ</code>, <code>CUMTRAPZ</code>, <code>SIMPS</code></td></tr>
+<tr><td>Smoothing &amp; Filtering</td><td><code>SAVGOL</code>, <code>MOVAVG</code>, <code>EWMA</code>, <code>LOWPASS</code>, <code>HIGHPASS</code>, <code>BANDPASS</code>, <code>MEDIAN.FILTER</code></td></tr>
+<tr><td>Normalisation</td><td><code>NORM.MAX</code>, <code>NORM.AREA</code>, <code>NORM.MINMAX</code>, <code>NORM.ZSCORE</code>, <code>NORM.PEAK</code>, <code>NORM.RANGE</code></td></tr>
+<tr><td>FFT / Spectral</td><td><code>FFT.MAG</code>, <code>FFT.PHASE</code>, <code>FFT.FREQ</code>, <code>FFT.REAL</code>, <code>FFT.IMAG</code>, <code>IFFT</code>, <code>FFT.POWER</code></td></tr>
+<tr><td>Interpolation</td><td><code>INTERP.LINEAR</code>, <code>INTERP.SPLINE</code>, <code>INTERP.AKIMA</code>, <code>RESAMPLE</code></td></tr>
+<tr><td>Peak Detection</td><td><code>FIND.PEAKS</code>, <code>FIND.PEAKS.X</code>, <code>FIND.PEAKS.Y</code></td></tr>
+<tr><td>Baseline</td><td><code>BASELINE.POLY</code>, <code>BASELINE.ALS</code></td></tr>
+</table>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="charts">
+<h2>7. Charts &amp; Plotting</h2>
+
+<h3>Creating a Chart</h3>
+<ol>
+  <li>Select the data range you want to plot (one or more columns).</li>
+  <li>Go to <b>Insert &gt; Chart</b> and choose a chart type, or use the Chart dropdown on the toolbar.</li>
+  <li>The chart appears as a floating overlay on the sheet.</li>
+</ol>
+
+<h3>Chart Types</h3>
+<table>
+<tr><th>Type</th><th>Description</th></tr>
+<tr><td>Line</td><td>Connected data points with lines</td></tr>
+<tr><td>Scatter</td><td>Individual data points (XY plot)</td></tr>
+<tr><td>Line+Symbol</td><td>Lines with markers at each data point</td></tr>
+<tr><td>Bar</td><td>Vertical or horizontal bar chart</td></tr>
+<tr><td>Step</td><td>Staircase-style plot</td></tr>
+<tr><td>Stem</td><td>Vertical stems with dots at data points</td></tr>
+<tr><td>Histogram</td><td>Automatic binning of data distribution</td></tr>
+<tr><td>Box</td><td>Box-and-whisker plot showing statistical distribution</td></tr>
+<tr><td>Heatmap</td><td>2D colour-mapped array</td></tr>
+<tr><td>3D Surface</td><td>3D surface plot with automatic mesh generation</td></tr>
+</table>
+
+<h3>Moving &amp; Resizing</h3>
+<ul>
+  <li><b>Move</b>: drag from the chart border or margin area.</li>
+  <li><b>Resize</b>: drag any of the 8 circular handles on the chart border.</li>
+  <li><b>Preset sizes</b>: right-click &gt; Size. Includes screen presets (Small, Medium, Large, HD) and journal publication sizes (Single Column, 1.5 Column, Full Width, Nature, ACS, Square).</li>
+</ul>
+
+<h3>Data Range Highlights</h3>
+<p>When a chart is selected, coloured overlays appear on the source data columns. Drag the overlay handles to change the data range, or drag the interior to move the range. Changes re-plot the chart automatically.</p>
+
+<h3>Chart Context Menu (Right-Click)</h3>
+<table>
+<tr><th>Option</th><th>Description</th></tr>
+<tr><td>Update Plot</td><td>Refresh chart from current sheet data</td></tr>
+<tr><td>X Axis / Y Axis</td><td>Scale (Linear/Log), Invert, Axis Properties</td></tr>
+<tr><td>Pan Axes</td><td>Drag to pan the axes interactively</td></tr>
+<tr><td>Add Trendline</td><td>Open the trendline fitting dialog</td></tr>
+<tr><td>Annotations</td><td>Add text, arrow, or line annotations</td></tr>
+<tr><td>Size</td><td>Preset dimension options</td></tr>
+<tr><td>Export Image</td><td>Save as PNG (300 dpi), PDF, or SVG</td></tr>
+<tr><td>Plot Templates</td><td>Save or apply styling templates</td></tr>
+<tr><td>General Properties</td><td>Figure-level styling (sketch effect, margins)</td></tr>
+<tr><td>Series Properties</td><td>Per-series visual customisation</td></tr>
+<tr><td>Axis Properties</td><td>Full axis configuration dialog</td></tr>
+<tr><td>Edit Legend</td><td>Legend text, position, and appearance</td></tr>
+</table>
+
+<h3>Series Properties</h3>
+<p>The Series Properties dialog lets you customise each data series independently:</p>
+<ul>
+  <li><b>Data tab</b> &mdash; X/Y range, first row as header, per-series source mapping.</li>
+  <li><b>Line tab</b> &mdash; label, plot type, line style (Solid/Dashed/Dotted/Dash-dot/None), width, colour.</li>
+  <li><b>Symbol tab</b> &mdash; marker shape (Circle, Square, Diamond, Triangle, Plus, Cross, Star, etc.), size, fill colour, edge colour.</li>
+  <li><b>Fill tab</b> &mdash; fill mode (None, Fill to Zero, Fill to Series), target series, colour, opacity.</li>
+  <li>Toggle series visibility with checkboxes. Add or remove series.</li>
+</ul>
+
+<h3>Axis Properties</h3>
+<p>Double-click a chart or use the context menu to open the Axis Properties dialog with six configuration tabs:</p>
+<ul>
+  <li><b>Scale</b> &mdash; Linear, Log, Symlog, or Logit. Auto or manual min/max limits. Inversion toggle.</li>
+  <li><b>Title</b> &mdash; show/hide, text, colour, font, size (4&ndash;96 pt), bold/italic, rotation.</li>
+  <li><b>Tick Labels</b> &mdash; show/hide, format (Auto, Decimal, Scientific, Standard Scientific, Engineering, Percentage, Plain), decimal places (0&ndash;12), prefix/suffix, colour, size, rotation.</li>
+  <li><b>Line &amp; Ticks</b> &mdash; spine visibility/colour/width, major tick direction/length/width/colour/count, minor tick subdivisions.</li>
+  <li><b>Grids</b> &mdash; major/minor grid visibility, colour, opacity, style (Solid/Dashed/Dotted/Dash-dot), width.</li>
+  <li><b>Secondary Axis</b> &mdash; independent spine, tick, label, and title configuration for the top/right axis.</li>
+</ul>
+
+<h3>Annotations</h3>
+<p>Add draggable annotations via the context menu:</p>
+<ul>
+  <li><b>Text</b> &mdash; draggable text label with a rounded box.</li>
+  <li><b>Arrow</b> &mdash; annotation arrow from point to point with optional text.</li>
+  <li><b>Line</b> &mdash; horizontal or vertical reference line, fully draggable.</li>
+</ul>
+
+<h3>Exporting Charts</h3>
+<p>Right-click a chart and choose <b>Export Image</b>:</p>
+<ul>
+  <li><b>PNG</b> at 300 dpi (suitable for presentations and reports).</li>
+  <li><b>PDF</b> (vector format for publication).</li>
+  <li><b>SVG</b> (vector format for web and editing).</li>
+</ul>
+
+<h3>Plot Templates</h3>
+<p>Save a chart's visual styling (colours, fonts, axis settings) as a template via <b>Plot Templates &gt; Save as Plot Template</b>. Apply a saved template to any chart to reuse the styling with different data.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="trendlines">
+<h2>8. Trendlines &amp; Curve Fitting</h2>
+<p>Right-click a chart and select <b>Add Trendline</b> to open the Trendline dialog. Choose from 25+ models:</p>
+
+<h3>Available Models</h3>
+<table>
+<tr><th>Category</th><th>Models</th></tr>
+<tr><td>Polynomial</td><td>Linear, Quadratic, Cubic, Polynomial (order 2&ndash;20)</td></tr>
+<tr><td>Exponential</td><td>Exponential, Exponential Decay, Double Exponential, Stretched Exponential</td></tr>
+<tr><td>Power &amp; Logarithmic</td><td>Power, Allometric, Logarithmic, Square Root, Inverse (1/x), Hyperbolic, Reciprocal Quadratic</td></tr>
+<tr><td>Sigmoid</td><td>Logistic (Sigmoid), Boltzmann Sigmoid</td></tr>
+<tr><td>Peaks</td><td>Gaussian, Lorentzian, Sine Wave</td></tr>
+<tr><td>Biochemistry</td><td>Hill Equation, Michaelis&ndash;Menten, Error Function (erf)</td></tr>
+<tr><td>Non-parametric</td><td>Moving Average (configurable period 2&ndash;100)</td></tr>
+</table>
+
+<h3>Fit Configuration</h3>
+<ul>
+  <li>Select which data series to fit.</li>
+  <li>Smart initial parameter guesses for each model.</li>
+  <li>Live preview of the fitted curve on the chart.</li>
+  <li>Option to display the equation and R&sup2; value on the chart.</li>
+</ul>
+
+<h3>Goodness-of-Fit Statistics</h3>
+<p>Every fit reports: R&sup2;, Adjusted R&sup2;, RMSE, Reduced &chi;&sup2;, AIC (Akaike), BIC (Bayesian), SS<sub>res</sub>, and SS<sub>tot</sub>.</p>
+
+<p class="tip"><b>Tip:</b> Trendlines are saved with the chart and persist across sessions. Remove a trendline via the Series Properties dialog.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="peak-fitting">
+<h2>9. Peak Fitting</h2>
+<p>Open via <b>Tools &gt; Curve Fitting</b> or the toolbar button. The advanced fitting dialog supports multi-peak decomposition using lmfit models &mdash; ideal for spectroscopy, XRD, and XPS data.</p>
+
+<h3>Peak Functions (40+)</h3>
+<p>Built-in lmfit models include:</p>
+<ul>
+  <li>Gaussian, Lorentzian, Voigt, Pseudo-Voigt, Pearson VII/IV</li>
+  <li>Split Lorentzian, Moffat, Doniach&ndash;Sunjic</li>
+  <li>Skewed Gaussian, Skewed Voigt, Exponentially-modified Gaussian</li>
+  <li>Breit&ndash;Wigner&ndash;Fano, Log-normal, Student's t</li>
+  <li>Damped oscillator, Damped harmonic oscillator</li>
+  <li>Thermal distributions: Bose&ndash;Einstein, Fermi&ndash;Dirac</li>
+  <li>Step functions (linear/erf/atan/logistic), Rectangle</li>
+  <li>Exponential decay, Power law, Sine, Linear, Quadratic, Constant</li>
+</ul>
+
+<h3>Custom Functions</h3>
+<p>Define your own peak shape with a mathematical expression in <code>x</code> and free parameters. Available operations: <code>exp</code>, <code>log</code>, <code>ln</code>, <code>sqrt</code>, <code>sin</code>, <code>cos</code>, <code>erf</code>, <code>erfc</code>, <code>gamma</code>, and more. Parameters are automatically extracted from the expression.</p>
+
+<h3>Background Models</h3>
+<table>
+<tr><th>Type</th><th>Models</th></tr>
+<tr><td>Analytic</td><td>Constant, Linear, Polynomial (degree 2&ndash;3)</td></tr>
+<tr><td>Data-derived</td><td>Shirley, Reversed Shirley, Active Shirley, Asymmetric Least Squares (ALS)</td></tr>
+</table>
+
+<h3>Parameter Control</h3>
+<ul>
+  <li>Per-parameter value, min/max bounds.</li>
+  <li>Fix parameters (toggle vary on/off).</li>
+  <li>Tie parameters across peaks with expressions (e.g. <code>p0+1.5</code> or <code>0.5*p1</code>).</li>
+</ul>
+
+<h3>Fitting Workflow</h3>
+<ol>
+  <li>Select the data range using draggable delimiters on the plot.</li>
+  <li>Add peak functions and set initial parameters.</li>
+  <li>Choose a background model.</li>
+  <li>Click <b>Fit</b> to run the optimisation.</li>
+  <li>Inspect the live preview (data, components, total fit, residual) and fit report.</li>
+  <li>Write fitted curves back to the sheet (background, components, total, residual).</li>
+</ol>
+
+<h3>Plot Controls</h3>
+<p>Zoom in/out, axis nudge buttons, zoom reset, zoom-to-selection, and grid toggle are available within the fitting dialog.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="science">
+<h2>10. Science Tools</h2>
+<p>Access via the <b>Science</b> menu or the Science toolbar button. Each tool opens a dedicated dialog:</p>
+
+<h3>Primary Tools</h3>
+<table>
+<tr><th>Tool</th><th>Description</th></tr>
+<tr><td>Normalisation</td><td>Normalise data using various methods (max, area, min-max, z-score, peak, range)</td></tr>
+<tr><td>Integration</td><td>Numerical integration (trapezoidal, Simpson's, cumulative)</td></tr>
+<tr><td>Derivative</td><td>Calculate first or second derivative, smooth derivative</td></tr>
+<tr><td>Smooth</td><td>Apply smoothing filters (Savitzky&ndash;Golay, moving average, EWMA)</td></tr>
+<tr><td>FFT</td><td>Fast Fourier Transform: magnitude, phase, frequency, power spectrum</td></tr>
+<tr><td>Interpolation</td><td>Interpolate data (linear, spline, Akima)</td></tr>
+<tr><td>Find Peaks</td><td>Detect and locate peaks in data</td></tr>
+</table>
+
+<h3>Advanced Tools</h3>
+<table>
+<tr><th>Tool</th><th>Description</th></tr>
+<tr><td>Baseline Subtraction</td><td>Remove baseline from spectroscopic data (polynomial, ALS)</td></tr>
+<tr><td>Crop</td><td>Crop data to a specified range</td></tr>
+<tr><td>Band-pass Filter</td><td>Apply band-pass filtering to signals</td></tr>
+<tr><td>Calibration</td><td>Calibrate data using reference points</td></tr>
+<tr><td>Resampling</td><td>Resample data to a different frequency or spacing</td></tr>
+<tr><td>Cross-Correlation</td><td>Calculate cross-correlation between datasets</td></tr>
+<tr><td>Signal-to-Noise</td><td>Analyse signal-to-noise ratio</td></tr>
+<tr><td>Envelope</td><td>Extract the envelope from a signal</td></tr>
+<tr><td>Kramers&ndash;Kronig</td><td>Apply Kramers&ndash;Kronig transformation</td></tr>
+<tr><td>Deconvolution</td><td>Perform signal deconvolution</td></tr>
+</table>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="solver">
+<h2>11. Solver</h2>
+<p>Open via <b>Tools &gt; Solver</b> or the Solver toolbar button. The Solver finds optimal values for variable cells to minimise, maximise, or reach a target value in an objective cell, subject to constraints.</p>
+
+<h3>Setting Up</h3>
+<ol>
+  <li><b>Set Objective</b> &mdash; click a cell in the sheet (e.g. <code>$D$5</code>) to set the objective.</li>
+  <li><b>To</b> &mdash; choose Max, Min, or Value Of (enter a target value).</li>
+  <li><b>Variable Cells</b> &mdash; click cells or enter ranges (e.g. <code>A1:A5,C1:D3</code>) for the values the solver can change.</li>
+  <li><b>Constraints</b> &mdash; add constraints using <code>&lt;=</code>, <code>&gt;=</code>, or <code>=</code> operators. Reference cells or enter numeric values.</li>
+  <li><b>Non-negative</b> &mdash; optionally restrict all variable cells to non-negative values.</li>
+</ol>
+
+<h3>Solving Methods</h3>
+<table>
+<tr><th>Method</th><th>Best For</th><th>Engine</th></tr>
+<tr><td>GRG Nonlinear</td><td>Smooth nonlinear problems</td><td>scipy SLSQP / Powell</td></tr>
+<tr><td>LP Simplex</td><td>Linear problems</td><td>scipy linprog (HiGHS)</td></tr>
+<tr><td>Evolutionary</td><td>Non-smooth or discontinuous problems</td><td>scipy differential_evolution</td></tr>
+</table>
+
+<p class="tip"><b>Tip:</b> The dialog is non-modal &mdash; you can click cells in the sheet while the Solver is open to insert their references into input fields.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="insert">
+<h2>12. Insert Menu</h2>
+
+<h3>Charts</h3>
+<p>See <a href="#charts">Charts &amp; Plotting</a> for details on all 10 chart types.</p>
+
+<h3>Images</h3>
+<p><b>Insert &gt; Image</b> lets you embed an image from file. Once inserted, images can be moved, resized, cropped, colour-adjusted (hue/saturation/brightness), and replaced. All image operations are undoable.</p>
+
+<h3>Shapes</h3>
+<p><b>Insert &gt; Shapes</b> opens a gallery of shapes organised by category. Shapes can be moved, resized, and styled (fill, border, colour). Shape changes are undoable.</p>
+
+<h3>Equations</h3>
+<p><b>Insert &gt; Equation</b> embeds a LaTeX-rendered equation. Choose from presets or type custom LaTeX. Configure font size, text colour, background colour, and border. Equations can be moved and resized. All edits are undoable.</p>
+
+<h3>Sparklines</h3>
+<p><b>Insert &gt; Sparkline</b> embeds a miniature chart (line, bar, or win/loss) inside a cell to visualise trends inline with your data.</p>
+
+<h3>Symbols</h3>
+<p>The <b>Symbol</b> toolbar button opens a visual grid of mathematical and special symbols for insertion.</p>
+
+<h3>Other Inserts</h3>
+<table>
+<tr><th>Item</th><th>Shortcut</th><th>Description</th></tr>
+<tr><td>Link</td><td><kbd>Ctrl+K</kbd></td><td>Insert a clickable hyperlink</td></tr>
+<tr><td>Checkbox</td><td></td><td>Insert an interactive checkbox control</td></tr>
+<tr><td>Dropdown</td><td></td><td>Insert a dropdown list with custom options</td></tr>
+<tr><td>Emoji</td><td></td><td>Insert an emoji from a visual grid</td></tr>
+<tr><td>Comment</td><td><kbd>Ctrl+Alt+M</kbd></td><td>Insert a threaded comment</td></tr>
+<tr><td>Note</td><td><kbd>Shift+F2</kbd></td><td>Insert a quick note (red triangle indicator)</td></tr>
+<tr><td>Pivot / Transpose</td><td></td><td>Transpose or pivot selected data</td></tr>
+<tr><td>Row Above</td><td></td><td>Insert row above current position</td></tr>
+<tr><td>Row Below</td><td></td><td>Insert row below current position</td></tr>
+<tr><td>Column</td><td></td><td>Insert a new column</td></tr>
+<tr><td>Sheet</td><td></td><td>Insert a new sheet tab</td></tr>
+</table>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="data">
+<h2>13. Data Operations</h2>
+
+<h3>Column Designations</h3>
+<p>Use <b>Data &gt; Set Column As</b> to designate columns as X or Y data for plotting. Designated columns are used as the default data source when creating charts.</p>
+
+<h3>Sorting</h3>
+<ul>
+  <li><b>Data &gt; Sort A &rarr; Z</b> &mdash; Sort selected data in ascending order.</li>
+  <li><b>Data &gt; Sort Z &rarr; A</b> &mdash; Sort selected data in descending order.</li>
+</ul>
+<p>Sorting is undoable &mdash; press <kbd>Ctrl+Z</kbd> to restore the original order.</p>
+
+<h3>Spell Checking</h3>
+<ul>
+  <li><b>Tools &gt; Spelling</b> (<kbd>F7</kbd>) &mdash; Open the spell checker dialog.</li>
+  <li><b>Tools &gt; Check Spelling as You Type</b> &mdash; Toggle live spell-check underlines.</li>
+</ul>
+
+<h3>Statistics on Selection</h3>
+<p>Use <b>Tools &gt; Statistics on Selection</b> to view Average, Count, and Sum of selected cells. These values also appear in the status bar at the bottom of the window.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="view">
+<h2>14. View &amp; Themes</h2>
+
+<h3>View Modes</h3>
+<ul>
+  <li><b>Normal</b> &mdash; Standard grid view.</li>
+  <li><b>Page Layout</b> &mdash; Shows page boundaries for printing.</li>
+</ul>
+
+<h3>Display Options</h3>
+<ul>
+  <li><b>Gridlines</b> &mdash; Toggle cell gridline visibility.</li>
+  <li><b>Headings</b> &mdash; Toggle row and column header visibility.</li>
+  <li><b>Zoom In/Out</b> (<kbd>Ctrl+=</kbd> / <kbd>Ctrl+-</kbd>) &mdash; Adjust zoom level.</li>
+  <li><b>Reset Zoom</b> (<kbd>Ctrl+0</kbd>) &mdash; Return to default zoom.</li>
+</ul>
+
+<h3>Object Layering</h3>
+<ul>
+  <li><b>Bring Forward</b> / <b>Send Backward</b> &mdash; Change the z-order of overlaid objects (charts, images, shapes).</li>
+</ul>
+
+<h3>Themes</h3>
+<p>KherveSheet includes 25 built-in themes accessible via <b>View &gt; Theme</b>. Your choice persists across sessions.</p>
+
+<h4>Primary Themes</h4>
+<ul>
+  <li><b>Light</b> &mdash; Clean white/blue theme (default).</li>
+  <li><b>Dark</b> &mdash; Dark grey with blue accents.</li>
+  <li><b>Blue Dark</b> &mdash; Navy-tinted dark theme.</li>
+  <li><b>Warm Light</b> &mdash; Beige/tan warm tones.</li>
+</ul>
+
+<h4>Additional Light Themes</h4>
+<p>Arctic, Mint, Rose, Lavender, Peach, Sage, Sky, Sand, Coral, and green-tinted variants (Emerald, Fern, Pistachio, Seafoam, Olive, Teal, Jade).</p>
+
+<h4>Additional Dark Themes</h4>
+<p>Pine, Charcoal, Midnight, Dracula, Monokai, Nord, Solarized Dark, Gruvbox Dark, Forest, Ocean, Plum, Copper.</p>
+
+<h3>AI Chat Sidebar</h3>
+<p>Toggle the AI Chat sidebar from <b>View &gt; AI Chat Sidebar</b> or <b>Tools &gt; AI Chat</b>.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="version-control">
+<h2>15. Version Control</h2>
+<p>KherveSheet includes built-in Git-based version control for tracking changes to your workbooks. Access via <b>File &gt; Version Control</b>.</p>
+
+<h3>Automatic Versioning</h3>
+<p>Each save automatically creates a commit in a per-document Git repository, providing a complete history of changes.</p>
+
+<h3>Version History</h3>
+<p>Open <b>File &gt; Version Control &gt; Version History</b> to browse the commit history with a three-pane interface:</p>
+<ul>
+  <li><b>Commit list</b> with a DAG graph showing branching and merges, timestamps, messages, and authors.</li>
+  <li><b>Commit details</b> showing metadata and branch labels.</li>
+  <li><b>Diff viewer</b> with syntax-highlighted added/removed lines.</li>
+</ul>
+
+<h3>Branches</h3>
+<ul>
+  <li>View the current branch and switch between branches.</li>
+  <li>Create new branches from any commit.</li>
+  <li>Delete local branches (the current branch cannot be deleted).</li>
+</ul>
+
+<h3>Remote Sync</h3>
+<ul>
+  <li><b>Push</b> &mdash; push commits to a remote repository.</li>
+  <li><b>Pull</b> &mdash; fetch and fast-forward from a remote.</li>
+  <li><b>Configure Remote</b> &mdash; add or update the remote URL.</li>
+</ul>
+
+<h3>Restore</h3>
+<p>Click <b>Restore this version</b> in the history dialog to roll back the working tree to a previous commit. Save afterwards to record the rollback as a new commit.</p>
+
+<p class="note"><b>Note:</b> Version control requires the <code>pygit2</code> library. If unavailable, the application remains fully functional without versioning features.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="examples">
+<h2>16. Examples &amp; Templates</h2>
+<p>The <b>Examples</b> menu provides ready-to-use content:</p>
+
+<h3>Worked Examples</h3>
+<p>Pre-built <code>.ksheet</code> files demonstrating KherveSheet features with real data and charts.</p>
+
+<h3>Exercises</h3>
+<p>Undergraduate exercises grouped by UK year of study, suitable for teaching and self-study.</p>
+
+<h3>Templates</h3>
+<p>Both rich <code>.ksheet</code> templates (organised by category) and programmatically-generated template builders for common data layouts.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="printing">
+<h2>17. Printing</h2>
+<p>Press <kbd>Ctrl+P</kbd> or use <b>File &gt; Print</b> to open the print dialog. Features include:</p>
+<ul>
+  <li>Print preview</li>
+  <li>Page setup (orientation, paper size, margins)</li>
+  <li>Scaling options</li>
+  <li>Print area selection</li>
+</ul>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="shortcuts">
+<h2>18. Keyboard Shortcuts</h2>
+
+<h3>File</h3>
+<table>
+<tr><th>Shortcut</th><th>Action</th></tr>
+<tr><td><kbd>Ctrl+N</kbd></td><td>New workbook</td></tr>
+<tr><td><kbd>Ctrl+Shift+N</kbd></td><td>New window</td></tr>
+<tr><td><kbd>Ctrl+O</kbd></td><td>Open file</td></tr>
+<tr><td><kbd>Ctrl+S</kbd></td><td>Save</td></tr>
+<tr><td><kbd>Ctrl+Shift+S</kbd></td><td>Save As</td></tr>
+<tr><td><kbd>Ctrl+P</kbd></td><td>Print</td></tr>
+<tr><td><kbd>Ctrl+Q</kbd></td><td>Exit</td></tr>
+</table>
+
+<h3>Editing</h3>
+<table>
+<tr><th>Shortcut</th><th>Action</th></tr>
+<tr><td><kbd>Ctrl+Z</kbd></td><td>Undo</td></tr>
+<tr><td><kbd>Ctrl+Y</kbd></td><td>Redo</td></tr>
+<tr><td><kbd>Ctrl+X</kbd></td><td>Cut</td></tr>
+<tr><td><kbd>Ctrl+C</kbd></td><td>Copy</td></tr>
+<tr><td><kbd>Ctrl+V</kbd></td><td>Paste</td></tr>
+<tr><td><kbd>Ctrl+Shift+V</kbd></td><td>Paste Values Only</td></tr>
+<tr><td><kbd>Del</kbd></td><td>Clear cells</td></tr>
+</table>
+
+<h3>Formatting</h3>
+<table>
+<tr><th>Shortcut</th><th>Action</th></tr>
+<tr><td><kbd>Ctrl+1</kbd></td><td>Format Cells dialog</td></tr>
+<tr><td><kbd>Ctrl+B</kbd></td><td>Bold</td></tr>
+<tr><td><kbd>Ctrl+I</kbd></td><td>Italic</td></tr>
+<tr><td><kbd>Ctrl+U</kbd></td><td>Underline</td></tr>
+</table>
+
+<h3>Formulas</h3>
+<table>
+<tr><th>Shortcut</th><th>Action</th></tr>
+<tr><td><kbd>Alt+Shift+=</kbd></td><td>AutoSum</td></tr>
+<tr><td><kbd>Shift+F3</kbd></td><td>Insert Function dialog</td></tr>
+</table>
+
+<h3>View</h3>
+<table>
+<tr><th>Shortcut</th><th>Action</th></tr>
+<tr><td><kbd>Ctrl+=</kbd></td><td>Zoom In</td></tr>
+<tr><td><kbd>Ctrl+-</kbd></td><td>Zoom Out</td></tr>
+<tr><td><kbd>Ctrl+0</kbd></td><td>Reset Zoom</td></tr>
+</table>
+
+<h3>Insert</h3>
+<table>
+<tr><th>Shortcut</th><th>Action</th></tr>
+<tr><td><kbd>Ctrl+K</kbd></td><td>Insert Link</td></tr>
+<tr><td><kbd>Ctrl+Alt+M</kbd></td><td>Insert Comment</td></tr>
+<tr><td><kbd>Shift+F2</kbd></td><td>Insert Note</td></tr>
+</table>
+
+<h3>Tools</h3>
+<table>
+<tr><th>Shortcut</th><th>Action</th></tr>
+<tr><td><kbd>F7</kbd></td><td>Spelling</td></tr>
+</table>
+</section>
+
+</div><!-- .wrap -->
+
+<footer>
+  KherveSheet &mdash; User Guide &mdash; GPL-3.0 Licence
+</footer>
+
+</body>
+</html>
