@@ -45,11 +45,9 @@ class MainWindow(QMainWindow):
         self._recent_files: list = (
             self._settings.value("recent_files", []) or [])
         self._undo_stack = QUndoStack(self)
-        # Page setup defaults (used by Print).
-        self._page_orientation = "portrait"
-        self._page_size = ("A4", 210, 297)
-        self._page_margins_mm = {"top": 25.4, "bottom": 25.4,
-                                 "left": 19.05, "right": 19.05}
+        # Print / page-setup state — single source of truth, shared by the
+        # unified Print dialog (orientation, paper, margins, scaling, etc.).
+        self._page_setup_state: dict = {}
         self._init_ui()
         # Open files dropped onto the window (grid included).
         self.setAcceptDrops(True)
@@ -137,13 +135,9 @@ class MainWindow(QMainWindow):
         exp.addAction("Excel…", self._export_excel)
 
         file_menu.addSeparator()
-        file_menu.addAction("&Print…", self._print_direct, "Ctrl+P")
-        file_menu.addAction("Print Pre&view…", self._print_preview)
-        file_menu.addAction("Page Set&up…", self._page_setup)
-        file_menu.addAction("Print &Selection…", self._print_selection)
-        file_menu.addAction("Set Print &Area", self._set_print_area)
-        file_menu.addAction("Clear Print A&rea", self._clear_print_area)
-        exp.addAction("PDF…", self._export_pdf)
+        # One entry for everything print-related: preview, page setup,
+        # orientation, paper, margins, scaling, print area, print and PDF.
+        file_menu.addAction("&Print…", self._open_print_dialog, "Ctrl+P")
 
         file_menu.addSeparator()
         self._recent_menu = file_menu.addMenu("Recent Files")
@@ -226,31 +220,6 @@ class MainWindow(QMainWindow):
         self._ai_chat_act.setCheckable(True)
         self._ai_chat_act.setChecked(False)
         self._ai_chat_act.toggled.connect(self._toggle_ai_chat)
-
-        # ── Page Layout ─────────────────────────────────────────────
-        page_menu = mb.addMenu("Page &Layout")
-
-        page_menu.addAction("Margins\u2026", self._page_margins)
-        orient_menu = page_menu.addMenu("Orientation")
-        self._orient_portrait = orient_menu.addAction(
-            "Portrait", lambda: self._set_orientation("portrait"))
-        self._orient_portrait.setCheckable(True)
-        self._orient_portrait.setChecked(True)
-        self._orient_landscape = orient_menu.addAction(
-            "Landscape", lambda: self._set_orientation("landscape"))
-        self._orient_landscape.setCheckable(True)
-
-        size_menu = page_menu.addMenu("Size")
-        for name, w, h in [("Letter", 215.9, 279.4),
-                            ("A4", 210, 297),
-                            ("A3", 297, 420),
-                            ("Legal", 215.9, 355.6)]:
-            size_menu.addAction(
-                f"{name} ({w:.0f} \u00d7 {h:.0f} mm)",
-                lambda n=name, ww=w, hh=h: self._set_page_size(
-                    n, ww, hh))
-        page_menu.addSeparator()
-        page_menu.addAction("Print\u2026", self._print_preview, "Ctrl+P")
 
         # ── Insert ───────────────────────────────────────────────────
         insert_menu = mb.addMenu("&Insert")
@@ -483,31 +452,10 @@ class MainWindow(QMainWindow):
         std.addAction(
             icons.save_file_icon(_ICO), "Save", self._save_file)
 
-        # ── Print button with dropdown (after Save) ────────────────
-        self._print_btn = QToolButton()
-        self._print_btn.setIcon(icons.print_icon(_ICO))
-        self._print_btn.setToolTip("Print Preview (Ctrl+P)")
-        self._print_btn.setPopupMode(QToolButton.MenuButtonPopup)
-        self._print_btn.clicked.connect(self._print_preview)
-        print_menu = QMenu(self._print_btn)
-        print_menu.addAction("Print Preview\u2026", self._print_preview)
-        print_menu.addSeparator()
-        print_menu.addAction("Margins\u2026", self._page_margins)
-        pm_orient = print_menu.addMenu("Orientation")
-        pm_orient.addAction("Portrait",
-                            lambda: self._set_orientation("portrait"))
-        pm_orient.addAction("Landscape",
-                            lambda: self._set_orientation("landscape"))
-        pm_size = print_menu.addMenu("Size")
-        for _pn, _pw, _ph in [("Letter", 215.9, 279.4),
-                               ("A4", 210, 297),
-                               ("A3", 297, 420),
-                               ("Legal", 215.9, 355.6)]:
-            pm_size.addAction(
-                f"{_pn} ({_pw:.0f} \u00d7 {_ph:.0f} mm)",
-                lambda n=_pn, w=_pw, h=_ph: self._set_page_size(n, w, h))
-        self._print_btn.setMenu(print_menu)
-        std.addWidget(self._print_btn)
+        # ── Print button (opens the unified Print dialog) ──────────
+        std.addAction(
+            icons.print_icon(_ICO), "Print",
+            self._open_print_dialog).setToolTip("Print (Ctrl+P)")
 
         std.addSeparator()
 
@@ -4064,122 +4012,26 @@ class MainWindow(QMainWindow):
             s.table.horizontalHeader().setVisible(show)
             s.table.verticalHeader().setVisible(show)
 
-    # ── Page Layout operations ───────────────────────────────────────
-    def _page_margins(self):
-        """Open a dialog to set page margins for printing."""
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Page Margins")
-        from PyQt5.QtWidgets import (QFormLayout, QDoubleSpinBox,
-                                     QDialogButtonBox)
-        layout = QFormLayout(dlg)
-        margins = getattr(self, '_page_margins_mm',
-                          {"top": 25.4, "bottom": 25.4,
-                           "left": 19.05, "right": 19.05})
-        spins = {}
-        for side in ("top", "bottom", "left", "right"):
-            sp = QDoubleSpinBox()
-            sp.setRange(0, 100)
-            sp.setDecimals(1)
-            sp.setSuffix(" mm")
-            sp.setValue(margins[side])
-            layout.addRow(side.capitalize() + ":", sp)
-            spins[side] = sp
-        bbox = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bbox.accepted.connect(dlg.accept)
-        bbox.rejected.connect(dlg.reject)
-        layout.addRow(bbox)
-        if dlg.exec_() == QDialog.Accepted:
-            self._page_margins_mm = {
-                s: spins[s].value() for s in spins}
-            self._status_msg("Margins updated", 2000)
+    # ── Printing ─────────────────────────────────────────────────────
+    def _open_print_dialog(self):
+        """Open the single, unified print dialog.
 
-    def _set_orientation(self, orient: str):
-        """Set page orientation for printing."""
-        is_portrait = orient == "portrait"
-        self._orient_portrait.setChecked(is_portrait)
-        self._orient_landscape.setChecked(not is_portrait)
-        self._page_orientation = orient
-        self._status_msg(
-            f"Orientation: {orient.capitalize()}", 2000)
-
-    def _set_page_size(self, name: str, w: float, h: float):
-        """Set page size for printing."""
-        self._page_size = (name, w, h)
-        self._status_msg(f"Page size: {name} ({w:.0f} × {h:.0f} mm)",
-                         2000)
-
-    def _print_kwargs(self):
-        """Gather current page-setup state for the printing module."""
-        ps = getattr(self, '_page_setup_state', {})
+        Covers preview, orientation, paper size, margins, scaling, print
+        area / selection, gridline & heading toggles, printing and PDF
+        export — everything print-related in one place.
+        """
+        s = self._active_sheet()
+        if not s:
+            return
+        from khervesheet.printing import open_print_dialog
         wb = self._workbook
         name = wb.tabs.tabText(wb.tabs.currentIndex()) if wb else "Sheet1"
-        return {
-            "orientation": ps.get("orientation", "portrait"),
-            "paper_key": ps.get("paper_key", "A4"),
-            "margins_mm": ps.get("margins"),
-            "scale_percent": ps.get("scale_percent", 100),
-            "fit_to_page": ps.get("fit_to_page", False),
-            "sheet_name": name,
-        }
-
-    def _print_direct(self):
-        s = self._active_sheet()
-        if not s:
-            return
-        from khervesheet.printing import print_direct
-        print_direct(self, s, **self._print_kwargs())
-
-    def _print_preview(self):
-        s = self._active_sheet()
-        if not s:
-            return
-        from khervesheet.printing import print_preview
-        print_preview(self, s, **self._print_kwargs())
-
-    def _page_setup(self):
-        from khervesheet.printing import page_setup
-        ps = getattr(self, '_page_setup_state', {})
-        result = page_setup(
-            self,
-            margins=ps.get("margins"),
-            orientation=ps.get("orientation", "portrait"),
-            paper_key=ps.get("paper_key", "A4"),
-            scale_percent=ps.get("scale_percent", 100),
-            fit_to_page=ps.get("fit_to_page", False),
+        self._page_setup_state = open_print_dialog(
+            self, s,
+            state=getattr(self, '_page_setup_state', {}),
+            sheet_name=name,
+            undo_stack=s._undo_stack,
         )
-        if result:
-            self._page_setup_state = result
-
-    def _print_selection(self):
-        s = self._active_sheet()
-        if not s:
-            return
-        from khervesheet.printing import print_selection
-        print_selection(self, s, **self._print_kwargs())
-
-    def _set_print_area(self):
-        s = self._active_sheet()
-        if not s:
-            return
-        from khervesheet.printing import set_print_area
-        set_print_area(s, s._undo_stack)
-
-    def _clear_print_area(self):
-        s = self._active_sheet()
-        if not s:
-            return
-        from khervesheet.printing import clear_print_area
-        clear_print_area(s, s._undo_stack)
-
-    def _export_pdf(self):
-        s = self._active_sheet()
-        if not s:
-            return
-        from khervesheet.printing import export_pdf
-        path = export_pdf(self, s, **self._print_kwargs())
-        if path:
-            self._status_msg(f"Exported to {path}", 5000)
 
     # ── Data operations ──────────────────────────────────────────────
     def _set_designation(self, desig: str):
