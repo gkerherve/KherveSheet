@@ -162,6 +162,8 @@ class MainWindow(QMainWindow):
         edit_menu.addAction("Paste &Values Only",
                             self._paste_values, "Ctrl+Shift+V")
         edit_menu.addAction("Cl&ear", self._clear, "Del")
+        edit_menu.addSeparator()
+        edit_menu.addAction("Preferences\u2026", self._open_preferences)
 
         self._undo_stack.canUndoChanged.connect(self._undo_act.setEnabled)
         self._undo_stack.canRedoChanged.connect(self._redo_act.setEnabled)
@@ -196,11 +198,6 @@ class MainWindow(QMainWindow):
         view_menu.addAction("Zoom Out", self._zoom_out, "Ctrl+-")
         view_menu.addAction("Reset Zoom", self._zoom_reset, "Ctrl+0")
         view_menu.addSeparator()
-        bf_act = view_menu.addAction("Bring Forward", self._bring_forward)
-        bf_act.setIcon(icons.themed_icon("mdi.arrange-bring-forward"))
-        sb_act = view_menu.addAction("Send Backward", self._send_backward)
-        sb_act.setIcon(icons.themed_icon("mdi.arrange-send-backward"))
-        view_menu.addSeparator()
         theme_menu = view_menu.addMenu("Theme")
         from .app import THEMES
         for name in THEMES:
@@ -217,6 +214,17 @@ class MainWindow(QMainWindow):
         # ── Insert ───────────────────────────────────────────────────
         insert_menu = mb.addMenu("&Insert")
 
+        # Row / Column / Sheet.
+        insert_menu.addAction("Row Above",
+                              self._insert_row_above)
+        insert_menu.addAction("Row Below",
+                              self._insert_row_below)
+        insert_menu.addAction("Column",
+                              self._insert_column)
+        insert_menu.addAction("Sheet",
+                              lambda: self._workbook.add_sheet())
+        insert_menu.addSeparator()
+
         # Chart submenu.
         chart_menu = insert_menu.addMenu("Chart")
         from .sheet import SheetWidget
@@ -227,11 +235,6 @@ class MainWindow(QMainWindow):
         chart_menu.addSeparator()
         chart_menu.addAction("From Template\u2026",
                              self._insert_chart_from_template)
-
-        # Pivot / Transpose.
-        insert_menu.addAction("Pivot / Transpose",
-                              self._transpose_selection)
-        insert_menu.addSeparator()
 
         # Image.
         insert_menu.addAction("Image\u2026", self._insert_image)
@@ -270,6 +273,14 @@ class MainWindow(QMainWindow):
         insert_menu.addAction(
             icons.link_icon(20), "Link\tCtrl+K", self._insert_link)
         QShortcut(QKeySequence("Ctrl+K"), self, self._insert_link)
+
+        # Comment / Note.
+        insert_menu.addAction(
+            icons.comment_icon(20), "Comment\tCtrl+Alt+M",
+            self._insert_comment)
+        insert_menu.addAction(
+            icons.note_icon(20), "Note\tShift+F2", self._insert_note)
+        QShortcut(QKeySequence("Shift+F2"), self, self._insert_note)
         insert_menu.addSeparator()
 
         # Checkbox, Dropdown, Emoji.
@@ -289,35 +300,23 @@ class MainWindow(QMainWindow):
         emoji_menu.addAction(emoji_wa)
         insert_menu.addSeparator()
 
-        # Comment / Note.
-        insert_menu.addAction(
-            icons.comment_icon(20), "Comment\tCtrl+Alt+M",
-            self._insert_comment)
-        insert_menu.addAction(
-            icons.note_icon(20), "Note\tShift+F2", self._insert_note)
-        QShortcut(QKeySequence("Shift+F2"), self, self._insert_note)
-        insert_menu.addSeparator()
-
-        # Row / Column / Sheet.
-        insert_menu.addAction("Row Above",
-                              self._insert_row_above)
-        insert_menu.addAction("Row Below",
-                              self._insert_row_below)
-        insert_menu.addAction("Column",
-                              self._insert_column)
-        insert_menu.addSeparator()
-        insert_menu.addAction("Sheet",
-                              lambda: self._workbook.add_sheet())
+        # Pivot / Transpose.
+        insert_menu.addAction("Pivot / Transpose",
+                              self._transpose_selection)
 
         # ── Format ───────────────────────────────────────────────────
         format_menu = mb.addMenu("F&ormat")
+        fc_act = format_menu.addAction(
+            "Format Cells\u2026\tCtrl+1", self._open_format_cells_dialog)
+        QShortcut(QKeySequence("Ctrl+1"), self,
+                  self._open_format_cells_dialog)
+        format_menu.addSeparator()
         fmt_menu = format_menu.addMenu("Number Format")
         from .sheet import NUMBER_FORMATS
         for fmt in NUMBER_FORMATS:
             act = fmt_menu.addAction(fmt)
             act.triggered.connect(
                 lambda _, f=fmt: self._set_number_format(f))
-
         format_menu.addSeparator()
         format_menu.addAction("Fill Color\u2026", self._pick_fill_color)
         format_menu.addAction("Font Color\u2026", self._pick_font_color)
@@ -325,8 +324,8 @@ class MainWindow(QMainWindow):
         border_sub.setTitle("Borders")
         format_menu.addMenu(border_sub)
         format_menu.addSeparator()
-        format_menu.addAction("Column Width…", self._format_col_width)
-        format_menu.addAction("Row Height…", self._format_row_height)
+        format_menu.addAction("Column Width\u2026", self._format_col_width)
+        format_menu.addAction("Row Height\u2026", self._format_row_height)
         format_menu.addSeparator()
         merge_act = format_menu.addAction("Merge Cells", self._merge_cells)
         merge_act.setIcon(icons.merge_cells_icon(20))
@@ -344,11 +343,10 @@ class MainWindow(QMainWindow):
         self._table_design_menu.aboutToShow.connect(
             self._build_table_design_menu)
         format_menu.addSeparator()
-        fc_act = format_menu.addAction(
-            "Format Cells\u2026\tCtrl+1", self._open_format_cells_dialog)
-        # QShortcut, QKeySequence already imported at module level
-        QShortcut(QKeySequence("Ctrl+1"), self,
-                  self._open_format_cells_dialog)
+        bf_act = format_menu.addAction("Bring Forward", self._bring_forward)
+        bf_act.setIcon(icons.themed_icon("mdi.arrange-bring-forward"))
+        sb_act = format_menu.addAction("Send Backward", self._send_backward)
+        sb_act.setIcon(icons.themed_icon("mdi.arrange-send-backward"))
 
         # ── Formulas ─────────────────────────────────────────────────
         fmenu = build_formulas_menu(mb, self._insert_function)
@@ -359,15 +357,14 @@ class MainWindow(QMainWindow):
 
         # ── Data ─────────────────────────────────────────────────────
         data_menu = mb.addMenu("&Data")
+        data_menu.addAction("Sort A \u2192 Z", self._sort_asc)
+        data_menu.addAction("Sort Z \u2192 A", self._sort_desc)
+        data_menu.addSeparator()
         desig_menu = data_menu.addMenu("Set Column As")
         for d in ("X", "Y"):
             act = desig_menu.addAction(d)
             act.triggered.connect(
                 lambda _, d=d: self._set_designation(d))
-
-        data_menu.addSeparator()
-        data_menu.addAction("Sort A → Z", self._sort_asc)
-        data_menu.addAction("Sort Z → A", self._sort_desc)
 
         # ── Science ──────────────────────────────────────────────────
         science_menu = mb.addMenu("&Science")
@@ -395,7 +392,8 @@ class MainWindow(QMainWindow):
         tools_menu.addAction("Statistics on Selection",
                              self._show_statistics)
         tools_menu.addSeparator()
-        tools_menu.addAction("Curve Fitting…", self._open_fitting)
+        tools_menu.addAction("Curve Fitting\u2026", self._open_fitting)
+        tools_menu.addAction("Solver\u2026", self._open_solver)
         tools_menu.addSeparator()
         ai_act = tools_menu.addAction(
             "AI Chat\u2026",
@@ -4214,6 +4212,11 @@ class MainWindow(QMainWindow):
             self._status_label.setText("Ready")
 
     # ── Help ─────────────────────────────────────────────────────────
+    def _open_preferences(self):
+        from .preferences import PreferencesDialog
+        dlg = PreferencesDialog(self)
+        dlg.exec_()
+
     def _show_about(self):
         import sys
         import matplotlib
