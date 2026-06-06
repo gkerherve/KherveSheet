@@ -645,13 +645,15 @@ class AiToolExecutor:
                 "cells": len(new_fmts)}
 
     def tool_save_as_template(self, inp: dict) -> dict:
-        """Save the current workbook as a template .ksheet file."""
+        """Save the current workbook as a template .ksheet file.
+
+        Templates are written to the per-user, writable templates folder
+        (the bundled examples folder is read-only when frozen)."""
         import os
+        from . import resources
         name = inp["name"].strip()
         category = inp["category"].strip()
-        # Find the examples/templates/ directory.
-        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        templates_dir = os.path.join(base, "examples", "templates", category)
+        templates_dir = os.path.join(resources.user_templates_dir(), category)
         os.makedirs(templates_dir, exist_ok=True)
         path = os.path.join(templates_dir, f"{name}.ksheet")
         try:

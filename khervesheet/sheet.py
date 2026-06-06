@@ -2268,12 +2268,13 @@ class SheetWidget(QWidget):
 
     def _py_help(self):
         """Open the Python examples (HTML page, or the in-app dialog)."""
-        import pathlib
-        page = pathlib.Path(__file__).with_name("python_help.html")
-        if page.exists():
+        import os
+        from . import resources
+        page = resources.package_file("python_help.html")
+        if os.path.exists(page):
             from PyQt5.QtCore import QUrl
             from PyQt5.QtGui import QDesktopServices
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(page)))
+            QDesktopServices.openUrl(QUrl.fromLocalFile(page))
         else:
             from .python_engine import show_python_help
             show_python_help(self)

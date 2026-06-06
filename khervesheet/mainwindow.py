@@ -426,6 +426,8 @@ class MainWindow(QMainWindow):
             for name, builder in cats[cat]:
                 cm.addAction(name,
                              lambda b=builder: self._load_example(b))
+        # User-saved templates (writable per-user folder).
+        self._build_user_templates_menu(templates_menu)
 
         # ── Help ─────────────────────────────────────────────────────
         help_menu = mb.addMenu("&Help")
@@ -962,12 +964,11 @@ class MainWindow(QMainWindow):
         self._status_msg("Example loaded", 3000)
 
     def _examples_dir(self):
-        """Return the bundled examples/ folder, or None if absent."""
-        import os
-        d = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "examples")
-        return d if os.path.isdir(d) else None
+        """Return the bundled examples/ folder, or None if absent.
+
+        Resolves correctly both from source and from a frozen build."""
+        from . import resources
+        return resources.examples_dir()
 
     def _build_example_files_menu(self, parent_menu):
         """Add a 'Worked Examples' submenu listing the rich .ksheet files."""
@@ -1094,6 +1095,43 @@ class MainWindow(QMainWindow):
                     label,
                     lambda _=False, p=path: self._open_example_file(p))
         return rich_cats
+
+    def _build_user_templates_menu(self, parent_menu):
+        """Add a 'My Templates' submenu from the per-user templates folder.
+
+        These are templates the user (or the AI) saved; the folder is
+        writable and lives outside the read-only app bundle.
+        """
+        import os
+        from . import resources
+        tdir = resources.user_templates_dir()
+        # Collect category sub-folders and any flat files.
+        flat = sorted(f for f in os.listdir(tdir)
+                      if f.lower().endswith(".ksheet"))
+        cats = []
+        for cat in sorted(os.listdir(tdir)):
+            cdir = os.path.join(tdir, cat)
+            if not os.path.isdir(cdir):
+                continue
+            cfiles = sorted(f for f in os.listdir(cdir)
+                            if f.lower().endswith(".ksheet"))
+            if cfiles:
+                cats.append((cat, cdir, cfiles))
+        if not flat and not cats:
+            return
+        parent_menu.addSeparator()
+        sub = parent_menu.addMenu("My Templates")
+        for fn in flat:
+            path = os.path.join(tdir, fn)
+            sub.addAction(os.path.splitext(fn)[0],
+                          lambda _=False, p=path: self._open_example_file(p))
+        for cat, cdir, cfiles in cats:
+            cm = sub.addMenu(cat)
+            for fn in cfiles:
+                path = os.path.join(cdir, fn)
+                cm.addAction(os.path.splitext(fn)[0],
+                             lambda _=False, p=path:
+                             self._open_example_file(p))
 
     def _open_example_file(self, path: str):
         """Open a shipped .ksheet example (guards unsaved changes)."""
@@ -4333,12 +4371,13 @@ class MainWindow(QMainWindow):
     def _show_python_help(self):
         # Prefer the rich, 100-example HTML page (opens in the browser);
         # fall back to the in-app quick-reference dialog.
-        import pathlib
-        page = pathlib.Path(__file__).with_name("python_help.html")
-        if page.exists():
+        import os
+        from . import resources
+        page = resources.package_file("python_help.html")
+        if os.path.exists(page):
             from PyQt5.QtGui import QDesktopServices
             from PyQt5.QtCore import QUrl
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(page)))
+            QDesktopServices.openUrl(QUrl.fromLocalFile(page))
             return
         from .python_engine import show_python_help
         show_python_help(self)
@@ -4346,9 +4385,9 @@ class MainWindow(QMainWindow):
     def _open_user_guide(self):
         from PyQt5.QtGui import QDesktopServices
         from PyQt5.QtCore import QUrl
-        import pathlib
-        guide = pathlib.Path(__file__).with_name("userguide.html")
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(guide)))
+        from . import resources
+        guide = resources.package_file("userguide.html")
+        QDesktopServices.openUrl(QUrl.fromLocalFile(guide))
 
     def _open_github(self):
         from PyQt5.QtGui import QDesktopServices
