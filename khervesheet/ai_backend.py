@@ -977,16 +977,20 @@ class AiBackend(QObject):
     @pyqtSlot(str, str)
     def _on_tool_call(self, name: str, input_json: str):
         """Execute a tool on the main thread, then wake the worker."""
-        inp = json.loads(input_json)
-        # Open undo macro on first tool call of the turn.
-        if not self._macro_open:
-            self._mw._undo_stack.beginMacro("AI Assistant")
-            self._macro_open = True
-        result = self._executor.execute(name, inp)
-        # Build a short summary for the UI.
-        summary = self._summarise(name, inp, result)
-        self.tool_performed.emit(name, summary)
-        result_json = json.dumps(result)
+        try:
+            inp = json.loads(input_json)
+            # Open undo macro on first tool call of the turn.
+            if not self._macro_open:
+                self._mw._undo_stack.beginMacro("AI Assistant")
+                self._macro_open = True
+            result = self._executor.execute(name, inp)
+            # Build a short summary for the UI.
+            summary = self._summarise(name, inp, result)
+            self.tool_performed.emit(name, summary)
+            result_json = json.dumps(result)
+        except Exception as exc:
+            # Must always wake the worker, otherwise it deadlocks.
+            result_json = json.dumps({"error": str(exc)})
         self._worker.post_tool_result(result_json)
 
     def _on_turn_done(self, history: list):
@@ -1040,11 +1044,25 @@ class AiBackend(QObject):
         if name == "clone_chart":
             return f"Cloned chart to '{result.get('target_sheet', '')}'"
         if name == "modify_chart":
-            keys = ", ".join((result.get("applied") or {}).keys())
-            return f"Modified chart ({keys})" if keys else "Modified chart"
+            applied = result.get("applied")
+            if isinstance(applied, dict):
+                keys = ", ".join(applied.keys())
+                return f"Modified chart ({keys})" if keys else "Modified chart"
+            return "Modified chart"
         if name == "delete_charts":
             n = result.get("deleted", 0)
             return f"Deleted {n} chart{'s' if n != 1 else ''}"
+        if name == "apply_table_style":
+            return f"Applied style '{result.get('style', '?')}'"
+        if name == "save_as_template":
+            return f"Saved template '{inp.get('name', '?')}'"
+        if name == "set_column_width":
+            return f"Set column width to {inp.get('width', '?')}px"
+        if name == "merge_cells":
+            return f"Merged {inp.get('range', '?')}"
+        if name == "auto_fit_columns":
+            n = result.get("columns_fitted", 0)
+            return f"Auto-fitted {n} column{'s' if n != 1 else ''}"
         return name
 
     def shutdown(self):
