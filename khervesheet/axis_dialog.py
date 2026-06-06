@@ -1480,12 +1480,12 @@ class AxisPropertiesDialog(QDialog):
         ax = chart._ax
         if location == "top":
             art = ax.text(
-                0.5, 1.02, text, transform=ax.transAxes,
-                ha='center', va='bottom', **title_kw)
+                0.5, 1.08, text, transform=ax.transAxes,
+                ha='center', va='bottom', clip_on=False, **title_kw)
         else:  # right
             art = ax.text(
-                1.02, 0.5, text, transform=ax.transAxes,
-                ha='left', va='center',
+                1.08, 0.5, text, transform=ax.transAxes,
+                ha='left', va='center', clip_on=False,
                 rotation=270 if title_kw.get('rotation', 0) == 0
                 else title_kw['rotation'],
                 fontsize=title_kw.get('fontsize', 10),
