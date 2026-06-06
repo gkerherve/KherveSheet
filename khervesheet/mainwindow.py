@@ -46,6 +46,7 @@ class MainWindow(QMainWindow):
         self._recent_files: list = (
             self._settings.value("recent_files", []) or [])
         self._undo_stack = QUndoStack(self)
+        self._undo_stack.setUndoLimit(60)
         # Print / page-setup state — single source of truth, shared by the
         # unified Print dialog (orientation, paper, margins, scaling, etc.).
         self._page_setup_state: dict = {}
