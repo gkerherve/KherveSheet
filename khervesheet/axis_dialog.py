@@ -639,6 +639,16 @@ class AxisPropertiesDialog(QDialog):
         self.sec_title_rotation.setEditable(True)
         tf.addRow("Rotation:", self.sec_title_rotation)
 
+        self.sec_title_offset = QDoubleSpinBox()
+        self.sec_title_offset.setRange(0.0, 0.50)
+        self.sec_title_offset.setSingleStep(0.02)
+        self.sec_title_offset.setDecimals(2)
+        self.sec_title_offset.setValue(0.08)
+        self.sec_title_offset.setToolTip(
+            "Distance from the axes edge in axes-fraction units.\n"
+            "Increase to push the title further from the plot.")
+        tf.addRow("Offset:", self.sec_title_offset)
+
         layout.addWidget(title_grp)
         layout.addStretch()
 
@@ -747,6 +757,7 @@ class AxisPropertiesDialog(QDialog):
             "sec_title_italic": self.sec_title_italic.isChecked(),
             "sec_title_rotation":
                 self.sec_title_rotation.currentText(),
+            "sec_title_offset": self.sec_title_offset.value(),
         }
 
     def _restore_widgets(self, st):
@@ -832,6 +843,7 @@ class AxisPropertiesDialog(QDialog):
         self.sec_title_italic.setChecked(st["sec_title_italic"])
         self.sec_title_rotation.setCurrentText(
             st["sec_title_rotation"])
+        self.sec_title_offset.setValue(st.get("sec_title_offset", 0.08))
 
     # ── Read current axes state ────────────────────────────────────
 
@@ -1016,6 +1028,9 @@ class AxisPropertiesDialog(QDialog):
         self.sec_title_bold.setChecked(False)
         self.sec_title_italic.setChecked(False)
         self.sec_title_rotation.setCurrentText("0")
+        attr = '_top_label_offset' if is_x else '_right_label_offset'
+        self.sec_title_offset.setValue(
+            getattr(self._chart, attr, 0.08))
 
     # ── Apply ──────────────────────────────────────────────────────
 
@@ -1226,6 +1241,7 @@ class AxisPropertiesDialog(QDialog):
         except (ValueError, TypeError):
             sec_rot = 0
 
+        sec_offset = st.get("sec_title_offset", 0.08)
         sec_title_kw = dict(
             fontsize=st["sec_title_size"],
             color=st["sec_title_color"],
@@ -1237,10 +1253,12 @@ class AxisPropertiesDialog(QDialog):
         loc = "top" if is_x else "right"
         if is_x:
             self._chart._top_label_text = sec_text
+            self._chart._top_label_offset = sec_offset
         else:
             self._chart._right_label_text = sec_text
+            self._chart._right_label_offset = sec_offset
         self._set_secondary_label(
-            self._chart, loc, sec_text, sec_title_kw)
+            self._chart, loc, sec_text, sec_title_kw, sec_offset)
 
         self._chart._canvas.draw_idle()
 
@@ -1418,12 +1436,16 @@ class AxisPropertiesDialog(QDialog):
             fontweight=sec_weight, fontstyle=sec_style,
             fontfamily=sec_font, rotation=sec_rot,
         )
+        sec_offset = st.get("sec_title_offset", 0.08)
         loc = "top" if is_x else "right"
         if is_x:
             chart._top_label_text = sec_text
+            chart._top_label_offset = sec_offset
         else:
             chart._right_label_text = sec_text
-        cls._set_secondary_label(chart, loc, sec_text, sec_title_kw)
+            chart._right_label_offset = sec_offset
+        cls._set_secondary_label(chart, loc, sec_text, sec_title_kw,
+                                 sec_offset)
 
     # ── Helpers ────────────────────────────────────────────────────
 
@@ -1462,7 +1484,8 @@ class AxisPropertiesDialog(QDialog):
                     f"{suffix}"))
 
     @staticmethod
-    def _set_secondary_label(chart, location, text, title_kw):
+    def _set_secondary_label(chart, location, text, title_kw,
+                             offset=0.08):
         """Place or update a secondary axis label (top or right)
         using an axes Text annotation stored on the chart."""
         attr = f"_{location}_label_artist"
@@ -1480,11 +1503,11 @@ class AxisPropertiesDialog(QDialog):
         ax = chart._ax
         if location == "top":
             art = ax.text(
-                0.5, 1.08, text, transform=ax.transAxes,
+                0.5, 1.0 + offset, text, transform=ax.transAxes,
                 ha='center', va='bottom', clip_on=False, **title_kw)
         else:  # right
             art = ax.text(
-                1.08, 0.5, text, transform=ax.transAxes,
+                1.0 + offset, 0.5, text, transform=ax.transAxes,
                 ha='left', va='center', clip_on=False,
                 rotation=270 if title_kw.get('rotation', 0) == 0
                 else title_kw['rotation'],

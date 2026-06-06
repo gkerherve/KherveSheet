@@ -795,7 +795,9 @@ class EmbeddedChart(QWidget):
             "grid": (ax.xaxis.get_gridlines()[0].get_visible()
                      if ax.xaxis.get_gridlines() else False),
             "top_label": getattr(self, '_top_label_text', ''),
+            "top_label_offset": getattr(self, '_top_label_offset', 0.08),
             "right_label": getattr(self, '_right_label_text', ''),
+            "right_label_offset": getattr(self, '_right_label_offset', 0.08),
         }
         if self._axis_props:
             d["axis_props"] = self._axis_props
@@ -1175,17 +1177,21 @@ class EmbeddedChart(QWidget):
         ax.set_ylabel(d.get("ylabel", "Y"))
         # Secondary labels (top / right).
         top_lbl = d.get("top_label", "")
+        top_off = d.get("top_label_offset", 0.08)
         right_lbl = d.get("right_label", "")
+        right_off = d.get("right_label_offset", 0.08)
         if top_lbl:
             chart._top_label_text = top_lbl
+            chart._top_label_offset = top_off
             from .axis_dialog import AxisPropertiesDialog
             AxisPropertiesDialog._set_secondary_label(
-                chart, "top", top_lbl, {"fontsize": 10})
+                chart, "top", top_lbl, {"fontsize": 10}, top_off)
         if right_lbl:
             chart._right_label_text = right_lbl
+            chart._right_label_offset = right_off
             from .axis_dialog import AxisPropertiesDialog
             AxisPropertiesDialog._set_secondary_label(
-                chart, "right", right_lbl, {"fontsize": 10})
+                chart, "right", right_lbl, {"fontsize": 10}, right_off)
         # Restore axis properties if saved.
         axis_props = d.get("axis_props")
         if axis_props:
