@@ -22,13 +22,14 @@ from .python_engine import (
 )
 
 from PyQt5.QtCore import Qt, QEvent, QRect, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QPainter, QPen, QPixmap, QBrush
+from PyQt5.QtGui import (QColor, QFont, QPainter, QPen, QPixmap, QBrush,
+                         QIcon)
 from PyQt5.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
     QMenu, QInputDialog, QLineEdit, QLabel, QAbstractItemView,
     QHeaderView, QStyledItemDelegate, QApplication,
     QTableWidgetSelectionRange, QAbstractItemDelegate,
-    QPlainTextEdit, QSizePolicy, QFrame,
+    QPlainTextEdit, QSizePolicy, QFrame, QToolButton,
 )
 
 
@@ -43,6 +44,7 @@ class _FormulaEdit(QPlainTextEdit):
 
     returnPressed = pyqtSignal()
     textEdited = pyqtSignal(str)       # renamed to avoid shadowing QPlainTextEdit.textChanged
+    popOutRequested = pyqtSignal()     # pop-out editor button clicked
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -72,6 +74,26 @@ class _FormulaEdit(QPlainTextEdit):
             "background:#2e7d32; color:#ffffff; font-weight:bold; "
             "font-size:9px;")
         self._py_badge.hide()
+        # Pop-out button: opens a larger editor for the cell's program.
+        self._pop_btn = QToolButton(self)
+        self._pop_btn.setToolTip("Open Python in a larger editor")
+        self._pop_btn.setCursor(Qt.PointingHandCursor)
+        self._pop_btn.setAutoRaise(True)
+        self._pop_btn.setFocusPolicy(Qt.NoFocus)
+        try:
+            from . import icons
+            # Bake to a pixmap (themed icons can render blank on tool
+            # buttons — see themed-icon-blank-gotcha).
+            pm = icons.themed_icon(
+                "mdi.open-in-new", color="#2e7d32").pixmap(16, 16)
+            if not pm.isNull():
+                self._pop_btn.setIcon(QIcon(pm))
+            else:
+                self._pop_btn.setText("⤢")
+        except Exception:
+            self._pop_btn.setText("⤢")
+        self._pop_btn.clicked.connect(self.popOutRequested)
+        self._pop_btn.hide()
 
     def set_python_mode(self, on: bool):
         """Switch the bar between Excel-formula and Python-cell editing."""
@@ -93,6 +115,8 @@ class _FormulaEdit(QPlainTextEdit):
             self.setStyleSheet("QPlainTextEdit{background:#f8fdf9;}")
             self._py_badge.show()
             self._py_badge.raise_()
+            self._pop_btn.show()
+            self._pop_btn.raise_()
             self._position_py_badge()
         else:
             if self._highlighter is not None:
@@ -103,15 +127,18 @@ class _FormulaEdit(QPlainTextEdit):
             self.setMaximumHeight(22)
             self.setStyleSheet("")
             self._py_badge.hide()
+            self._pop_btn.hide()
 
     def _position_py_badge(self):
-        """Pin the PY badge as a full-height strip on the right edge,
-        clear of the vertical scrollbar."""
-        b = self._py_badge
+        """Pin the PY strip (full-height) to the right edge and the
+        pop-out button just to its left, clear of the scrollbar."""
         sb = self.verticalScrollBar()
         margin = sb.width() if sb.isVisible() else 0
         bw = 22
-        b.setGeometry(self.width() - bw - margin, 0, bw, self.height())
+        x = self.width() - bw - margin
+        self._py_badge.setGeometry(x, 0, bw, self.height())
+        self._pop_btn.setFixedSize(20, 20)
+        self._pop_btn.move(x - 22, 2)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1229,6 +1256,7 @@ class SheetWidget(QWidget):
             "Value or =formula  (e.g. =SUM(A1:A10), =B1+C1)")
         self._formula_bar.returnPressed.connect(self._apply_formula_bar)
         self._formula_bar.textEdited.connect(self._on_formula_bar_text)
+        self._formula_bar.popOutRequested.connect(self._open_python_popout)
 
         fbar.addWidget(cell_lbl)
         fbar.addWidget(self._cell_ref_label)
@@ -2138,6 +2166,36 @@ class SheetWidget(QWidget):
             bar.setText(f"={fn}()")
             bar.setFocus()
             bar.setCursorPosition(len(bar.text()) - 1)
+
+    def _open_python_popout(self):
+        """Open a larger editor for the active cell's Python program."""
+        from .python_engine import (
+            edit_python_dialog, is_python_source, strip_marker,
+        )
+        idx = self.table.currentIndex()
+        if not idx.isValid():
+            return
+        row, col = idx.row(), idx.column()
+        ref = f"{col_index_to_letter(col)}{row + 1}"
+        # Prefer the live formula-bar text (unsaved edits), else the stored
+        # source for this cell.
+        bar_text = self._formula_bar.text()
+        if is_python_source(bar_text):
+            code = strip_marker(bar_text)
+        else:
+            src = self._cell_formulas.get((row, col), "")
+            code = strip_marker(src) if is_python_source(src) else ""
+        new_code = edit_python_dialog(self, code, ref)
+        if new_code is None:
+            return
+        # Commit through the normal formula-bar path so the cell runs,
+        # spills, embeds plots and pushes an undo command.
+        self.table.setCurrentCell(row, col)
+        self._formula_bar.set_python_mode(True)
+        self._formula_bar.blockSignals(True)
+        self._formula_bar.setText(PY_MARKER + "\n" + new_code)
+        self._formula_bar.blockSignals(False)
+        self._apply_formula_bar()
 
     def _apply_formula_bar(self):
         self._formula_entry_cell = None

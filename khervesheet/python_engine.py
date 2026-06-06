@@ -19,9 +19,11 @@ the Free Software Foundation, either version 3 of the License, or
 import ast
 import re
 
+from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import (
     QColor, QFont, QSyntaxHighlighter, QTextCharFormat,
 )
+from PyQt5.QtWidgets import QPlainTextEdit
 
 # Marker that flags a cell as Python source.  Stored as the first line of
 # the cell text so Python cells round-trip through the existing formula
@@ -499,3 +501,69 @@ def show_python_help(parent=None):
     bb.accepted.connect(dlg.accept)
     layout.addWidget(bb)
     dlg.exec_()
+
+
+class _DialogCodeEditor(QPlainTextEdit):
+    """Code editor used inside the pop-out dialog.
+
+    Tab inserts four spaces; Ctrl+Enter / Ctrl+Return accepts the dialog.
+    """
+
+    runRequested = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        font = QFont("Consolas")
+        font.setStyleHint(QFont.Monospace)
+        font.setPointSize(11)
+        self.setFont(font)
+        self.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.setTabStopDistance(
+            4 * self.fontMetrics().horizontalAdvance(" "))
+        self._highlighter = PythonHighlighter(self.document())
+
+    def keyPressEvent(self, event):
+        if (event.key() in (Qt.Key_Return, Qt.Key_Enter)
+                and (event.modifiers() & Qt.ControlModifier)):
+            self.runRequested.emit()
+            return
+        if event.key() == Qt.Key_Tab:
+            self.insertPlainText("    ")
+            return
+        super().keyPressEvent(event)
+
+
+def edit_python_dialog(parent, code: str, cell_ref: str = "") -> "str | None":
+    """Open a larger Python editor pre-filled with *code*.
+
+    Returns the edited code (without the =PY marker) if the user clicks
+    Run, or ``None`` if cancelled.
+    """
+    from PyQt5.QtWidgets import (
+        QDialog, QVBoxLayout, QLabel, QDialogButtonBox,
+    )
+    dlg = QDialog(parent)
+    title = f"Python — {cell_ref}" if cell_ref else "Python cell"
+    dlg.setWindowTitle(title)
+    dlg.resize(720, 520)
+    layout = QVBoxLayout(dlg)
+    hint = QLabel(
+        ("Editing " + cell_ref + " · " if cell_ref else "")
+        + "read cells with ks(\"A1\") · Ctrl+Enter to run")
+    hint.setStyleSheet("color:#57606a;")
+    layout.addWidget(hint)
+    editor = _DialogCodeEditor()
+    editor.setPlainText(code or "")
+    layout.addWidget(editor, stretch=1)
+    bb = QDialogButtonBox()
+    run_btn = bb.addButton("Run", QDialogButtonBox.AcceptRole)
+    run_btn.setDefault(True)
+    bb.addButton(QDialogButtonBox.Cancel)
+    bb.accepted.connect(dlg.accept)
+    bb.rejected.connect(dlg.reject)
+    editor.runRequested.connect(dlg.accept)
+    layout.addWidget(bb)
+    editor.setFocus()
+    if dlg.exec_() == QDialog.Accepted:
+        return editor.toPlainText()
+    return None
