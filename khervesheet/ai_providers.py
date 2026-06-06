@@ -38,7 +38,7 @@ PROVIDERS: Dict[str, dict] = {
         "pip": "anthropic",
         "needs_key": True,
         "needs_host": False,
-        "refreshable": False,
+        "refreshable": True,
         "models": [
             "claude-sonnet-4-20250514",
             "claude-opus-4-20250514",
@@ -52,7 +52,7 @@ PROVIDERS: Dict[str, dict] = {
         "pip": "openai",
         "needs_key": True,
         "needs_host": False,
-        "refreshable": False,
+        "refreshable": True,
         "models": [
             "gpt-4o",
             "gpt-4o-mini",
@@ -120,6 +120,33 @@ def fetch_models(provider_name: str, api_key: str = "",
     Returns a list of model-id strings, or raises on failure.
     Only meaningful for providers with ``refreshable: True``.
     """
+    if provider_name == "anthropic":
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.models.list(limit=100)
+        names = []
+        items = resp.data if hasattr(resp, "data") else []
+        for m in items:
+            mid = m.id if hasattr(m, "id") else (
+                m.get("id", "") if isinstance(m, dict) else "")
+            if mid:
+                names.append(mid)
+        return sorted(names) or PROVIDERS["anthropic"]["models"]
+
+    if provider_name == "openai":
+        import openai
+        client = openai.OpenAI(api_key=api_key)
+        resp = client.models.list()
+        names = []
+        for m in resp.data:
+            mid = m.id if hasattr(m, "id") else (
+                m.get("id", "") if isinstance(m, dict) else "")
+            # Filter to chat-capable models (gpt-*, o1-*, o3-*, chatgpt-*)
+            if mid and any(mid.startswith(p) for p in
+                          ("gpt-", "o1-", "o3-", "o4-", "chatgpt-")):
+                names.append(mid)
+        return sorted(names) or PROVIDERS["openai"]["models"]
+
     if provider_name == "ollama":
         import ollama
         client = ollama.Client(host=host or DEFAULT_HOST)
