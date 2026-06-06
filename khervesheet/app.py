@@ -36,11 +36,49 @@ def _enable_crash_logging():
         except Exception:
             pass
         _install_recursion_watchdog()
+        _install_qt_message_handler()
     except Exception:
         try:
             faulthandler.enable()
         except Exception:
             pass
+
+
+def _install_qt_message_handler():
+    """Capture Qt messages (including qFatal) to the crash log.
+
+    Qt5Core calls ``__fastfail(FAST_FAIL_FATAL_APP_EXIT)`` on qFatal,
+    which bypasses Python exception handling.  By installing a message
+    handler we can log the actual error message BEFORE the abort.
+    """
+    from PyQt5.QtCore import (
+        qInstallMessageHandler, QtDebugMsg, QtWarningMsg,
+        QtCriticalMsg, QtFatalMsg,
+    )
+
+    _LEVEL = {
+        QtDebugMsg: "DEBUG",
+        QtWarningMsg: "WARNING",
+        QtCriticalMsg: "CRITICAL",
+        QtFatalMsg: "FATAL",
+    }
+
+    def _handler(msg_type, context, message):
+        if _CRASH_LOG_FILE is not None:
+            level = _LEVEL.get(msg_type, "?")
+            loc = ""
+            if context.file:
+                loc = f" ({context.file}:{context.line})"
+            _CRASH_LOG_FILE.write(f"[Qt {level}]{loc} {message}\n")
+            _CRASH_LOG_FILE.flush()
+            # On fatal, also dump the Python traceback.
+            if msg_type == QtFatalMsg:
+                import traceback
+                _CRASH_LOG_FILE.write("Python traceback:\n")
+                traceback.print_stack(file=_CRASH_LOG_FILE)
+                _CRASH_LOG_FILE.flush()
+
+    qInstallMessageHandler(_handler)
 
 
 def _install_recursion_watchdog(threshold=550, interval=0.05):

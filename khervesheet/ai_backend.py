@@ -993,6 +993,9 @@ class AiBackend(QObject):
                 _CRASH_LOG_FILE.flush()
             # Build a short summary for the UI.
             summary = self._summarise(name, inp, result)
+            if _CRASH_LOG_FILE is not None:
+                _CRASH_LOG_FILE.write(f"[AI] emitting tool_performed\n")
+                _CRASH_LOG_FILE.flush()
             self.tool_performed.emit(name, summary)
             result_json = json.dumps(result)
         except Exception as exc:
@@ -1005,6 +1008,9 @@ class AiBackend(QObject):
             # Must always wake the worker, otherwise it deadlocks.
             result_json = json.dumps({"error": str(exc)})
         self._worker.post_tool_result(result_json)
+        if _CRASH_LOG_FILE is not None:
+            _CRASH_LOG_FILE.write("[AI] returning to event loop\n")
+            _CRASH_LOG_FILE.flush()
 
     def _on_turn_done(self, history: list):
         # Adopt the history the worker built (assistant + tool turns).
