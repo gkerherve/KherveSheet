@@ -257,6 +257,19 @@ def test_py_plot_exports_vector(qapp, tmp_path):
     assert plain._save_figure(str(tmp_path / "x.svg"), "svg") is False
 
 
+def test_ks_set_to_own_input_does_not_rerun(qapp):
+    # A =PY cell that writes back to a cell it also reads must run once
+    # and not re-trigger itself (which used to raise).
+    from khervesheet.workbook import WorkbookWidget
+    wb = WorkbookWidget()
+    s = wb.tabs.widget(0)
+    _put(s, 0, 1, "10")                       # B1 = 10
+    _put(s, 0, 0, '=PY\nv = ks("B1")\nks_set("B1", v + 5)\nv')
+    # No error, and B1 was updated once (to 15), not looped.
+    assert (0, 0) not in s._py_errors
+    assert s.table.item(0, 1).text() in ("15", "15.0")
+
+
 def test_sheet_python_error_shows_pyerr(qapp):
     from khervesheet.workbook import WorkbookWidget
     wb = WorkbookWidget()

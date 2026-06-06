@@ -2011,9 +2011,13 @@ class SheetWidget(QWidget):
         (row, col), in topological order. See _recalc_from_seeds."""
         self._recalc_from_seeds([(row, col)], decimals=decimals)
 
-    def _recalc_from_seeds(self, seeds, decimals=None):
+    def _recalc_from_seeds(self, seeds, decimals=None, exclude=None):
         """Re-evaluate every formula cell that transitively depends on
         any cell in *seeds*, in topological order.
+
+        *exclude* is a set of (row, col) cells to skip evaluating — used
+        so a =PY cell that wrote its own inputs via ks_set does not
+        re-trigger itself.
 
         Evaluating in dependency order is essential for aggregates: a
         cell like SUM(K2:K3002) must be recomputed only after *all* of
@@ -2066,6 +2070,8 @@ class SheetWidget(QWidget):
         # 3. Evaluate in order.
         changed_cols = set()
         for (dr, dc) in order:
+            if exclude and (dr, dc) in exclude:
+                continue
             formula = self._cell_formulas.get((dr, dc))
             if not formula:
                 continue
@@ -2691,12 +2697,14 @@ class SheetWidget(QWidget):
         from .python_engine import PyResult, badge_for, strip_marker
         self._clear_py_outputs(row, col)
         res = self._py_runtime().run(strip_marker(source), self, row, col)
-        # Recalc anything depending on cells this run wrote via ks_set.
+        # Recalc anything depending on cells this run wrote via ks_set,
+        # but never re-run THIS cell (a cell that writes back to a value
+        # it also reads must not retrigger itself).
         writes = getattr(self._py_runtime(), "_last_writes", None)
         if writes and not getattr(self, "_in_py_write_recalc", False):
             self._in_py_write_recalc = True
             try:
-                self._recalc_from_seeds(list(writes))
+                self._recalc_from_seeds(list(writes), exclude={(row, col)})
             finally:
                 self._in_py_write_recalc = False
         if res.stdout:
