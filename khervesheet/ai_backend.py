@@ -685,11 +685,10 @@ with ks() from another cell).
   * Available libraries: numpy (as np), matplotlib.pyplot (as plt), \
 pandas (as pd), math, statistics, datetime, json, re, itertools, \
 collections, and any other stdlib module.
-  * IMPORTANT: =PY code runs on the main thread. Do NOT make network \
-requests (no requests, urllib, http calls), do NOT use infinite loops \
-or sleep. For data that would require network access, provide the data \
-as static values written into cells with write_cells first, then use \
-=PY to process it.
+  * =PY code runs on the main thread. Network requests are allowed \
+(urllib.request, requests if installed) for quick API calls such as \
+fetching weather, stock prices, or other web data. Avoid infinite \
+loops, sleep, or very long-running downloads that would freeze the UI.
   * After writing a =PY cell, ALWAYS check its result is not #PYERR. \
 If it is, read the error with read_cells and fix the code.
   * For templates with =PY cells: keep code short and readable. Add a \
