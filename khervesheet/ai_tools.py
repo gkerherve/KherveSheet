@@ -790,21 +790,21 @@ class AiToolExecutor:
                     bc = style.border_color
                     if style.border_outer:
                         if r == r1:
-                            cf.border_top = BorderSpec(bc, 1)
+                            cf.border_top = BorderSpec(color=bc, width=1)
                         if r == r2:
-                            cf.border_bottom = BorderSpec(bc, 1)
+                            cf.border_bottom = BorderSpec(color=bc, width=1)
                         if c == c1:
-                            cf.border_left = BorderSpec(bc, 1)
+                            cf.border_left = BorderSpec(color=bc, width=1)
                         if c == c2:
-                            cf.border_right = BorderSpec(bc, 1)
+                            cf.border_right = BorderSpec(color=bc, width=1)
                     if style.border_inner:
                         if c < c2:
-                            cf.border_right = BorderSpec(bc, 1)
+                            cf.border_right = BorderSpec(color=bc, width=1)
                         if r < r2:
-                            cf.border_bottom = BorderSpec(bc, 1)
+                            cf.border_bottom = BorderSpec(color=bc, width=1)
                 if is_header and style.border_header_bottom:
                     bc = style.border_color or style.header_bg
-                    cf.border_bottom = BorderSpec(bc, 2)
+                    cf.border_bottom = BorderSpec(color=bc, width=2)
                 new_fmts[(r, c)] = cf
 
         label = f"AI: table style {_range_label(r1, c1, r2, c2)}"

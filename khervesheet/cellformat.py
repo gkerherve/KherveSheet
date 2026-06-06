@@ -197,6 +197,14 @@ class CellFormatDelegate(QStyledItemDelegate):
     def paint(self, painter: QPainter,
               option: QStyleOptionViewItem,
               index: QModelIndex):
+        try:
+            self._paint_impl(painter, option, index)
+        except Exception:
+            # Never let an exception escape paint() — Qt calls qFatal
+            # on unhandled exceptions in paint events, aborting the app.
+            super().paint(painter, option, index)
+
+    def _paint_impl(self, painter, option, index):
         key = (index.row(), index.column())
 
         # Python (=PY) cells get a faint green tint + a "PY" badge.
@@ -553,6 +561,13 @@ class CellFormatDelegate(QStyledItemDelegate):
 
     def _draw_borders(self, painter, rect, cf):
         """Draw cell format borders."""
+        try:
+            self._draw_borders_impl(painter, rect, cf)
+        except Exception:
+            pass  # never let a bad border spec crash the paint event
+
+    def _draw_borders_impl(self, painter, rect, cf):
+        """Draw cell format borders (implementation)."""
         painter.save()
         # Expand clip rect so thick borders aren't clipped at cell edges
         max_w = max(
