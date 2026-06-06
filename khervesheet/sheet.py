@@ -1327,6 +1327,7 @@ class SheetWidget(QWidget):
         self._cell_objects: dict = {}    # (row, col) → live Python value (=PY)
         self._py_spills: dict = {}       # (row, col) → list of spilled cells
         self._py_errors: dict = {}       # (row, col) → traceback string
+        self._py_stdout: dict = {}       # (row, col) → captured print output
         self._py_figures: dict = {}      # (row, col) → EmbeddedImage (plot)
         self._dependents: dict = {}      # (row, col) → set of (r, c) that depend on it
         self._xref_cells: set = set()    # formula cells using Sheet!ref
@@ -1433,6 +1434,7 @@ class SheetWidget(QWidget):
         self._cell_objects.clear()
         self._py_spills.clear()
         self._py_errors.clear()
+        self._py_stdout.clear()
         self._py_figures.clear()
         self._dependents.clear()
         self._xref_cells.clear()
@@ -2168,34 +2170,77 @@ class SheetWidget(QWidget):
             bar.setCursorPosition(len(bar.text()) - 1)
 
     def _open_python_popout(self):
-        """Open a larger editor for the active cell's Python program."""
+        """Open a larger, non-modal editor for the active cell's program.
+
+        Running inside the dialog applies the code to the cell and shows
+        the result/output without closing the window, so the user can
+        iterate (and watch embedded plots appear on the grid).
+        """
         from .python_engine import (
-            edit_python_dialog, is_python_source, strip_marker,
+            PythonCellDialog, is_python_source, strip_marker,
         )
         idx = self.table.currentIndex()
         if not idx.isValid():
             return
         row, col = idx.row(), idx.column()
         ref = f"{col_index_to_letter(col)}{row + 1}"
-        # Prefer the live formula-bar text (unsaved edits), else the stored
-        # source for this cell.
         bar_text = self._formula_bar.text()
         if is_python_source(bar_text):
             code = strip_marker(bar_text)
         else:
             src = self._cell_formulas.get((row, col), "")
             code = strip_marker(src) if is_python_source(src) else ""
-        new_code = edit_python_dialog(self, code, ref)
-        if new_code is None:
-            return
-        # Commit through the normal formula-bar path so the cell runs,
-        # spills, embeds plots and pushes an undo command.
-        self.table.setCurrentCell(row, col)
-        self._formula_bar.set_python_mode(True)
-        self._formula_bar.blockSignals(True)
-        self._formula_bar.setText(PY_MARKER + "\n" + new_code)
-        self._formula_bar.blockSignals(False)
-        self._apply_formula_bar()
+        old = getattr(self, "_py_dialog", None)
+        if old is not None:
+            old.close()
+        dlg = PythonCellDialog(
+            self, code, ref,
+            run_cb=lambda c: self._run_python_from_dialog(row, col, c),
+            help_cb=self._py_help)
+        self._py_dialog = dlg
+        dlg.finished.connect(
+            lambda *_: setattr(self, "_py_dialog", None))
+        dlg.show()
+        dlg.raise_()
+
+    def _run_python_from_dialog(self, row, col, code):
+        """Commit *code* to (row, col) as a =PY cell, run it, and return a
+        result dict for the pop-out dialog's output pane."""
+        text = PY_MARKER + "\n" + code
+        self.table.blockSignals(True)
+        it = self.table.item(row, col)
+        if it is None:
+            it = QTableWidgetItem()
+            self.table.setItem(row, col, it)
+        it.setText(text)
+        self.table.blockSignals(False)
+        self._on_cell_changed(row, col)
+        # Keep the formula bar in sync if this is the active cell.
+        cur = self.table.currentIndex()
+        if cur.isValid() and (cur.row(), cur.column()) == (row, col):
+            self._formula_bar.set_python_mode(True)
+            self._formula_bar.blockSignals(True)
+            self._formula_bar.setText(text)
+            self._formula_bar.blockSignals(False)
+        out_it = self.table.item(row, col)
+        return {
+            "result": out_it.text() if out_it is not None else "",
+            "error": self._py_errors.get((row, col)),
+            "stdout": self._py_stdout.get((row, col), ""),
+            "has_plot": (row, col) in self._py_figures,
+        }
+
+    def _py_help(self):
+        """Open the Python examples (HTML page, or the in-app dialog)."""
+        import pathlib
+        page = pathlib.Path(__file__).with_name("python_help.html")
+        if page.exists():
+            from PyQt5.QtCore import QUrl
+            from PyQt5.QtGui import QDesktopServices
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(page)))
+        else:
+            from .python_engine import show_python_help
+            show_python_help(self)
 
     def _apply_formula_bar(self):
         self._formula_entry_cell = None
@@ -2592,6 +2637,10 @@ class SheetWidget(QWidget):
         from .python_engine import PyResult, badge_for, strip_marker
         self._clear_py_outputs(row, col)
         res = self._py_runtime().run(strip_marker(source), self, row, col)
+        if res.stdout:
+            self._py_stdout[(row, col)] = res.stdout
+        else:
+            self._py_stdout.pop((row, col), None)
         if not res.ok:
             self._py_errors[(row, col)] = res.error
             self._cell_objects.pop((row, col), None)

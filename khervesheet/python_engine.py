@@ -23,7 +23,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import (
     QColor, QFont, QSyntaxHighlighter, QTextCharFormat,
 )
-from PyQt5.QtWidgets import QPlainTextEdit
+from PyQt5.QtWidgets import QPlainTextEdit, QDialog
 
 # Marker that flags a cell as Python source.  Stored as the first line of
 # the cell text so Python cells round-trip through the existing formula
@@ -66,11 +66,13 @@ class PyResult:
     FIGURE = "figure"
     NONE = "none"
 
-    def __init__(self, value=None, kind=NONE, figure=None, error=None):
+    def __init__(self, value=None, kind=NONE, figure=None, error=None,
+                 stdout=""):
         self.value = value
         self.kind = kind
         self.figure = figure
         self.error = error      # traceback string, or None
+        self.stdout = stdout    # captured print() output
 
     @property
     def ok(self):
@@ -200,17 +202,23 @@ class PythonRuntime:
     # ── execution ────────────────────────────────────────────────────
     def run(self, code, sheet, row, col) -> PyResult:
         """Execute *code* in the shared namespace and classify its value."""
+        import contextlib
+        import io
         import traceback
         g = self._ensure_globals()
         self._sheet = sheet
         plt = g.get("plt")
         before = set(plt.get_fignums()) if plt is not None else set()
+        buf = io.StringIO()
         try:
-            value = self._exec_with_value(code, g)
+            with contextlib.redirect_stdout(buf):
+                value = self._exec_with_value(code, g)
         except Exception:
-            return PyResult(error=traceback.format_exc())
+            return PyResult(error=traceback.format_exc(),
+                            stdout=buf.getvalue())
         finally:
             self._sheet = None
+        out = buf.getvalue()
 
         kind, norm = _classify(value)
 
@@ -219,11 +227,12 @@ class PythonRuntime:
             new = [n for n in plt.get_fignums() if n not in before]
             if new:
                 fig = plt.figure(new[-1])
-                return PyResult(value=fig, kind=PyResult.FIGURE, figure=fig)
+                return PyResult(value=fig, kind=PyResult.FIGURE,
+                                figure=fig, stdout=out)
 
         if kind == PyResult.FIGURE:
-            return PyResult(value=norm, kind=kind, figure=norm)
-        return PyResult(value=norm, kind=kind)
+            return PyResult(value=norm, kind=kind, figure=norm, stdout=out)
+        return PyResult(value=norm, kind=kind, stdout=out)
 
     @staticmethod
     def _exec_with_value(code, g):
@@ -504,9 +513,10 @@ def show_python_help(parent=None):
 
 
 class _DialogCodeEditor(QPlainTextEdit):
-    """Code editor used inside the pop-out dialog.
+    """Code editor for the pop-out dialog.
 
-    Tab inserts four spaces; Ctrl+Enter / Ctrl+Return accepts the dialog.
+    Tab indents (selection-aware), Shift+Tab dedents, Ctrl+/ toggles line
+    comments, and Ctrl+Enter / Ctrl+Return emits *runRequested*.
     """
 
     runRequested = pyqtSignal()
@@ -523,47 +533,263 @@ class _DialogCodeEditor(QPlainTextEdit):
         self._highlighter = PythonHighlighter(self.document())
 
     def keyPressEvent(self, event):
+        mod = event.modifiers()
         if (event.key() in (Qt.Key_Return, Qt.Key_Enter)
-                and (event.modifiers() & Qt.ControlModifier)):
+                and (mod & Qt.ControlModifier)):
             self.runRequested.emit()
             return
+        if event.key() == Qt.Key_Slash and (mod & Qt.ControlModifier):
+            self.toggle_comment()
+            return
         if event.key() == Qt.Key_Tab:
-            self.insertPlainText("    ")
+            if self._has_multiline_selection():
+                self.indent_selection()
+            else:
+                self.insertPlainText("    ")
+            return
+        if event.key() == Qt.Key_Backtab:   # Shift+Tab
+            self.dedent_selection()
             return
         super().keyPressEvent(event)
 
+    # ── selection helpers ────────────────────────────────────────────
+    def _has_multiline_selection(self):
+        c = self.textCursor()
+        return c.hasSelection() and "\n" in c.selectedText()
 
-def edit_python_dialog(parent, code: str, cell_ref: str = "") -> "str | None":
-    """Open a larger Python editor pre-filled with *code*.
+    def _selected_line_range(self):
+        from PyQt5.QtGui import QTextCursor
+        c = self.textCursor()
+        start, end = c.selectionStart(), c.selectionEnd()
+        c.setPosition(start)
+        c.movePosition(QTextCursor.StartOfBlock)
+        s = c.blockNumber()
+        c.setPosition(end)
+        e = c.blockNumber()
+        return s, e
 
-    Returns the edited code (without the =PY marker) if the user clicks
-    Run, or ``None`` if cancelled.
+    def _apply_per_line(self, fn):
+        from PyQt5.QtGui import QTextCursor
+        doc = self.document()
+        cur = self.textCursor()
+        cur.beginEditBlock()
+        if cur.hasSelection():
+            s, e = self._selected_line_range()
+        else:
+            s = e = cur.blockNumber()
+        for bn in range(s, e + 1):
+            blk = doc.findBlockByNumber(bn)
+            edit = QTextCursor(blk)
+            edit.select(QTextCursor.LineUnderCursor)
+            edit.insertText(fn(blk.text()))
+        cur.endEditBlock()
+
+    def indent_selection(self):
+        self._apply_per_line(lambda ln: "    " + ln)
+
+    def dedent_selection(self):
+        def _ded(ln):
+            for pre in ("    ", "\t", " ", "  ", "   "):
+                if ln.startswith(pre):
+                    return ln[len(pre):]
+            return ln
+        self._apply_per_line(_ded)
+
+    def toggle_comment(self):
+        from PyQt5.QtGui import QTextCursor
+        doc = self.document()
+        cur = self.textCursor()
+        if cur.hasSelection():
+            s, e = self._selected_line_range()
+        else:
+            s = e = cur.blockNumber()
+        lines = [doc.findBlockByNumber(bn).text()
+                 for bn in range(s, e + 1)]
+        non_empty = [ln for ln in lines if ln.strip()]
+        all_commented = non_empty and all(
+            ln.lstrip().startswith("#") for ln in non_empty)
+        if all_commented:
+            self._apply_per_line(
+                lambda ln: ln.replace("# ", "", 1) if "# " in ln
+                else ln.replace("#", "", 1) if "#" in ln else ln)
+        else:
+            self._apply_per_line(
+                lambda ln: ("# " + ln) if ln.strip() else ln)
+
+
+# Ready-to-paste snippets offered by the dialog's Snippets menu.
+PY_SNIPPETS = {
+    "Imports (numpy, matplotlib)":
+        "import numpy as np\nimport matplotlib.pyplot as plt\n",
+    "Plot a column":
+        "import matplotlib.pyplot as plt\n"
+        "y = ks(\"A1:A50\")\n"
+        "plt.plot(y)\n"
+        "plt.gcf()",
+    "X–Y plot":
+        "import matplotlib.pyplot as plt\n"
+        "x = ks(\"A2:A50\")\n"
+        "y = ks(\"B2:B50\")\n"
+        "plt.plot(x, y, \"o-\")\n"
+        "plt.xlabel(\"x\"); plt.ylabel(\"y\"); plt.grid(True)\n"
+        "plt.gcf()",
+    "Histogram":
+        "import matplotlib.pyplot as plt\n"
+        "plt.hist(ks(\"A1:A200\"), bins=30)\n"
+        "plt.gcf()",
+    "Linear fit (slope, intercept)":
+        "import numpy as np\n"
+        "x = ks(\"A2:A50\"); y = ks(\"B2:B50\")\n"
+        "m, b = np.polyfit(x, y, 1)\n"
+        "[float(m), float(b)]",
+    "Gaussian fit":
+        "import numpy as np\n"
+        "from scipy.optimize import curve_fit\n"
+        "def g(x, A, mu, s): return A*np.exp(-(x-mu)**2/(2*s*s))\n"
+        "x = ks(\"A2:A100\"); y = ks(\"B2:B100\")\n"
+        "popt, _ = curve_fit(g, x, y, p0=[y.max(), x.mean(), 1])\n"
+        "popt.tolist()",
+    "FFT magnitude spectrum":
+        "import numpy as np, matplotlib.pyplot as plt\n"
+        "y = ks(\"B2:B514\")\n"
+        "mag = np.abs(np.fft.rfft(y))\n"
+        "plt.plot(mag); plt.xlabel(\"bin\"); plt.ylabel(\"|FFT|\")\n"
+        "plt.gcf()",
+    "Define a helper function":
+        "def my_func(x):\n    return x * 2\n",
+}
+
+
+class PythonCellDialog(QDialog):
+    """Non-modal pop-out editor for a single =PY cell.
+
+    Running (toolbar Run or Ctrl+Enter) applies the code to the cell and
+    shows the result / printed output / errors in the output pane — the
+    window stays open so you can iterate.  *run_cb(code)* must apply the
+    code and return a dict with keys: result, error, stdout, has_plot.
     """
-    from PyQt5.QtWidgets import (
-        QDialog, QVBoxLayout, QLabel, QDialogButtonBox,
-    )
-    dlg = QDialog(parent)
-    title = f"Python — {cell_ref}" if cell_ref else "Python cell"
-    dlg.setWindowTitle(title)
-    dlg.resize(720, 520)
-    layout = QVBoxLayout(dlg)
-    hint = QLabel(
-        ("Editing " + cell_ref + " · " if cell_ref else "")
-        + "read cells with ks(\"A1\") · Ctrl+Enter to run")
-    hint.setStyleSheet("color:#57606a;")
-    layout.addWidget(hint)
-    editor = _DialogCodeEditor()
-    editor.setPlainText(code or "")
-    layout.addWidget(editor, stretch=1)
-    bb = QDialogButtonBox()
-    run_btn = bb.addButton("Run", QDialogButtonBox.AcceptRole)
-    run_btn.setDefault(True)
-    bb.addButton(QDialogButtonBox.Cancel)
-    bb.accepted.connect(dlg.accept)
-    bb.rejected.connect(dlg.reject)
-    editor.runRequested.connect(dlg.accept)
-    layout.addWidget(bb)
-    editor.setFocus()
-    if dlg.exec_() == QDialog.Accepted:
-        return editor.toPlainText()
-    return None
+
+    def __init__(self, parent, code, cell_ref, run_cb, help_cb=None):
+        super().__init__(parent)
+        from PyQt5.QtWidgets import (
+            QVBoxLayout, QLabel, QPushButton, QToolBar, QToolButton,
+            QMenu, QSplitter, QWidget, QHBoxLayout,
+        )
+        from PyQt5.QtWidgets import QAction
+        self._run_cb = run_cb
+        self._help_cb = help_cb
+        self.setWindowTitle(f"Python — {cell_ref}" if cell_ref
+                            else "Python cell")
+        self.resize(760, 560)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # ── Toolbar ──────────────────────────────────────────────────
+        tb = QToolBar()
+        tb.setStyleSheet("QToolBar{border:0;padding:3px;spacing:3px;}")
+        run_act = QAction("▶ Run", self)
+        run_act.setShortcut("Ctrl+Return")
+        run_act.setToolTip("Run and apply to the cell (Ctrl+Enter)")
+        run_act.triggered.connect(self._run)
+        tb.addAction(run_act)
+        tb.addSeparator()
+        ks_act = QAction("Insert ks()", self)
+        ks_act.setToolTip("Insert a cell reference: ks(\"A1\")")
+        ks_act.triggered.connect(self._insert_ks)
+        tb.addAction(ks_act)
+        # Snippets menu.
+        snip_btn = QToolButton()
+        snip_btn.setText("Snippets ▾")
+        snip_btn.setPopupMode(QToolButton.InstantPopup)
+        menu = QMenu(snip_btn)
+        for name, body in PY_SNIPPETS.items():
+            act = menu.addAction(name)
+            act.triggered.connect(
+                lambda _=False, b=body: self._insert_snippet(b))
+        snip_btn.setMenu(menu)
+        tb.addWidget(snip_btn)
+        cmt_act = QAction("Comment", self)
+        cmt_act.setShortcut("Ctrl+/")
+        cmt_act.setToolTip("Toggle line comments (Ctrl+/)")
+        cmt_act.triggered.connect(lambda: self.editor.toggle_comment())
+        tb.addAction(cmt_act)
+        tb.addSeparator()
+        if help_cb is not None:
+            help_act = QAction("Help", self)
+            help_act.setToolTip("Open the Python examples")
+            help_act.triggered.connect(lambda: self._help_cb())
+            tb.addAction(help_act)
+        outer.addWidget(tb)
+
+        # ── Hint + editor + output (split) ───────────────────────────
+        body = QWidget()
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(8, 4, 8, 8)
+        hint = QLabel(
+            "Read cells with ks(\"A1\") or ks(\"A1:B10\"). The last line's "
+            "value is the cell result. Ctrl+Enter runs.")
+        hint.setStyleSheet("color:#57606a;")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        split = QSplitter(Qt.Vertical)
+        self.editor = _DialogCodeEditor()
+        self.editor.setPlainText(code or "")
+        self.editor.runRequested.connect(self._run)
+        split.addWidget(self.editor)
+
+        self.output = QPlainTextEdit()
+        self.output.setReadOnly(True)
+        self.output.setMaximumHeight(150)
+        self.output.setPlaceholderText("Output appears here after you Run.")
+        of = QFont("Consolas")
+        of.setStyleHint(QFont.Monospace)
+        self.output.setFont(of)
+        split.addWidget(self.output)
+        split.setStretchFactor(0, 4)
+        split.setStretchFactor(1, 1)
+        layout.addWidget(split, stretch=1)
+
+        # ── Bottom buttons ───────────────────────────────────────────
+        row = QHBoxLayout()
+        row.addStretch(1)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.close)
+        row.addWidget(close_btn)
+        layout.addLayout(row)
+        outer.addWidget(body, stretch=1)
+
+        self.editor.setFocus()
+
+    # ── actions ──────────────────────────────────────────────────────
+    def _run(self):
+        out = self._run_cb(self.editor.toPlainText()) or {}
+        parts = []
+        err = out.get("error")
+        if out.get("stdout"):
+            parts.append(out["stdout"].rstrip())
+        if err:
+            parts.append(err.rstrip())
+            self.output.setStyleSheet("color:#b00020;")
+        else:
+            self.output.setStyleSheet("")
+            if out.get("has_plot"):
+                parts.append("→ plot embedded in the grid")
+            res = out.get("result", "")
+            if res not in ("", None):
+                parts.append("Result: " + str(res))
+        self.output.setPlainText(
+            "\n".join(p for p in parts if p) or "(ran — no output)")
+
+    def _insert_ks(self):
+        from PyQt5.QtGui import QTextCursor
+        cur = self.editor.textCursor()
+        cur.insertText('ks("")')
+        cur.movePosition(QTextCursor.Left, QTextCursor.MoveAnchor, 2)
+        self.editor.setTextCursor(cur)
+        self.editor.setFocus()
+
+    def _insert_snippet(self, body):
+        self.editor.textCursor().insertText(body)
+        self.editor.setFocus()

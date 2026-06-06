@@ -217,3 +217,40 @@ def test_python_help_html_has_examples():
     assert "matplotlib" in PYTHON_HELP_HTML
     assert "ks(" in PYTHON_HELP_HTML
     assert "plt.gcf()" in PYTHON_HELP_HTML
+
+
+def test_stdout_capture():
+    rt = PythonRuntime()
+    res = rt.run("print('hello')\n21 * 2", None, 0, 0)
+    assert res.value == 42
+    assert res.stdout.strip() == "hello"
+
+
+def test_run_python_from_dialog_returns_output(qapp):
+    from khervesheet.workbook import WorkbookWidget
+    wb = WorkbookWidget()
+    s = wb.tabs.widget(0)
+    out = s._run_python_from_dialog(0, 0, "print('hi')\n6 * 7")
+    assert out["result"] == "42"
+    assert out["error"] is None
+    assert out["stdout"].strip() == "hi"
+    assert out["has_plot"] is False
+    # The cell really became a =PY cell.
+    assert s._cell_formulas[(0, 0)].startswith("=PY")
+
+
+def test_dialog_comment_toggle(qapp):
+    from khervesheet.python_engine import _DialogCodeEditor
+    from PyQt5.QtGui import QTextCursor
+    ed = _DialogCodeEditor()
+    ed.setPlainText("x = 1\ny = 2")
+    c = ed.textCursor()
+    c.select(QTextCursor.Document)
+    ed.setTextCursor(c)
+    ed.toggle_comment()
+    assert ed.toPlainText() == "# x = 1\n# y = 2"
+    c = ed.textCursor()
+    c.select(QTextCursor.Document)
+    ed.setTextCursor(c)
+    ed.toggle_comment()
+    assert ed.toPlainText() == "x = 1\ny = 2"
