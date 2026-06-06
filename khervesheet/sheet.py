@@ -1961,7 +1961,8 @@ class SheetWidget(QWidget):
             cmd = CellEditCmd(self, row, col, old_text, new_text)
             self._undo_stack.push(cmd)
 
-        self.data_changed.emit(col)
+        if not self._suppress_recalc_signals:
+            self.data_changed.emit(col)
 
         # Repaint any sparklines that reference this column.
         for (sr, sc), sp in self._fmt_delegate._sparklines.items():

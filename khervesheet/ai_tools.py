@@ -216,16 +216,41 @@ class AiToolExecutor:
         sheet = self._sheet(inp["sheet_name"])
         values: List[List[str]] = inp["values"]
         r1, c1, _, _ = parse_range(inp["range"])
-        count = 0
-        for dr, row_vals in enumerate(values):
+        # Normalise: if the model sends a flat list of scalars (1-D)
+        # instead of a 2-D array, wrap each element into its own row.
+        # Also guard against bare strings being iterated char-by-char.
+        normalised: List[List[str]] = []
+        for row_vals in values:
+            if isinstance(row_vals, str):
+                # Bare string → single-cell row.
+                normalised.append([row_vals])
+            elif isinstance(row_vals, list):
+                normalised.append(row_vals)
+            else:
+                normalised.append([str(row_vals)])
+        # Collect cells to write, then commit in one batch.
+        writes: List[tuple] = []  # (row, col, text)
+        for dr, row_vals in enumerate(normalised):
             for dc, val in enumerate(row_vals):
                 r, c = r1 + dr, c1 + dc
                 sval = str(val)
                 if sval == sheet.cell_text(r, c):
                     continue
+                writes.append((r, c, sval))
+        if not writes:
+            return {"cells_written": 0}
+        # Suppress chart/sparkline signals during bulk write.
+        sheet._suppress_recalc_signals = True
+        try:
+            for r, c, sval in writes:
                 self._commit_cell(sheet, r, c, sval)
-                count += 1
-        return {"cells_written": count}
+        finally:
+            sheet._suppress_recalc_signals = False
+        # Emit data_changed once per affected column.
+        changed_cols = {c for _, c, _ in writes}
+        for c in changed_cols:
+            sheet.data_changed.emit(c)
+        return {"cells_written": len(writes)}
 
     def tool_set_formula(self, inp: dict) -> dict:
         sheet = self._sheet(inp["sheet_name"])
