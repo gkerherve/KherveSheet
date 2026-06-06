@@ -1860,6 +1860,24 @@ class SheetWidget(QWidget):
             self._row_resize_snap = None
 
     def _on_cell_changed(self, row, col):
+        # Re-entrancy depth guard.  Normal programmatic writes block
+        # signals, so _on_cell_changed should never nest deeply.  A
+        # self-referential or overlapping array spill (a formula whose
+        # spill output feeds its own input) can re-enter this handler
+        # without bound, overflowing the *native* stack and aborting the
+        # process with STATUS_STACK_BUFFER_OVERRUN (0xC0000409) — a crash
+        # faulthandler cannot catch.  Cap the depth so a pathological
+        # cascade stops gracefully instead of killing the app.
+        depth = getattr(self, "_cell_changed_depth", 0)
+        if depth >= 40:
+            return
+        self._cell_changed_depth = depth + 1
+        try:
+            self._on_cell_changed_impl(row, col)
+        finally:
+            self._cell_changed_depth = depth
+
+    def _on_cell_changed_impl(self, row, col):
         it = self.table.item(row, col)
         new_text = it.text() if it else ""
         old_text = self._shadow.get((row, col), "")
@@ -2646,17 +2664,28 @@ class SheetWidget(QWidget):
             return "#ERROR"
 
     def _spill_array(self, values, row, col):
-        """Write spill values into the cells below (row+1 …) silently."""
-        for i, v in enumerate(values[1:], start=1):
-            r = row + i
-            if r >= self.table.rowCount():
-                self.table.setRowCount(r + 1)
-            item = self.table.item(r, col)
-            if item is None:
-                from PyQt5.QtWidgets import QTableWidgetItem
-                item = QTableWidgetItem()
-                self.table.setItem(r, col, item)
-            item.setData(Qt.EditRole, _format_number(v))
+        """Write spill values into the cells below (row+1 …) silently.
+
+        Signals are blocked so a spill whose output overlaps the
+        formula's own input range cannot re-fire ``cellChanged`` and
+        recurse back into ``_on_cell_changed`` — an unbounded cascade
+        that would overflow the native stack (0xC0000409).
+        """
+        self.table.blockSignals(True)
+        try:
+            for i, v in enumerate(values[1:], start=1):
+                r = row + i
+                if r >= self.table.rowCount():
+                    self.table.setRowCount(r + 1)
+                item = self.table.item(r, col)
+                if item is None:
+                    from PyQt5.QtWidgets import QTableWidgetItem
+                    item = QTableWidgetItem()
+                    self.table.setItem(r, col, item)
+                item.setData(Qt.EditRole, _format_number(v))
+                self._shadow[(r, col)] = item.text()
+        finally:
+            self.table.blockSignals(False)
 
     # ── Python (=PY) cell evaluation ─────────────────────────────────
     def _py_runtime(self):
