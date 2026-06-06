@@ -1,7 +1,7 @@
 """Build the "XPS Peak Fitting (Sr 3d)" Python-cell example .ksheet.
 
 Replicates KherveSheet's Curve Fitting dialog entirely in cells + a =PY
-cell: Pseudo-Voigt peaks on an active Shirley background, with cells for
+cell: Pseudo-Voigt peaks on a standard Shirley background, with cells for
 the X/Y data ranges and the fitting X-range, plus a full parameter table
 (Value / Min / Max / Vary / Expr) that supports constraints and
 expression-linking between peaks (e.g. peak 2's centre = peak 1's centre
@@ -63,7 +63,7 @@ def _load_sr3d():
 
 
 # The =PY fit program (body only; the "=PY" marker is added on write).
-PY_BODY = r'''# XPS curve fitting — Pseudo-Voigt peaks on an active Shirley
+PY_BODY = r'''# XPS curve fitting — Pseudo-Voigt peaks on a standard Shirley
 # background.  The X/Y data ranges, the fitting X-range and every peak
 # parameter (Value / Min / Max / Vary / Expr) all come from the cells in
 # the panel above.  This cell reads them, fits with lmfit, writes the
@@ -125,7 +125,10 @@ def peak_sum(p, x):                # all peaks added together
                 p["p%d_sigma" % i], p["p%d_fraction" % i])
     return t
 
-def shirley(x, y, nit=40):         # iterative Shirley background
+def shirley(x, y, nit=60):         # standard iterative Shirley background
+    # x ascending; endpoints anchor the background. The step under each
+    # peak is proportional to the spectral area still to higher BE, which
+    # is what gives Shirley its characteristic S-shape.
     yl, yr = y[0], y[-1]; B = np.zeros_like(y)
     for _ in range(nit):
         inten = y - yr - B
@@ -134,18 +137,17 @@ def shirley(x, y, nit=40):         # iterative Shirley background
             break
         area_right = tot - cumulative_trapezoid(inten, x, initial=0)
         Bn = (yl - yr) * (area_right / tot)
-        if np.max(np.abs(Bn - B)) < 1e-4 * max(1, abs(yl - yr)):
+        if np.max(np.abs(Bn - B)) < 1e-5 * max(1, abs(yl - yr)):
             B = Bn; break
         B = Bn
     return yr + B
 
-# --- active Shirley: refit peaks, rebuild the background, repeat -----
+# --- standard Shirley background (from the raw data), then fit peaks --
+# Computed once from the data itself (peaks included) so it keeps the
+# Shirley step; the peaks are then fitted to (data - background).
 bg = shirley(x, y)
-for _ in range(8):
-    out = lmfit.minimize(lambda p: peak_sum(p, x) - (y - bg), P)
-    P = out.params
-    bg = shirley(x, y - peak_sum(P, x))
-
+out = lmfit.minimize(lambda p: peak_sum(p, x) - (y - bg), P)
+P = out.params
 fit = peak_sum(P, x) + bg
 r2 = 1 - np.sum((y - fit)**2) / np.sum((y - y.mean())**2)
 
@@ -166,7 +168,7 @@ axp.plot(x, fit, "-", lw=1.7, color="#c00000", label="fit")
 for xb in (lo, hi):                              # green fit-range markers
     axp.axvline(xb, color="#2e9e44", ls="--", lw=1)
 axp.set_xlabel("Binding energy (eV)"); axp.set_ylabel("Counts")
-axp.set_title("Sr 3d  —  %d Pseudo-Voigt peaks, active Shirley "
+axp.set_title("Sr 3d  —  %d Pseudo-Voigt peaks, Shirley "
               "(R² = %.4f)" % (len(ids), r2))
 axp.legend()
 plt.gcf()'''
@@ -187,7 +189,7 @@ def build():
     s.set(0, 3, "XPS Curve Fitting — Sr 3d")
     s.fmt(0, 3, bold=True, font_size=16, font_color=PALETTE["header"])
     s.merge(0, 3, 1, 6)
-    s.set(1, 3, "Pseudo-Voigt peaks · active Shirley background · "
+    s.set(1, 3, "Pseudo-Voigt peaks · standard Shirley background · "
                 "fitted in Python (lmfit)")
     s.fmt(1, 3, italic=True, font_color="#555555")
     s.merge(1, 3, 1, 6)
@@ -196,7 +198,7 @@ def build():
     settings = [
         (3, "Data X range", "A1:A%d" % n, None),
         (4, "Data Y range", "B1:B%d" % n, None),
-        (5, "Background", "Active Shirley", None),
+        (5, "Background", "Shirley", None),
         (6, "Fit X min (eV)", 128.0, None),
         (7, "Fit X max (eV)", 140.0, None),
         (8, "Number of peaks", 2, None),
