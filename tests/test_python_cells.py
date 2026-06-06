@@ -233,6 +233,30 @@ def test_python_udf_does_not_clobber_builtin(qapp):
     assert s.table.item(0, 1).text() in ("7", "7.00")
 
 
+def test_py_plot_exports_vector(qapp, tmp_path):
+    from khervesheet.workbook import WorkbookWidget
+    wb = WorkbookWidget()
+    s = wb.tabs.widget(0)
+    _put(s, 0, 0,
+         "=PY\nimport matplotlib.pyplot as plt\n"
+         "plt.plot([1, 2, 3], [1, 4, 9])\nplt.gcf()")
+    assert s._images, "the plot should have produced an embedded image"
+    img = s._images[-1]
+    assert img._mpl_figure is not None       # source figure retained
+    svg = str(tmp_path / "p.svg")
+    pdf = str(tmp_path / "p.pdf")
+    assert img._save_figure(svg, "svg") is True
+    assert img._save_figure(pdf, "pdf") is True
+    assert "<svg" in open(svg, encoding="utf-8", errors="ignore").read()
+    assert open(pdf, "rb").read(5) == b"%PDF-"
+    # A plain image (no figure) reports no vector source.
+    from khervesheet.embedded_image import EmbeddedImage
+    from PyQt5.QtGui import QPixmap
+    plain = EmbeddedImage(QPixmap(10, 10), None)
+    assert plain._mpl_figure is None
+    assert plain._save_figure(str(tmp_path / "x.svg"), "svg") is False
+
+
 def test_sheet_python_error_shows_pyerr(qapp):
     from khervesheet.workbook import WorkbookWidget
     wb = WorkbookWidget()

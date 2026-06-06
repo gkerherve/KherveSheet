@@ -2861,14 +2861,17 @@ class SheetWidget(QWidget):
             return
         pm = QPixmap()
         pm.loadFromData(buf.getvalue(), "PNG")
+        if pm.isNull():
+            return
+        img = EmbeddedImage(pm, self.table.viewport())
+        # Keep the source figure so the image can export true vector
+        # SVG/PDF (a saved/reloaded image falls back to raster).
+        img.set_source_figure(figure)
         try:
             import matplotlib.pyplot as plt
             plt.close(figure)
         except Exception:
             pass
-        if pm.isNull():
-            return
-        img = EmbeddedImage(pm, self.table.viewport())
         x = (self.table.columnViewportPosition(col)
              + self.table.columnWidth(col) + 4)
         y = self.table.rowViewportPosition(row)

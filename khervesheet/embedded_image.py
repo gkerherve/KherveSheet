@@ -192,6 +192,9 @@ class EmbeddedImage(QWidget):
         self.setMouseTracking(True)
         self._original_pixmap = pixmap   # unmodified source
         self._pixmap = pixmap            # displayed (after filters)
+        # Source matplotlib Figure, if this image came from a =PY plot —
+        # enables true-vector SVG/PDF export.  None for plain pictures.
+        self._mpl_figure = None
         self._selected = False
         self._group_id = None
         self._group_drag = None
@@ -405,6 +408,8 @@ class EmbeddedImage(QWidget):
     def contextMenuEvent(self, ev):
         menu = QMenu(self)
         menu.addAction("Save Image As…", self._save_image_as)
+        menu.addAction("Save as PDF…", self._save_as_pdf)
+        menu.addAction("Save as SVG…", self._save_as_svg)
         menu.addSeparator()
         menu.addAction("Resize…", self._resize_dialog)
         ar_act = menu.addAction("Lock Aspect Ratio")
@@ -458,6 +463,82 @@ class EmbeddedImage(QWidget):
             elif lower.endswith(".bmp"):
                 fmt = "BMP"
             self._pixmap.save(path, fmt)
+
+    def set_source_figure(self, figure):
+        """Attach the matplotlib Figure this image was rendered from, so
+        SVG/PDF export can be true vector instead of an embedded raster."""
+        self._mpl_figure = figure
+
+    def _save_as_pdf(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save as PDF", "", "PDF (*.pdf);;All Files (*)")
+        if not path:
+            return
+        if not path.lower().endswith(".pdf"):
+            path += ".pdf"
+        if self._save_figure(path, "pdf"):
+            return
+        # Fallback: embed the displayed raster in a PDF page.
+        from PyQt5.QtGui import QPdfWriter, QPainter
+        from PyQt5.QtCore import QSizeF, QMarginsF
+        try:
+            from PyQt5.QtGui import QPageSize, QPageLayout
+        except Exception:
+            QPageSize = QPageLayout = None
+        writer = QPdfWriter(path)
+        writer.setResolution(150)
+        pm = self._pixmap
+        if QPageSize is not None:
+            inch = QSizeF(pm.width() / 150.0, pm.height() / 150.0)
+            writer.setPageSize(QPageSize(inch, QPageSize.Inch))
+            writer.setPageMargins(QMarginsF(0, 0, 0, 0))
+        painter = QPainter(writer)
+        target = painter.viewport()
+        scaled = pm.scaled(target.size(), Qt.KeepAspectRatio,
+                           Qt.SmoothTransformation)
+        painter.drawPixmap(0, 0, scaled)
+        painter.end()
+
+    def _save_as_svg(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save as SVG", "", "SVG (*.svg);;All Files (*)")
+        if not path:
+            return
+        if not path.lower().endswith(".svg"):
+            path += ".svg"
+        if self._save_figure(path, "svg"):
+            return
+        # Fallback: embed the displayed raster in an SVG.
+        try:
+            from PyQt5.QtSvg import QSvgGenerator
+        except Exception:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "SVG export",
+                "SVG export needs PyQt5.QtSvg, which is not available.")
+            return
+        from PyQt5.QtGui import QPainter
+        from PyQt5.QtCore import QRect
+        pm = self._pixmap
+        gen = QSvgGenerator()
+        gen.setFileName(path)
+        gen.setSize(pm.size())
+        gen.setViewBox(QRect(0, 0, pm.width(), pm.height()))
+        painter = QPainter(gen)
+        painter.drawPixmap(0, 0, pm)
+        painter.end()
+
+    def _save_figure(self, path, fmt):
+        """If this image has a source matplotlib figure, save it directly
+        as true vector *fmt*.  Returns True on success."""
+        fig = self._mpl_figure
+        if fig is None:
+            return False
+        try:
+            fig.savefig(path, format=fmt, bbox_inches="tight")
+            return True
+        except Exception:
+            return False
 
     # ── Colour adjustments ────────────────────────────────────────────
 
