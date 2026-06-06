@@ -299,6 +299,46 @@ def test_run_python_from_dialog_returns_output(qapp):
     assert s._cell_formulas[(0, 0)].startswith("=PY")
 
 
+def test_error_line_parsed_from_traceback():
+    from khervesheet.python_engine import PythonCellDialog
+    tb = ('Traceback (most recent call last):\n'
+          '  File "<py-cell>", line 2, in <module>\n'
+          'ZeroDivisionError: division by zero')
+    assert PythonCellDialog._error_line_from(tb) == 2
+    assert PythonCellDialog._error_line_from("no line here") is None
+
+
+def test_popout_pick_inserts_ref(qapp):
+    from khervesheet.workbook import WorkbookWidget
+    wb = WorkbookWidget()
+    s = wb.tabs.widget(0)
+    s.table.setCurrentCell(0, 0)
+    s._open_python_popout()
+    dlg = s._py_dialog
+    dlg._pick_act.setChecked(True)
+    assert s._py_pick_active is True
+    s._on_cell_clicked(2, 3)            # D3
+    assert 'ks("D3")' in dlg.editor.toPlainText()
+    assert s._py_pick_active is False   # auto-disarmed
+    dlg.close()
+
+
+def test_popout_marks_error_line(qapp):
+    from khervesheet.workbook import WorkbookWidget
+    wb = WorkbookWidget()
+    s = wb.tabs.widget(0)
+    s.table.setCurrentCell(0, 0)
+    s._open_python_popout()
+    dlg = s._py_dialog
+    dlg.editor.setPlainText("x = 1\ny = 1 / 0")
+    dlg._run()
+    assert dlg.editor._error_line == 2
+    dlg.editor.setPlainText("2 + 2")
+    dlg._run()
+    assert dlg.editor._error_line is None
+    dlg.close()
+
+
 def test_dialog_comment_toggle(qapp):
     from khervesheet.python_engine import _DialogCodeEditor
     from PyQt5.QtGui import QTextCursor

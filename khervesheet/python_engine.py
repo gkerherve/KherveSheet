@@ -23,7 +23,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import (
     QColor, QFont, QSyntaxHighlighter, QTextCharFormat,
 )
-from PyQt5.QtWidgets import QPlainTextEdit, QDialog
+from PyQt5.QtWidgets import QPlainTextEdit, QDialog, QWidget
 
 # Marker that flags a cell as Python source.  Stored as the first line of
 # the cell text so Python cells round-trip through the existing formula
@@ -604,11 +604,42 @@ def show_python_help(parent=None):
     dlg.exec_()
 
 
+class _LineNumberArea(QWidget):
+    """Gutter widget that paints line numbers for _DialogCodeEditor."""
+
+    def __init__(self, editor):
+        super().__init__(editor)
+        self._editor = editor
+
+    def sizeHint(self):
+        from PyQt5.QtCore import QSize
+        return QSize(self._editor.line_number_area_width(), 0)
+
+    def paintEvent(self, event):
+        self._editor.paint_line_numbers(event)
+
+
+# Words always offered by autocomplete, beyond the live namespace.
+_COMPLETE_KEYWORDS = (
+    "import from as def class return if elif else for while in is and or "
+    "not with try except finally raise lambda yield None True False print "
+    "range len sum min max abs round int float str list dict tuple set "
+    "enumerate zip sorted reversed").split()
+_COMPLETE_HINTS = [
+    "ks", "ks_set", "write", "np", "plt", "pd",
+    "np.array", "np.linspace", "np.arange", "np.zeros", "np.ones",
+    "np.mean", "np.sum", "np.std", "np.polyfit", "np.gradient",
+    "plt.plot", "plt.scatter", "plt.bar", "plt.hist", "plt.gcf",
+    "plt.xlabel", "plt.ylabel", "plt.title", "plt.legend",
+]
+
+
 class _DialogCodeEditor(QPlainTextEdit):
     """Code editor for the pop-out dialog.
 
-    Tab indents (selection-aware), Shift+Tab dedents, Ctrl+/ toggles line
-    comments, and Ctrl+Enter / Ctrl+Return emits *runRequested*.
+    Line numbers + current-line highlight, Tab/Shift+Tab indent/dedent,
+    Ctrl+/ comment toggle, Ctrl+Space (or typing) autocomplete, and
+    Ctrl+Enter / Ctrl+Return emits *runRequested*.
     """
 
     runRequested = pyqtSignal()
@@ -623,12 +654,119 @@ class _DialogCodeEditor(QPlainTextEdit):
         self.setTabStopDistance(
             4 * self.fontMetrics().horizontalAdvance(" "))
         self._highlighter = PythonHighlighter(self.document())
+        self._error_line = None
+
+        # Line-number gutter.
+        self._lna = _LineNumberArea(self)
+        self.blockCountChanged.connect(
+            lambda _=0: self._update_lna_width())
+        self.updateRequest.connect(self._update_lna)
+        self.cursorPositionChanged.connect(self._highlight_current_line)
+        self._update_lna_width()
+        self._highlight_current_line()
+
+        # Autocomplete.
+        from PyQt5.QtWidgets import QCompleter
+        from PyQt5.QtCore import QStringListModel
+        self._completer = QCompleter(self)
+        self._completer.setModel(QStringListModel([], self._completer))
+        self._completer.setWidget(self)
+        self._completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self._completer.activated.connect(self._insert_completion)
+
+    # ── line-number gutter ───────────────────────────────────────────
+    def line_number_area_width(self):
+        digits = max(2, len(str(max(1, self.blockCount()))))
+        return 10 + self.fontMetrics().horizontalAdvance("9") * digits
+
+    def _update_lna_width(self):
+        self.setViewportMargins(self.line_number_area_width(), 0, 0, 0)
+
+    def _update_lna(self, rect, dy):
+        if dy:
+            self._lna.scroll(0, dy)
+        else:
+            self._lna.update(0, rect.y(), self._lna.width(), rect.height())
+        if rect.contains(self.viewport().rect()):
+            self._update_lna_width()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        cr = self.contentsRect()
+        self._lna.setGeometry(
+            cr.left(), cr.top(), self.line_number_area_width(), cr.height())
+
+    def paint_line_numbers(self, event):
+        from PyQt5.QtGui import QPainter, QColor
+        painter = QPainter(self._lna)
+        painter.fillRect(event.rect(), QColor("#f0f0f0"))
+        block = self.firstVisibleBlock()
+        num = block.blockNumber()
+        top = self.blockBoundingGeometry(block).translated(
+            self.contentOffset()).top()
+        bottom = top + self.blockBoundingRect(block).height()
+        painter.setPen(QColor("#808080"))
+        while block.isValid() and top <= event.rect().bottom():
+            if block.isVisible() and bottom >= event.rect().top():
+                painter.drawText(
+                    0, int(top), self._lna.width() - 4,
+                    self.fontMetrics().height(),
+                    Qt.AlignRight, str(num + 1))
+            block = block.next()
+            top = bottom
+            bottom = top + self.blockBoundingRect(block).height()
+            num += 1
+
+    # ── current-line + error-line highlight ──────────────────────────
+    def _highlight_current_line(self):
+        from PyQt5.QtWidgets import QTextEdit
+        from PyQt5.QtGui import QColor, QTextFormat
+        sels = []
+        if not self.isReadOnly():
+            sel = QTextEdit.ExtraSelection()
+            sel.format.setBackground(QColor("#eef5ff"))
+            sel.format.setProperty(QTextFormat.FullWidthSelection, True)
+            sel.cursor = self.textCursor()
+            sel.cursor.clearSelection()
+            sels.append(sel)
+        if self._error_line is not None:
+            from PyQt5.QtGui import QTextCursor
+            blk = self.document().findBlockByNumber(self._error_line - 1)
+            if blk.isValid():
+                esel = QTextEdit.ExtraSelection()
+                esel.format.setBackground(QColor("#ffe0e0"))
+                esel.format.setProperty(QTextFormat.FullWidthSelection, True)
+                esel.cursor = QTextCursor(blk)
+                sels.append(esel)
+        self.setExtraSelections(sels)
+
+    def mark_error_line(self, line):
+        """Highlight *line* (1-based) in red and scroll to it."""
+        from PyQt5.QtGui import QTextCursor
+        self._error_line = line
+        blk = self.document().findBlockByNumber(line - 1)
+        if blk.isValid():
+            self.setTextCursor(QTextCursor(blk))
+        self._highlight_current_line()
+
+    def clear_error_line(self):
+        self._error_line = None
+        self._highlight_current_line()
 
     def keyPressEvent(self, event):
+        comp = getattr(self, "_completer", None)
+        if comp is not None and comp.popup().isVisible():
+            if event.key() in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Tab,
+                               Qt.Key_Escape, Qt.Key_Up, Qt.Key_Down):
+                event.ignore()
+                return
         mod = event.modifiers()
         if (event.key() in (Qt.Key_Return, Qt.Key_Enter)
                 and (mod & Qt.ControlModifier)):
             self.runRequested.emit()
+            return
+        if event.key() == Qt.Key_Space and (mod & Qt.ControlModifier):
+            self._show_completions()
             return
         if event.key() == Qt.Key_Slash and (mod & Qt.ControlModifier):
             self.toggle_comment()
@@ -643,6 +781,57 @@ class _DialogCodeEditor(QPlainTextEdit):
             self.dedent_selection()
             return
         super().keyPressEvent(event)
+        # Auto-suggest while typing an identifier.
+        if event.text() and (event.text().isalnum() or event.text() == "."):
+            if len(self._completion_prefix()) >= 2:
+                self._show_completions(auto=True)
+            elif comp is not None:
+                comp.popup().hide()
+
+    # ── autocomplete ─────────────────────────────────────────────────
+    def _completion_prefix(self):
+        from PyQt5.QtGui import QTextCursor
+        c = self.textCursor()
+        c.select(QTextCursor.WordUnderCursor)
+        return c.selectedText()
+
+    def _candidate_words(self):
+        words = set(_COMPLETE_KEYWORDS) | set(_COMPLETE_HINTS)
+        # Names from the running workbook namespace, if available.
+        win = self.window()
+        rt = getattr(win, "_py_runtime_ref", None)
+        g = getattr(rt, "_globals", None) if rt else None
+        if g:
+            words |= {k for k in g if not k.startswith("_")}
+        # Identifiers already used in this buffer.
+        words |= set(re.findall(r"[A-Za-z_]\w{2,}", self.toPlainText()))
+        return sorted(words)
+
+    def _show_completions(self, auto=False):
+        from PyQt5.QtCore import QStringListModel
+        prefix = self._completion_prefix()
+        if auto and len(prefix) < 2:
+            return
+        self._completer.setModel(
+            QStringListModel(self._candidate_words(), self._completer))
+        self._completer.setCompletionPrefix(prefix)
+        popup = self._completer.popup()
+        if self._completer.completionCount() == 0:
+            popup.hide()
+            return
+        popup.setCurrentIndex(self._completer.completionModel().index(0, 0))
+        rect = self.cursorRect()
+        rect.setWidth(self._completer.popup().sizeHintForColumn(0)
+                      + self._completer.popup().verticalScrollBar()
+                      .sizeHint().width())
+        self._completer.complete(rect)
+
+    def _insert_completion(self, text):
+        from PyQt5.QtGui import QTextCursor
+        c = self.textCursor()
+        c.select(QTextCursor.WordUnderCursor)
+        c.insertText(text)
+        self.setTextCursor(c)
 
     # ── selection helpers ────────────────────────────────────────────
     def _has_multiline_selection(self):
@@ -761,7 +950,8 @@ class PythonCellDialog(QDialog):
     code and return a dict with keys: result, error, stdout, has_plot.
     """
 
-    def __init__(self, parent, code, cell_ref, run_cb, help_cb=None):
+    def __init__(self, parent, code, cell_ref, run_cb, help_cb=None,
+                 pick_cb=None):
         super().__init__(parent)
         from PyQt5.QtWidgets import (
             QVBoxLayout, QLabel, QPushButton, QToolBar, QToolButton,
@@ -770,6 +960,7 @@ class PythonCellDialog(QDialog):
         from PyQt5.QtWidgets import QAction
         self._run_cb = run_cb
         self._help_cb = help_cb
+        self._pick_cb = pick_cb
         self.setWindowTitle(f"Python — {cell_ref}" if cell_ref
                             else "Python cell")
         self.resize(760, 560)
@@ -790,6 +981,13 @@ class PythonCellDialog(QDialog):
         ks_act.setToolTip("Insert a cell reference: ks(\"A1\")")
         ks_act.triggered.connect(self._insert_ks)
         tb.addAction(ks_act)
+        if pick_cb is not None:
+            self._pick_act = QAction("Pick cell", self)
+            self._pick_act.setCheckable(True)
+            self._pick_act.setToolTip(
+                "Click a grid cell to insert its ks(\"…\") reference")
+            self._pick_act.toggled.connect(self._on_pick_toggled)
+            tb.addAction(self._pick_act)
         # Snippets menu.
         snip_btn = QToolButton()
         snip_btn.setText("Snippets ▾")
@@ -856,6 +1054,7 @@ class PythonCellDialog(QDialog):
 
     # ── actions ──────────────────────────────────────────────────────
     def _run(self):
+        self.editor.clear_error_line()
         out = self._run_cb(self.editor.toPlainText()) or {}
         parts = []
         err = out.get("error")
@@ -864,6 +1063,9 @@ class PythonCellDialog(QDialog):
         if err:
             parts.append(err.rstrip())
             self.output.setStyleSheet("color:#b00020;")
+            ln = self._error_line_from(err)
+            if ln:
+                self.editor.mark_error_line(ln)
         else:
             self.output.setStyleSheet("")
             if out.get("has_plot"):
@@ -873,6 +1075,31 @@ class PythonCellDialog(QDialog):
                 parts.append("Result: " + str(res))
         self.output.setPlainText(
             "\n".join(p for p in parts if p) or "(ran — no output)")
+
+    @staticmethod
+    def _error_line_from(tb):
+        """Pull the cell line number out of a traceback, if present."""
+        ln = None
+        for m in re.finditer(r'"<py-cell>", line (\d+)', tb or ""):
+            ln = int(m.group(1))
+        return ln
+
+    def _on_pick_toggled(self, on):
+        if self._pick_cb is not None:
+            self._pick_cb(on)
+
+    def insert_ref(self, ref):
+        """Insert ks("<ref>") at the cursor (used by click-to-pick)."""
+        self.editor.textCursor().insertText(f'ks("{ref}")')
+        self.editor.setFocus()
+
+    def end_pick(self):
+        """Turn off cell-pick mode (called after a cell is picked)."""
+        act = getattr(self, "_pick_act", None)
+        if act is not None and act.isChecked():
+            act.blockSignals(True)
+            act.setChecked(False)
+            act.blockSignals(False)
 
     def _insert_ks(self):
         from PyQt5.QtGui import QTextCursor

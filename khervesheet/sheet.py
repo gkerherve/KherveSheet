@@ -1753,6 +1753,14 @@ class SheetWidget(QWidget):
 
         Only the arrow region (right edge) triggers the popup, so a plain
         click still just selects the cell (e.g. to copy it)."""
+        # Pop-out "Pick cell" mode: insert this cell's ks() ref instead.
+        if getattr(self, "_py_pick_active", False) and \
+                getattr(self, "_py_dialog", None):
+            ref = f"{col_index_to_letter(col)}{row + 1}"
+            self._py_dialog.insert_ref(ref)
+            self._py_dialog.end_pick()
+            self._py_pick_active = False
+            return
         if (row, col) not in self._cell_dropdowns:
             return
         from PyQt5.QtGui import QCursor
@@ -2197,12 +2205,23 @@ class SheetWidget(QWidget):
         dlg = PythonCellDialog(
             self, code, ref,
             run_cb=lambda c: self._run_python_from_dialog(row, col, c),
-            help_cb=self._py_help)
+            help_cb=self._py_help,
+            pick_cb=self._set_py_pick)
+        # Expose the runtime for the editor's autocomplete namespace.
+        dlg._py_runtime_ref = self._py_runtime()
         self._py_dialog = dlg
-        dlg.finished.connect(
-            lambda *_: setattr(self, "_py_dialog", None))
+        self._py_pick_active = False
+        dlg.finished.connect(self._on_py_dialog_finished)
         dlg.show()
         dlg.raise_()
+
+    def _on_py_dialog_finished(self, *_):
+        self._py_dialog = None
+        self._py_pick_active = False
+
+    def _set_py_pick(self, active):
+        """Arm/disarm 'click a cell to insert ks() ref' for the pop-out."""
+        self._py_pick_active = bool(active)
 
     def _run_python_from_dialog(self, row, col, code):
         """Commit *code* to (row, col) as a =PY cell, run it, and return a
