@@ -744,9 +744,9 @@ Histogram, Box, Heatmap, 3D Surface.
 - Use apply_table_style to quickly give a data range a polished look \
 (header colours, banded rows, borders) — much faster than formatting \
 cells one by one. Use it after writing headers and data.
-- To produce a finished template, use save_as_template after building \
-and verifying the workbook. This saves a .ksheet file in the templates \
-directory so the user can reopen it from Examples > Templates.
+- When the user says "create a template", build it on the CURRENT sheet \
+(write data, format, add charts) — do NOT call save_as_template unless \
+the user explicitly asks to save it as a reusable template file.
 - Use merge_cells for title rows that span multiple columns (e.g. a \
 report title in A1:F1). Use set_column_width or auto_fit_columns to \
 ensure text is visible.
