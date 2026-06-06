@@ -185,9 +185,20 @@ def _get(obj: Any, key: str, default=None):
     return getattr(obj, key, default)
 
 
+_CACHE_CONTROL = {"type": "ephemeral"}
+
+
 def _anthropic_tools(tools: List[dict]) -> List[dict]:
     # Already in Anthropic shape: name, description, input_schema.
-    return tools
+    # Mark the LAST tool with cache_control so the whole (static) tool
+    # block is cached and not re-read on every agentic round-trip.
+    if not tools:
+        return tools
+    out = list(tools)
+    last = dict(out[-1])
+    last["cache_control"] = _CACHE_CONTROL
+    out[-1] = last
+    return out
 
 
 def _openai_tools(tools: List[dict]) -> List[dict]:
@@ -247,6 +258,29 @@ def _anthropic_messages(history: List[dict]) -> List[dict]:
             } for r in turn["results"]]
             msgs.append({"role": "user", "content": content})
     return msgs
+
+
+def _add_rolling_cache(msgs: List[dict]) -> None:
+    """Mark the last content block as cacheable (in place).
+
+    This adds a rolling cache breakpoint at the tail of the growing
+    conversation so each subsequent agentic round-trip only re-reads
+    the few new blocks, not the entire history.
+    """
+    if not msgs:
+        return
+    last = msgs[-1]
+    content = last.get("content")
+    if isinstance(content, str):
+        last["content"] = [{
+            "type": "text",
+            "text": content or ".",
+            "cache_control": _CACHE_CONTROL,
+        }]
+    elif isinstance(content, list) and content:
+        block = dict(content[-1])
+        block["cache_control"] = _CACHE_CONTROL
+        content[-1] = block
 
 
 def _openai_messages(system: str, history: List[dict]) -> List[dict]:
@@ -405,12 +439,22 @@ class AnthropicProvider(_Provider):
         return anthropic.Anthropic(api_key=self.cfg["api_key"])
 
     def _call(self, system, tools, history):
+        # Cache the static system prompt + tools and add a rolling
+        # breakpoint on the conversation tail so each agentic round-trip
+        # re-reads only the new blocks, not the whole prefix.  This is
+        # the difference between a snappy build and a multi-minute stall.
+        msgs = _anthropic_messages(history)
+        _add_rolling_cache(msgs)
         resp = self._client.messages.create(
             model=self.cfg["model"],
             max_tokens=_MAX_TOKENS,
-            system=system,
+            system=[{
+                "type": "text",
+                "text": system,
+                "cache_control": _CACHE_CONTROL,
+            }],
             tools=_anthropic_tools(tools),
-            messages=_anthropic_messages(history),
+            messages=msgs,
         )
         text_parts: List[str] = []
         tool_calls: List[dict] = []
