@@ -612,30 +612,25 @@ def export_workbook(workbook_widget, path: str,
 
         # ── Embedded charts ──────────────────────────────────────────
         for chart in getattr(sheet, '_charts', []):
+            # Always embed the matplotlib render as a high-fidelity image
+            try:
+                png = _chart_to_png_bytes(chart)
+                col, row = _pixel_to_cell_anchor(
+                    sheet, chart.x(), chart.y())
+                _add_image_to_ws(ws, png, col, row,
+                                 chart.width(), chart.height())
+            except Exception:
+                pass
+            # Also create a native Excel chart (interactive) for
+            # supported plot types
             try:
                 d = chart.to_dict()
                 pt = d.get("series", [{}])[0].get("plot_type", "")
-                # Native Excel chart for supported types
                 if pt in ("Line", "Scatter", "Line+Symbol", "Bar",
                           "Step", "Histogram"):
                     _build_excel_chart(ws, chart, sheet)
-                else:
-                    # Fallback: embed as image for unsupported types
-                    png = _chart_to_png_bytes(chart)
-                    col, row = _pixel_to_cell_anchor(
-                        sheet, chart.x(), chart.y())
-                    _add_image_to_ws(ws, png, col, row,
-                                     chart.width(), chart.height())
             except Exception:
-                # Last resort: try image export
-                try:
-                    png = _chart_to_png_bytes(chart)
-                    col, row = _pixel_to_cell_anchor(
-                        sheet, chart.x(), chart.y())
-                    _add_image_to_ws(ws, png, col, row,
-                                     chart.width(), chart.height())
-                except Exception:
-                    pass
+                pass
 
         # ── Embedded images ──────────────────────────────────────────
         for img in getattr(sheet, '_images', []):
