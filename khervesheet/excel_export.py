@@ -9,6 +9,7 @@ the Free Software Foundation, either version 3 of the License, or
 """
 
 import io
+import re
 from typing import TYPE_CHECKING
 
 from PyQt5.QtCore import Qt
@@ -277,6 +278,212 @@ def _add_image_to_ws(ws, png_bytes: bytes, col: int, row: int,
     ws.add_image(img, anchor)
 
 
+# ── Formula export ───────────────────────────────────────────────────
+
+# Functions that exist in Excel with the same name and semantics.
+_EXCEL_FUNCTIONS = {
+    "ABS", "ACOS", "ACOSH", "AND", "ASIN", "ASINH", "ATAN", "ATAN2",
+    "ATANH", "AVERAGE", "CEILING", "CHAR", "CHOOSE", "CLEAN", "CODE",
+    "COLUMN", "COLUMNS", "COMBIN", "CONCAT", "CONCATENATE", "COS",
+    "COSH", "COUNT", "COUNTA", "COUNTBLANK", "COUNTIF", "COUNTIFS",
+    "DATE", "DAY", "DAYS", "DEGREES", "EVEN", "EXACT", "EXP", "FACT",
+    "FALSE", "FIND", "FLOOR", "FV", "GCD", "HLOOKUP", "HOUR", "IF",
+    "IFERROR", "IFNA", "IFS", "INDEX", "INT", "IPMT", "IRR", "ISBLANK",
+    "ISERR", "ISERROR", "ISLOGICAL", "ISNA", "ISNONTEXT", "ISNUMBER",
+    "ISTEXT", "LARGE", "LCM", "LEFT", "LEN", "LN", "LOG", "LOG10",
+    "LOWER", "MATCH", "MAX", "MEDIAN", "MID", "MIN", "MINUTE", "MOD",
+    "MONTH", "NOT", "NOW", "NPER", "NPV", "ODD", "OR", "PERCENTILE",
+    "PI", "PMT", "POWER", "PPMT", "PRODUCT", "PROPER", "PV", "QUOTIENT",
+    "RADIANS", "RAND", "RANDBETWEEN", "RANK", "RATE", "REPLACE", "REPT",
+    "RIGHT", "ROUND", "ROUNDDOWN", "ROUNDUP", "ROW", "ROWS", "SEARCH",
+    "SECOND", "SIGN", "SIN", "SINH", "SMALL", "SORT", "SQRT", "STDEV",
+    "SUBSTITUTE", "SUM", "SUMIF", "SUMIFS", "SUMPRODUCT", "SUMSQ",
+    "SWITCH", "TAN", "TANH", "TEXT", "TIME", "TODAY", "TRIM", "TRUE",
+    "TRUNC", "TYPE", "UPPER", "VALUE", "VLOOKUP", "WEEKDAY", "XOR",
+    "YEAR",
+}
+
+# Pattern for function names in a formula (word before open-paren).
+_FUNC_RE = re.compile(r'([A-Za-z_][A-Za-z0-9_.]*)\s*\(')
+
+
+def _is_excel_compatible(formula: str) -> bool:
+    """Check whether a KherveSheet formula can be written to Excel as-is.
+
+    Returns True for formulas that only use Excel-compatible functions,
+    standard cell refs, ranges, and arithmetic operators.
+    Returns False for =PY(...) cells and KherveSheet-specific functions.
+    """
+    if not formula or not formula.startswith("="):
+        return False
+    body = formula[1:].strip()
+    # Python cells are never compatible
+    if body.upper().startswith("PY(") or body.upper().startswith("PY "):
+        return False
+    # Check every function call in the formula
+    for m in _FUNC_RE.finditer(body):
+        name = m.group(1).upper().replace(".", "_")
+        if name not in _EXCEL_FUNCTIONS:
+            return False
+    return True
+
+
+def _formula_for_excel(formula: str) -> str:
+    """Prepare a KherveSheet formula for Excel.
+
+    Replaces ^ (power) with Excel-compatible syntax and normalises
+    function names.  The leading '=' is preserved.
+    """
+    # KherveSheet uses ^ for power like Excel, but the internal compiler
+    # converts it to **.  The raw stored formula still has ^, so it's
+    # already Excel-compatible.  Just return it as-is.
+    return formula
+
+
+# ── Native Excel chart builder ───────────────────────────────────────
+
+def _build_excel_chart(ws, chart, sheet):
+    """Create a native openpyxl chart from an EmbeddedChart.
+
+    Writes series data into hidden helper columns if no cell references
+    are available, then builds a chart object referencing those cells.
+    """
+    from openpyxl.chart import (
+        ScatterChart, LineChart, BarChart, Reference,
+    )
+    from openpyxl.chart.series import DataPoint
+    from openpyxl.utils import get_column_letter
+
+    d = chart.to_dict()
+    series_list = d.get("series", [])
+    if not series_list:
+        return
+
+    plot_type = series_list[0].get("plot_type", "Line")
+
+    # Choose chart class
+    if plot_type in ("Scatter", "Line+Symbol"):
+        xl_chart = ScatterChart()
+        xl_chart.style = 13
+    elif plot_type == "Bar":
+        xl_chart = BarChart()
+        xl_chart.style = 10
+    elif plot_type == "Histogram":
+        xl_chart = BarChart()
+        xl_chart.style = 10
+    else:
+        # Line, Step, Stem → line chart
+        xl_chart = LineChart()
+        xl_chart.style = 10
+
+    # Chart title and axis labels
+    xl_chart.title = d.get("title", "")
+    xl_chart.x_axis.title = d.get("xlabel", "")
+    xl_chart.y_axis.title = d.get("ylabel", "")
+
+    # Grid
+    if not d.get("grid", False):
+        xl_chart.y_axis.majorGridlines = None
+
+    # Log scale
+    if d.get("xscale") == "log":
+        xl_chart.x_axis.scaling.logBase = 10
+    if d.get("yscale") == "log":
+        xl_chart.y_axis.scaling.logBase = 10
+
+    # Determine if we can reference existing cells or need helper columns
+    for si, s in enumerate(series_list):
+        x_data = s.get("x", [])
+        y_data = s.get("y", [])
+        label = s.get("label", f"Series {si + 1}")
+        n = len(y_data)
+        if n == 0:
+            continue
+
+        # Try to use source cell references if available
+        y_row_start = s.get("y_row_start")
+        y_row_end = s.get("y_row_end")
+        y_col = s.get("y_col")
+        x_col = s.get("x_col", d.get("x_col"))
+        x_row_start = s.get("x_row_start", y_row_start)
+        x_row_end = s.get("x_row_end", y_row_end)
+
+        has_cell_refs = (y_col is not None and y_row_start is not None
+                         and y_row_end is not None)
+
+        if has_cell_refs:
+            # Reference existing data cells (1-based for openpyxl)
+            y_ref = Reference(ws,
+                              min_col=y_col + 1,
+                              min_row=y_row_start + 1,
+                              max_row=y_row_end + 1)
+            if x_col is not None and x_row_start is not None:
+                x_ref = Reference(ws,
+                                  min_col=x_col + 1,
+                                  min_row=x_row_start + 1,
+                                  max_row=x_row_end + 1)
+            else:
+                x_ref = None
+        else:
+            # Write data to helper columns beyond the used range
+            # Find first empty column
+            helper_col = ws.max_column + 2 + si * 2
+            for i, (xv, yv) in enumerate(zip(x_data, y_data)):
+                ws.cell(row=i + 1, column=helper_col, value=xv)
+                ws.cell(row=i + 1, column=helper_col + 1, value=yv)
+            x_ref = Reference(ws,
+                              min_col=helper_col,
+                              min_row=1, max_row=n)
+            y_ref = Reference(ws,
+                              min_col=helper_col + 1,
+                              min_row=1, max_row=n)
+
+        if isinstance(xl_chart, ScatterChart):
+            series_obj = xl_chart.series
+            from openpyxl.chart import Series as XlSeries
+            sr = XlSeries(y_ref, xvalues=x_ref, title=label)
+            # Line+Symbol: show lines; pure Scatter: markers only
+            s_type = s.get("plot_type", plot_type)
+            if s_type == "Scatter":
+                sr.graphicalProperties.line.noFill = True
+            xl_chart.series.append(sr)
+        elif isinstance(xl_chart, BarChart):
+            xl_chart.append(y_ref)
+            xl_chart.series[-1].title = label
+            if x_ref:
+                xl_chart.set_categories(x_ref)
+        else:
+            # LineChart
+            xl_chart.append(y_ref)
+            xl_chart.series[-1].title = label
+            if x_ref:
+                xl_chart.set_categories(x_ref)
+
+        # Apply series color
+        color = s.get("color")
+        if color and xl_chart.series:
+            hex_c = color.lstrip("#")
+            if len(hex_c) == 6:
+                sr_obj = xl_chart.series[-1]
+                sr_obj.graphicalProperties.line.solidFill = hex_c
+                if isinstance(xl_chart, (ScatterChart,)):
+                    # Also set marker fill
+                    try:
+                        sr_obj.marker = sr_obj.marker or \
+                            type(sr_obj.marker)()
+                        sr_obj.marker.graphicalProperties.solidFill = hex_c
+                    except Exception:
+                        pass
+
+    # Position the chart at the same cell anchor
+    col, row = _pixel_to_cell_anchor(sheet, chart.x(), chart.y())
+    anchor = f"{get_column_letter(col + 1)}{row + 1}"
+    # openpyxl chart size is in cm; 96 px per inch at standard DPI
+    xl_chart.width = chart.width() / 96 * 2.54
+    xl_chart.height = chart.height() / 96 * 2.54
+    ws.add_chart(xl_chart, anchor)
+
+
 # ── Main export entry point ──────────────────────────────────────────
 
 def export_workbook(workbook_widget, path: str,
@@ -358,15 +565,20 @@ def export_workbook(workbook_widget, path: str,
                 it = sheet.table.item(r, c)
                 raw = it.text() if it else ""
 
-                # Try to write as number
-                val = raw
-                if raw:
-                    try:
-                        val = float(raw)
-                        if val == int(val) and "." not in raw:
-                            val = int(val)
-                    except (ValueError, TypeError):
-                        val = raw
+                # Check for formula first
+                fm = formulas.get((r, c), "")
+                if fm and _is_excel_compatible(fm):
+                    val = _formula_for_excel(fm)
+                else:
+                    # Write display value; try to write as number
+                    val = raw
+                    if raw:
+                        try:
+                            val = float(raw)
+                            if val == int(val) and "." not in raw:
+                                val = int(val)
+                        except (ValueError, TypeError):
+                            val = raw
 
                 cell = ws.cell(row=r + 1, column=c + 1, value=val)
 
@@ -398,16 +610,32 @@ def export_workbook(workbook_widget, path: str,
                     start_row=r0 + 1, start_column=c0 + 1,
                     end_row=r0 + rspan, end_column=c0 + cspan)
 
-        # ── Embedded charts (as images) ──────────────────────────────
+        # ── Embedded charts ──────────────────────────────────────────
         for chart in getattr(sheet, '_charts', []):
             try:
-                png = _chart_to_png_bytes(chart)
-                col, row = _pixel_to_cell_anchor(
-                    sheet, chart.x(), chart.y())
-                _add_image_to_ws(ws, png, col, row,
-                                 chart.width(), chart.height())
+                d = chart.to_dict()
+                pt = d.get("series", [{}])[0].get("plot_type", "")
+                # Native Excel chart for supported types
+                if pt in ("Line", "Scatter", "Line+Symbol", "Bar",
+                          "Step", "Histogram"):
+                    _build_excel_chart(ws, chart, sheet)
+                else:
+                    # Fallback: embed as image for unsupported types
+                    png = _chart_to_png_bytes(chart)
+                    col, row = _pixel_to_cell_anchor(
+                        sheet, chart.x(), chart.y())
+                    _add_image_to_ws(ws, png, col, row,
+                                     chart.width(), chart.height())
             except Exception:
-                pass  # skip chart if rendering fails
+                # Last resort: try image export
+                try:
+                    png = _chart_to_png_bytes(chart)
+                    col, row = _pixel_to_cell_anchor(
+                        sheet, chart.x(), chart.y())
+                    _add_image_to_ws(ws, png, col, row,
+                                     chart.width(), chart.height())
+                except Exception:
+                    pass
 
         # ── Embedded images ──────────────────────────────────────────
         for img in getattr(sheet, '_images', []):
