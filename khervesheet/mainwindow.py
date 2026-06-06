@@ -1921,6 +1921,14 @@ class MainWindow(QMainWindow):
                             if it:
                                 it.setText(display)
                             sheet._shadow[(r, c)] = display
+                        # Re-evaluate formulas once more so any that call a
+                        # Python UDF (=MYFUNC(...)) pick up its definition.
+                        for r, c, formula in pending_formulas:
+                            result = sheet._evaluate_formula(formula, r, c)
+                            it = sheet.table.item(r, c)
+                            if it:
+                                it.setText(str(result))
+                            sheet._shadow[(r, c)] = str(result)
                     elif pending_python:
                         # Not trusted: show the source, do not execute.
                         for r, c, src in pending_python:

@@ -1329,6 +1329,7 @@ class SheetWidget(QWidget):
         self._py_errors: dict = {}       # (row, col) → traceback string
         self._py_stdout: dict = {}       # (row, col) → captured print output
         self._py_figures: dict = {}      # (row, col) → EmbeddedImage (plot)
+        self._py_udf_names: set = set()  # UPPER names of Python funcs as UDFs
         self._dependents: dict = {}      # (row, col) → set of (r, c) that depend on it
         self._xref_cells: set = set()    # formula cells using Sheet!ref
         self._col_formats: dict = {}     # col → format string
@@ -2632,6 +2633,40 @@ class SheetWidget(QWidget):
             host._py_runtime_obj = rt
         return rt
 
+    def _sync_py_udfs(self):
+        """Expose user-defined Python functions as formula UDFs.
+
+        Functions defined in =PY cells (in the shared namespace) become
+        callable from ordinary ``=`` formulas, e.g. ``=MYFUNC(A1)``.
+        Built-in formula functions are never overridden.
+        """
+        import builtins
+        import types
+        rt = self._py_runtime()
+        g = getattr(rt, "_globals", None)
+        if not g:
+            return
+        self._build_eval_ns()
+        ns = self._eval_ns
+        lower = self._eval_ns_lower
+        bi = vars(builtins)
+        reserved = {"ks", "xl", "cell", "ks_set", "write", "np", "numpy",
+                    "plt", "pd", "pandas", "scipy", "math"}
+        for name, obj in list(g.items()):
+            if (name.startswith("_") or name in reserved
+                    or name in bi or isinstance(obj, types.ModuleType)
+                    or not callable(obj)):
+                continue
+            up = name.upper()
+            # Don't shadow a real built-in formula function.
+            if up in ns and up not in self._py_udf_names:
+                continue
+            ns[name] = obj
+            ns[up] = obj
+            lower.setdefault(name.lower(), name)
+            lower.setdefault(up.lower(), up)
+            self._py_udf_names.add(up)
+
     def _evaluate_python(self, source, row, col, decimals=3):
         """Run a =PY cell, store its live value, and return display text."""
         from .python_engine import PyResult, badge_for, strip_marker
@@ -2659,6 +2694,8 @@ class SheetWidget(QWidget):
                 it.setToolTip(last)
             return "#PYERR"
         self._py_errors.pop((row, col), None)
+        # Make any functions this cell defined callable from = formulas.
+        self._sync_py_udfs()
         it = self.table.item(row, col)
         if it is not None and it.toolTip():
             it.setToolTip("")

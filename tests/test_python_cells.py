@@ -206,6 +206,33 @@ def test_ks_set_writes_and_recalcs(qapp):
     assert s.table.item(0, 7).text() in ("100", "100.00")
 
 
+def test_python_udf_callable_from_formula(qapp):
+    from khervesheet.workbook import WorkbookWidget
+    wb = WorkbookWidget()
+    s = wb.tabs.widget(0)
+    _put(s, 0, 0, "=PY\ndef dbl(x):\n    return x * 2")
+    _put(s, 0, 1, "21")                       # B1
+    _put(s, 0, 2, "=dbl(B1)")                 # C1 lower-case
+    _put(s, 1, 2, "=DBL(B1)")                 # C2 upper-case
+    assert s.table.item(0, 2).text() in ("42", "42.00")
+    assert s.table.item(1, 2).text() in ("42", "42.00")
+    # Recomputes when the input changes.
+    _put(s, 0, 1, "50")
+    s._recalc_dependents(0, 1)
+    assert s.table.item(0, 2).text() in ("100", "100.00")
+
+
+def test_python_udf_does_not_clobber_builtin(qapp):
+    from khervesheet.workbook import WorkbookWidget
+    wb = WorkbookWidget()
+    s = wb.tabs.widget(0)
+    _put(s, 0, 0, "3")
+    _put(s, 1, 0, "4")
+    _put(s, 2, 0, "=PY\ndef SUM(x):\n    return 999")
+    _put(s, 0, 1, "=SUM(A1:A2)")
+    assert s.table.item(0, 1).text() in ("7", "7.00")
+
+
 def test_sheet_python_error_shows_pyerr(qapp):
     from khervesheet.workbook import WorkbookWidget
     wb = WorkbookWidget()

@@ -113,6 +113,12 @@
   <code>scipy</code> are ready to use.</p>
 </div>
 
+<div class="tip"><b>Python functions as formulas (UDFs).</b> A function you
+<code>def</code> in a <code>=PY</code> cell can be called from an ordinary
+formula. Define <code>def discount(p, r): return p * (1 - r)</code> in one
+cell, then write <code>=DISCOUNT(A2, 0.1)</code> anywhere — function names
+are case-insensitive and built-in functions are never overridden.</div>
+
 <!-- ============================================================ -->
 <h2 id="start">Getting started</h2>
 
