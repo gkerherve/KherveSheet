@@ -1497,35 +1497,20 @@ class MainWindow(QMainWindow):
 
     def _save_to_excel(self, path: str):
         try:
-            import openpyxl
+            import openpyxl  # noqa: F401
         except ImportError:
             QMessageBox.warning(
                 self, "Missing Library",
                 "openpyxl is required for Excel export.\n"
                 "Install with: pip install openpyxl")
             return
-        sheet = self._active_sheet()
-        if not sheet:
-            return
         self._show_progress(True, "Saving…")
         try:
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            for r in range(sheet.row_count()):
-                self._progress.setValue(
-                    int(100 * r / max(1, sheet.row_count())))
-                for c in range(sheet.column_count()):
-                    it = sheet.table.item(r, c)
-                    val = it.text() if it else ""
-                    # Try to write as number
-                    try:
-                        val = float(val)
-                        if val == int(val):
-                            val = int(val)
-                    except (ValueError, TypeError):
-                        pass
-                    ws.cell(r + 1, c + 1, val)
-            wb.save(path)
+            from .excel_export import export_workbook
+            export_workbook(
+                self._workbook, path,
+                progress_cb=self._progress.setValue,
+                process_events=QApplication.processEvents)
             self._status_msg(f"Exported to {path}", 5000)
         except Exception as e:
             QMessageBox.warning(self, "Export Error", str(e))
