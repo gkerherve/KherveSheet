@@ -1686,6 +1686,9 @@ class MainWindow(QMainWindow):
                         if d.get('y_cols'):
                             cg.attrs['y_cols'] = json.dumps(
                                 d['y_cols'])
+                        if d.get('cat_labels'):
+                            cg.attrs['cat_labels'] = json.dumps(
+                                d['cat_labels'])
                         # Legend properties.
                         cg.attrs['legend_visible'] = d.get(
                             'legend_visible', True)
@@ -2129,6 +2132,11 @@ class MainWindow(QMainWindow):
                         yc_json = cg.attrs.get('y_cols', '')
                         if yc_json:
                             cd["y_cols"] = json.loads(yc_json)
+                        cl_json = cg.attrs.get('cat_labels', '')
+                        if isinstance(cl_json, bytes):
+                            cl_json = cl_json.decode('utf-8')
+                        if cl_json:
+                            cd["cat_labels"] = json.loads(cl_json)
                         # Trendlines.
                         tl_json = cg.attrs.get('trendlines', '')
                         if isinstance(tl_json, bytes):
@@ -3568,13 +3576,32 @@ class MainWindow(QMainWindow):
         if not y_cols and len(cols) >= 2:
             y_cols = cols[1:]
 
+        # Auto-detect: if the first selected column is mostly text
+        # (non-numeric) and there are other numeric columns, treat it
+        # as the categorical X (label) column — like Excel does.
+        # We don't modify the sheet designation — just use it locally.
+        _auto_x_col = None
+        if len(cols) >= 2 and cols[0] in y_cols:
+            first_num = sheet.numeric_column(cols[0])
+            first_slice = first_num[s.topRow():s.bottomRow() + 1]
+            nan_frac = np.isnan(first_slice).sum() / max(len(first_slice), 1)
+            if nan_frac > 0.5:
+                _auto_x_col = cols[0]
+                y_cols = [c for c in y_cols if c != cols[0]]
+
         # Single column with no X to its left: plot against row index.
         def _find_x_for(y_col):
             """Return the nearest X-designated column to the left of
             *y_col*, or None if there is none."""
+            # Check auto-detected text column first.
+            if _auto_x_col is not None and _auto_x_col < y_col:
+                return _auto_x_col
             for c in range(y_col - 1, -1, -1):
                 if sheet.get_designation(c) == "X":
                     return c
+            # Fallback: use auto-detected column even if to the right.
+            if _auto_x_col is not None:
+                return _auto_x_col
             return None
 
         # Build one chart with all Y columns as series

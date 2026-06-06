@@ -384,6 +384,7 @@ class EmbeddedChart(QWidget):
         self._trendlines = []    # TrendlineInfo objects
         self._axis_props = {}    # persisted axis dialog state
         self._header_row = False  # series labels come from column headers
+        self._cat_labels = None   # categorical X-axis tick labels
         # Source column indices for live data updates.
         self._x_col = x_col      # None means row-index X
         self._y_cols = []         # populated by add_series
@@ -836,6 +837,8 @@ class EmbeddedChart(QWidget):
             d["x_col"] = self._x_col
         if self._y_cols:
             d["y_cols"] = self._y_cols
+        if self._cat_labels:
+            d["cat_labels"] = self._cat_labels
         # Trendlines
         if self._trendlines:
             d["trendlines"] = [t.to_dict() for t in self._trendlines]
@@ -1218,6 +1221,10 @@ class EmbeddedChart(QWidget):
         if chart._source_sheet and chart._y_cols:
             chart._source_sheet.data_changed.connect(
                 chart._on_data_changed)
+        # Restore categorical X-axis labels.
+        saved_cat = d.get("cat_labels")
+        if saved_cat:
+            chart._apply_categorical_x(saved_cat)
         # Restore visual properties, fill, and visibility per series.
         from matplotlib.collections import PathCollection
         for i, sd in enumerate(series):
@@ -1574,11 +1581,22 @@ class EmbeddedChart(QWidget):
         """Set X-axis tick positions and labels for a categorical axis."""
         if not labels:
             return
-        import matplotlib.ticker as ticker
         ax = self._ax
         ax.set_xticks(np.arange(len(labels)))
-        ax.set_xticklabels(labels, rotation=45 if len(labels) > 5 else 0,
-                           ha='right' if len(labels) > 5 else 'center')
+        # Rotate labels when there are many or when they're long.
+        max_len = max((len(s) for s in labels), default=0)
+        needs_rotation = len(labels) > 5 or max_len > 8
+        ax.set_xticklabels(labels,
+                           rotation=45 if needs_rotation else 0,
+                           ha='right' if needs_rotation else 'center')
+        # Store for persistence and refresh.
+        self._cat_labels = labels
+        # Increase bottom margin for rotated labels.
+        if needs_rotation:
+            try:
+                self._figure.subplots_adjust(bottom=0.28)
+            except Exception:
+                pass
 
     # ── Live data update ─────────────────────────────────────────────
     def _on_data_changed(self, col: int):
