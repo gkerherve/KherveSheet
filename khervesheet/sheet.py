@@ -67,9 +67,10 @@ class _FormulaEdit(QPlainTextEdit):
         # A "PY" badge pinned to the right edge while editing a Python cell
         # (matches the green badge drawn on =PY grid cells).
         self._py_badge = QLabel("PY", self)
+        self._py_badge.setAlignment(Qt.AlignCenter)
         self._py_badge.setStyleSheet(
             "background:#2e7d32; color:#ffffff; font-weight:bold; "
-            "font-size:9px; border-radius:3px; padding:1px 5px;")
+            "font-size:9px;")
         self._py_badge.hide()
 
     def set_python_mode(self, on: bool):
@@ -88,8 +89,8 @@ class _FormulaEdit(QPlainTextEdit):
             if self.maximumHeight() <= 22:
                 self.setMaximumHeight(96)
             self.setMinimumHeight(72)
-            # Faint green background + PY badge, like a =PY grid cell.
-            self.setStyleSheet("QPlainTextEdit{background:#e8f5ea;}")
+            # Very faint green background + PY strip, like a =PY grid cell.
+            self.setStyleSheet("QPlainTextEdit{background:#f3fbf4;}")
             self._py_badge.show()
             self._py_badge.raise_()
             self._position_py_badge()
@@ -104,12 +105,13 @@ class _FormulaEdit(QPlainTextEdit):
             self._py_badge.hide()
 
     def _position_py_badge(self):
-        """Pin the PY badge to the top-right, clear of the scrollbar."""
+        """Pin the PY badge as a full-height strip on the right edge,
+        clear of the vertical scrollbar."""
         b = self._py_badge
-        b.adjustSize()
         sb = self.verticalScrollBar()
         margin = sb.width() if sb.isVisible() else 0
-        b.move(self.width() - b.width() - margin - 4, 3)
+        bw = 22
+        b.setGeometry(self.width() - bw - margin, 0, bw, self.height())
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

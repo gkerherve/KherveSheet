@@ -202,7 +202,7 @@ class CellFormatDelegate(QStyledItemDelegate):
         # Python (=PY) cells get a faint green tint + a "PY" badge.
         fm = self._cell_formulas.get(key)
         is_py = isinstance(fm, str) and fm.lstrip().upper().startswith("=PY")
-        py_tint = QColor(46, 160, 67, 28) if is_py else None
+        py_tint = QColor(46, 160, 67, 16) if is_py else None
 
         # Draw formula reference background tint before default paint.
         ref_color = self._ref_highlights.get(key)
@@ -304,18 +304,15 @@ class CellFormatDelegate(QStyledItemDelegate):
             painter.drawPolygon(triangle)
             painter.restore()
 
-        # Draw the "PY" badge on the RIGHT edge of a Python cell.
+        # Draw the "PY" strip down the full height of the RIGHT edge.
         if is_py:
             painter.save()
-            painter.setRenderHint(QPainter.Antialiasing, True)
             r = option.rect
-            bw, bh = 22, 14
-            bx = r.right() - bw - 3
-            by = r.top() + (r.height() - bh) // 2
-            badge = QRect(bx, by, bw, bh)
+            bw = 18
+            badge = QRect(r.right() - bw, r.top(), bw, r.height())
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor("#2e7d32"))      # Excel-like green
-            painter.drawRoundedRect(badge, 3, 3)
+            painter.drawRect(badge)
             f = QFont(painter.font())
             f.setPointSize(7)
             f.setBold(True)
