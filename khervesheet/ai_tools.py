@@ -19,13 +19,46 @@ from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QTableWidgetItem
+from PyQt5.QtWidgets import QTableWidgetItem, QUndoCommand
 
 from .sheet import (
     SheetWidget, col_index_to_letter, letter_to_col_index,
     FormatCellsCmd, _snapshot_format,
 )
 from .cellformat import CellFormat
+
+
+class _BulkWriteUndo(QUndoCommand):
+    """Single undo command for a batch of AI cell writes."""
+
+    def __init__(self, sheet, old_vals, new_vals):
+        super().__init__(f"AI: write {len(new_vals)} cells")
+        self._sheet = sheet
+        self._old = old_vals  # {(r,c): old_text}
+        self._new = new_vals  # {(r,c): new_text}
+        self._first = True
+
+    def redo(self):
+        if self._first:
+            self._first = False
+            return  # values already written
+        self._apply(self._new)
+
+    def undo(self):
+        self._apply(self._old)
+
+    def _apply(self, vals):
+        s = self._sheet
+        s.table.blockSignals(True)
+        for (r, c), text in vals.items():
+            it = s.table.item(r, c)
+            if it is None:
+                it = QTableWidgetItem(text)
+                s.table.setItem(r, c, it)
+            else:
+                it.setText(text)
+            s._shadow[(r, c)] = text
+        s.table.blockSignals(False)
 
 
 # ── Range parsing ──────────────────────────────────────────────────
@@ -222,13 +255,12 @@ class AiToolExecutor:
         normalised: List[List[str]] = []
         for row_vals in values:
             if isinstance(row_vals, str):
-                # Bare string → single-cell row.
                 normalised.append([row_vals])
             elif isinstance(row_vals, list):
                 normalised.append(row_vals)
             else:
                 normalised.append([str(row_vals)])
-        # Collect cells to write, then commit in one batch.
+        # Collect cells to write.
         writes: List[tuple] = []  # (row, col, text)
         for dr, row_vals in enumerate(normalised):
             for dc, val in enumerate(row_vals):
@@ -239,18 +271,108 @@ class AiToolExecutor:
                 writes.append((r, c, sval))
         if not writes:
             return {"cells_written": 0}
-        # Suppress chart/sparkline signals during bulk write.
-        sheet._suppress_recalc_signals = True
-        try:
-            for r, c, sval in writes:
-                self._commit_cell(sheet, r, c, sval)
-        finally:
-            sheet._suppress_recalc_signals = False
-        # Emit data_changed once per affected column.
-        changed_cols = {c for _, c, _ in writes}
+        self._bulk_write(sheet, writes)
+        return {"cells_written": len(writes)}
+
+    def _bulk_write(self, sheet: SheetWidget, writes: List[tuple]):
+        """Fast-path bulk write: set all cells, then evaluate formulas
+        and recalc once.  Much faster than per-cell _commit_cell for
+        large batches (avoids redundant recalcs and per-cell undo)."""
+        from .python_engine import is_python_source
+        from .sheet import _format_number
+        # 1. Record old values for a single undo command.
+        old_vals = {}
+        for r, c, sval in writes:
+            old_vals[(r, c)] = sheet.cell_text(r, c)
+
+        # 2. Set all cell text, suppressing signals and recalc.
+        sheet.table.blockSignals(True)
+        for r, c, sval in writes:
+            it = sheet.table.item(r, c)
+            if it is None:
+                it = QTableWidgetItem(sval)
+                sheet.table.setItem(r, c, it)
+            else:
+                it.setText(sval)
+            sheet._shadow[(r, c)] = sval
+        sheet.table.blockSignals(False)
+
+        # 3. Evaluate formulas (=...) and Python cells (=PY) in a
+        #    second pass, and register dependencies.
+        formula_cells = []
+        changed_cols = set()
+        dec = 2  # default precision
+        for r, c, sval in writes:
+            changed_cols.add(c)
+            if is_python_source(sval):
+                sheet._cell_formulas[(r, c)] = sval
+                sheet._register_py_deps(r, c, sval)
+                try:
+                    display = sheet._evaluate_python(sval, r, c, dec)
+                except Exception:
+                    import traceback
+                    display = "#PYERR"
+                    sheet._py_errors[(r, c)] = traceback.format_exc()
+                sheet.table.blockSignals(True)
+                it = sheet.table.item(r, c)
+                if it:
+                    it.setText(display)
+                sheet.table.blockSignals(False)
+                sheet._shadow[(r, c)] = display
+            elif sval.startswith("="):
+                sheet._cell_formulas[(r, c)] = sval
+                sheet._register_deps(r, c, sval)
+                formula_cells.append((r, c))
+            else:
+                sheet._cell_formulas.pop((r, c), None)
+                sheet._unregister_deps(r, c)
+                # Format plain numbers.
+                if sval:
+                    try:
+                        v = float(sval)
+                        formatted = str(_format_number(v, dec))
+                        if formatted != sval:
+                            sheet.table.blockSignals(True)
+                            it = sheet.table.item(r, c)
+                            if it:
+                                it.setText(formatted)
+                            sheet.table.blockSignals(False)
+                            sheet._shadow[(r, c)] = formatted
+                    except ValueError:
+                        pass
+
+        # 4. Evaluate spreadsheet formulas.
+        for r, c in formula_cells:
+            formula = sheet._cell_formulas.get((r, c))
+            if not formula:
+                continue
+            result = str(sheet._evaluate_formula(formula, r, c, dec))
+            result = sheet._apply_cell_number_format(result, r, c)
+            sheet.table.blockSignals(True)
+            it = sheet.table.item(r, c)
+            if it is None:
+                it = QTableWidgetItem(result)
+                sheet.table.setItem(r, c, it)
+            else:
+                it.setText(result)
+            sheet.table.blockSignals(False)
+            sheet._shadow[(r, c)] = result
+
+        # 5. Recalc dependents once for all changed cells.
+        all_seeds = [(r, c) for r, c, _ in writes]
+        sheet._recalc_from_seeds(all_seeds)
+
+        # 6. Push one undo command for the whole batch.
+        if sheet._undo_stack is not None:
+            new_vals = {}
+            for r, c, _ in writes:
+                new_vals[(r, c)] = sheet.cell_text(r, c)
+            cmd = _BulkWriteUndo(sheet, old_vals, new_vals)
+            sheet._undo_stack.push(cmd)
+
+        # 7. Emit data_changed once per affected column.
         for c in changed_cols:
             sheet.data_changed.emit(c)
-        return {"cells_written": len(writes)}
 
     def tool_set_formula(self, inp: dict) -> dict:
         sheet = self._sheet(inp["sheet_name"])
