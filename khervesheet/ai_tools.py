@@ -99,7 +99,6 @@ class AiToolExecutor:
             "clone_chart": self.tool_clone_chart,
             "modify_chart": self.tool_modify_chart,
             "delete_charts": self.tool_delete_charts,
-            "run_python": self.tool_run_python,
             "apply_table_style": self.tool_apply_table_style,
             "save_as_template": self.tool_save_as_template,
             "set_column_width": self.tool_set_column_width,
@@ -252,12 +251,16 @@ class AiToolExecutor:
             code = stripped[3:].lstrip("\n")
         text = "=PY\n" + code
         r, c = parse_a1(inp["cell"])
-        self._commit_cell(sheet, r, c, text)
+        try:
+            self._commit_cell(sheet, r, c, text)
+        except Exception as exc:
+            return {"cell": inp["cell"], "error": str(exc)}
         result = sheet.cell_text(r, c)
         out = {"cell": inp["cell"], "result": result}
         if result == "#PYERR":
-            out["error"] = sheet._py_errors.get(
-                (r, c), "Python error").strip().splitlines()[-1]
+            err = sheet._py_errors.get((r, c), "Python error")
+            lines = err.strip().splitlines()
+            out["error"] = lines[-1] if lines else "Python error"
         return out
 
     def tool_format_cells(self, inp: dict) -> dict:
@@ -566,23 +569,6 @@ class AiToolExecutor:
         return {"deleted": deleted}
 
     # ── New tools ──────────────────────────────────────────────
-
-    def tool_run_python(self, inp: dict) -> dict:
-        """Run Python in the shared namespace without creating a =PY cell."""
-        sheet = self._sheet(inp["sheet_name"])
-        code = inp["code"]
-        # Use the workbook-wide PythonRuntime (same as =PY cells).
-        rt = sheet._py_runtime()
-        # Run with a dummy cell position (-1, -1) since this is not a cell.
-        res = rt.run(code, sheet, -1, -1)
-        if not res.ok:
-            return {"error": res.error}
-        result = res.value
-        parts = {}
-        if res.stdout:
-            parts["stdout"] = res.stdout
-        parts["result"] = repr(result) if result is not None else "None"
-        return parts
 
     def tool_apply_table_style(self, inp: dict) -> dict:
         """Apply a built-in table design style to a cell range."""

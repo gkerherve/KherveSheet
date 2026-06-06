@@ -475,37 +475,6 @@ TOOLS = [
         },
     },
     {
-        "name": "run_python",
-        "description": (
-            "Execute Python code in the workbook-wide shared namespace "
-            "WITHOUT writing it into a cell. Use this when you need to "
-            "compute something, transform data, or do a one-off "
-            "calculation that should NOT remain as a =PY cell. "
-            "numpy (np), matplotlib.pyplot (plt), and pandas (pd) are "
-            "available. Use ks('A1') / ks('A1:B10') to read sheet data. "
-            "The value of the LAST expression is returned as the result. "
-            "If you need to write results back to the sheet, use "
-            "write_cells instead."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "sheet_name": {
-                    "type": "string",
-                    "description": "Sheet whose data ks() will read from.",
-                },
-                "code": {
-                    "type": "string",
-                    "description": (
-                        "Python source code. May be multi-line. The value "
-                        "of the last expression is returned."
-                    ),
-                },
-            },
-            "required": ["sheet_name", "code"],
-        },
-    },
-    {
         "name": "apply_table_style",
         "description": (
             "Apply a built-in table design style (header colours, banded "
@@ -694,19 +663,45 @@ existing data, formatting, and charts untouched unless asked.
 (for example at the start of a new conversation), use read_cells to \
 check before writing — do not blindly recreate data.
 - Use set_formula for calculated cells (formulas start with =).
-- For logic that is awkward or impossible as a spreadsheet formula \
-(loops, custom algorithms, data processing, generating a plot, building \
-or transforming arrays/tables), use set_python_cell to write a real \
-Python program into a cell. Python cells share one workbook-wide \
-namespace, so you can define a helper function in one cell and call it \
-from others. Inside the code, read grid values with ks("A1") (one cell) \
-or ks("A1:B10") (a range → NumPy array). The LAST line's value is the \
-cell result: return a number/text to display it, a list to spill values \
-into neighbouring cells, a NumPy array/object to keep it live in the cell \
-(re-read with ks elsewhere), or build a matplotlib figure (plt) to embed \
-a plot. numpy (np), matplotlib.pyplot (plt) and pandas (pd) are \
-available. After writing a Python cell, check its result is not #PYERR; \
-if it is, read the error and fix the code.
+- =PY CELLS — use set_python_cell for anything that is awkward or \
+impossible as a spreadsheet formula. =PY cells are powerful and \
+persistent: they run real Python and their code stays in the cell. \
+KEY RULES FOR =PY CELLS:
+  * All =PY cells in a workbook share ONE persistent namespace — a \
+function or variable defined in one cell is visible to later cells. \
+Use this to build helper libraries.
+  * Read grid values inside the code with ks("A1") (one cell, returns \
+float/str) or ks("A1:B10") (a range, returns a NumPy array).
+  * Write values back to other cells with ks_set("C1", value) or \
+ks_set("C1:C10", list_or_array).
+  * The value of the LAST line (if it is an expression) becomes the \
+cell's displayed result:
+    - Return a number or string → displays in the cell.
+    - Return a list → spills values into neighbouring cells below.
+    - Return a 2D list or NumPy array → spills into a block of cells.
+    - Return a NumPy array/object → keeps it live in the cell (re-read \
+with ks() from another cell).
+    - Build a matplotlib figure → embeds the plot visually in the cell.
+  * Available libraries: numpy (as np), matplotlib.pyplot (as plt), \
+pandas (as pd), math, statistics, datetime, json, re, itertools, \
+collections, and any other stdlib module.
+  * IMPORTANT: =PY code runs on the main thread. Do NOT make network \
+requests (no requests, urllib, http calls), do NOT use infinite loops \
+or sleep. For data that would require network access, provide the data \
+as static values written into cells with write_cells first, then use \
+=PY to process it.
+  * After writing a =PY cell, ALWAYS check its result is not #PYERR. \
+If it is, read the error with read_cells and fix the code.
+  * For templates with =PY cells: keep code short and readable. Add a \
+comment at the top of the code explaining what it does.
+  * COMMON PATTERNS:
+    - Computation: ks("A2") * ks("B2") + 100
+    - Array processing: np.mean(ks("A2:A20"))
+    - Conditional: "Pass" if ks("B2") >= 50 else "Fail"
+    - List generation: [i**2 for i in range(1, 11)]
+    - Plot: plt.plot(ks("A2:A20"), ks("B2:B20")); plt.title("My Plot"); plt.gcf()
+    - DataFrame: pd.DataFrame(ks("A1:D20")).describe().values.tolist()
+    - Helper function: def convert_c_to_f(c): return c * 9/5 + 32
 - Always read_cells first if you need to understand existing data \
 before modifying.
 - TEMPLATES MUST BE POLISHED, matching KherveSheet's shipped example \
@@ -755,10 +750,6 @@ directory so the user can reopen it from Examples > Templates.
 - Use merge_cells for title rows that span multiple columns (e.g. a \
 report title in A1:F1). Use set_column_width or auto_fit_columns to \
 ensure text is visible.
-- Use run_python for one-off computations, data inspection, or complex \
-transformations that should NOT remain as a =PY cell in the sheet. \
-Useful for quickly checking statistical properties of data or doing \
-an intermediate calculation.
 - format_cells accepts: bg_color (hex), bold, italic, underline, \
 font_family, font_size, font_color (hex), alignment \
 ("left"/"center"/"right"), number_format ("General"/"0.00"/ \

@@ -1902,7 +1902,12 @@ class SheetWidget(QWidget):
                 return
             self._cell_formulas[(row, col)] = new_text
             self._register_py_deps(row, col, new_text)
-            display = self._evaluate_python(new_text, row, col, dec)
+            try:
+                display = self._evaluate_python(new_text, row, col, dec)
+            except Exception:
+                import traceback
+                display = "#PYERR"
+                self._py_errors[(row, col)] = traceback.format_exc()
             self.table.blockSignals(True)
             if it is None:
                 it = QTableWidgetItem(display)
@@ -2078,7 +2083,12 @@ class SheetWidget(QWidget):
             dec = (decimals if decimals is not None
                    else self._cell_decimals(dr, dc))
             if is_python_source(formula):
-                result = self._evaluate_python(formula, dr, dc, dec)
+                try:
+                    result = self._evaluate_python(formula, dr, dc, dec)
+                except Exception:
+                    import traceback
+                    result = "#PYERR"
+                    self._py_errors[(dr, dc)] = traceback.format_exc()
             else:
                 result = str(self._evaluate_formula(formula, dr, dc, dec))
             # Apply per-cell number format (skip during solver).
@@ -2717,7 +2727,8 @@ class SheetWidget(QWidget):
             it = self.table.item(row, col)
             if it is not None:
                 # Show the last traceback line as the cell tooltip.
-                last = res.error.strip().splitlines()[-1]
+                lines = res.error.strip().splitlines()
+                last = lines[-1] if lines else "Unknown error"
                 it.setToolTip(last)
             return "#PYERR"
         self._py_errors.pop((row, col), None)
