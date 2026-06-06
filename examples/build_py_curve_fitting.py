@@ -242,12 +242,18 @@ def build():
             s.fmt(r, c, align="center")
         s.fmt(r, 8, font_color="#0a7", italic=True)
     s.box(11, 3, 19, 8, color=PALETTE["header"], width=1.0)
+    # Rows 13..52 (D13:I52) are reserved for up to 10 peaks — keep this
+    # block free of other text so it reads cleanly.
 
     # ── The fit program ──────────────────────────────────────────────
-    s.formula(21, 3, "=PY\n" + PY_BODY)
+    # Placed in column K (well clear of the data in A/B and the parameter
+    # table in D:I rows 13-52) so it never overlaps the peak cells.
+    s.set(2, 10, "Fit engine ▼")
+    s.fmt(2, 10, bold=True, font_color=PALETTE["header"])
+    s.formula(3, 10, "=PY\n" + PY_BODY)
 
     s.note(
-        23, 3,
+        2, 11,
         "Set the X/Y data ranges (E4/E5) and the fitting X-range "
         "(E7/E8 — shown as green lines on the plot). Edit any Value / Min "
         "/ Max / Vary, or an Expr to LINK a parameter to another (e.g. "
