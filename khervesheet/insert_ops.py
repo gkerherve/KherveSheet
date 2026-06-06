@@ -104,6 +104,7 @@ def insert_dropdown(sheet, parent=None):
     if not hasattr(sheet, '_cell_dropdowns'):
         sheet._cell_dropdowns = {}
     # Apply to all selected cells.
+    changes = []
     for rng in sheet.table.selectedRanges():
         for r in range(rng.topRow(), rng.bottomRow() + 1):
             for c in range(rng.leftColumn(), rng.rightColumn() + 1):
@@ -111,13 +112,21 @@ def insert_dropdown(sheet, parent=None):
                 # Set first item as default if cell is empty.
                 it = sheet.table.item(r, c)
                 if it is None or not it.text():
+                    old = it.text() if it else ""
                     if it is None:
                         it = QTableWidgetItem(items[0])
                         sheet.table.setItem(r, c, it)
                     else:
                         it.setText(items[0])
                     sheet._shadow[(r, c)] = items[0]
+                    if old != items[0]:
+                        changes.append((r, c, old, items[0]))
                 mark_dropdown_cell(sheet, r, c)
+    # Push undo for any cells that received a default value.
+    stack = getattr(sheet, '_undo_stack', None)
+    if stack and changes:
+        from .sheet import BulkCellEditCmd
+        stack.push(BulkCellEditCmd(sheet, changes, "Insert dropdown"))
 
 
 def mark_dropdown_cell(sheet, row, col):
@@ -174,6 +183,11 @@ def show_dropdown_for_cell(sheet, row, col):
         else:
             it.setText(text)
         sheet._shadow[(row, col)] = text
+        # Push undo command for the dropdown selection.
+        stack = getattr(sheet, '_undo_stack', None)
+        if stack and old != text:
+            from .sheet import CellEditCmd
+            stack.push(CellEditCmd(sheet, row, col, old, text))
         QTimer.singleShot(0, combo.deleteLater)
 
     combo.activated[int].connect(_apply)
@@ -226,19 +240,25 @@ def insert_link(sheet, parent=None):
     if not hasattr(sheet, '_cell_links'):
         sheet._cell_links = {}
     sheet._cell_links[(row, col)] = url
+    new_text = display or url
     sheet.table.blockSignals(True)
     if it is None:
-        it = QTableWidgetItem(display or url)
+        it = QTableWidgetItem(new_text)
         sheet.table.setItem(row, col, it)
     else:
-        it.setText(display or url)
+        it.setText(new_text)
     # Style as hyperlink.
     f = it.font()
     f.setUnderline(True)
     it.setFont(f)
     it.setForeground(QColor("#0563C1"))
     sheet.table.blockSignals(False)
-    sheet._shadow[(row, col)] = display or url
+    sheet._shadow[(row, col)] = new_text
+    # Push undo for the cell text change.
+    stack = getattr(sheet, '_undo_stack', None)
+    if stack and text != new_text:
+        from .sheet import CellEditCmd
+        stack.push(CellEditCmd(sheet, row, col, text, new_text))
 
 
 def open_link(sheet, row, col):
@@ -577,6 +597,12 @@ class SpellCheckDialog(QDialog):
             new_text = old_text.replace(old_word, new_word, 1)
             it.setText(new_text)
             self._sheet._shadow[(r, c)] = new_text
+            # Push undo for the spelling replacement.
+            stack = getattr(self._sheet, '_undo_stack', None)
+            if stack and old_text != new_text:
+                from .sheet import CellEditCmd
+                stack.push(CellEditCmd(
+                    self._sheet, r, c, old_text, new_text))
         self._next_word()
 
     def _ignore_all(self):
