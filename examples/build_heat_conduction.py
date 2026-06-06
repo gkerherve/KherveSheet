@@ -94,6 +94,7 @@ def build() -> str:
     py_code = (
         "=PY\n"
         "import numpy as np, matplotlib.pyplot as plt\n"
+        "trapz = getattr(np, 'trapezoid', None) or np.trapz  # NumPy 2 safe\n"
         "L     = ks('B5')\n"
         "T1    = ks('B6')\n"
         "T2    = ks('B7')\n"
@@ -113,7 +114,7 @@ def build() -> str:
         "for idx, t in enumerate(times):\n"
         "    T_transient = np.zeros_like(x)\n"
         "    for n in range(1, 21):\n"
-        "        bn = (2.0 / L) * np.trapz(\n"
+        "        bn = (2.0 / L) * trapz(\n"
         "            (T2 - (T1 + (T2 - T1) * x / L)) * np.sin(n * np.pi * x / L), x\n"
         "        )\n"
         "        T_transient += bn * np.exp(-alpha * (n * np.pi / L)**2 * t) * np.sin(n * np.pi * x / L)\n"

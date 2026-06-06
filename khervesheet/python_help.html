@@ -261,7 +261,7 @@ np.gradient(y, x).tolist()</pre></div>
 
 <div class="ex"><h3><span class="num">34</span>Trapezoidal integral</h3>
 <pre>x = ks(<span class="str">"A2:A100"</span>); y = ks(<span class="str">"B2:B100"</span>)
-<span class="kw">float</span>(np.trapz(y, x))</pre></div>
+<span class="kw">float</span>(np.trapezoid(y, x))   <span class="com"># np.trapz on older NumPy</span></pre></div>
 
 <div class="ex"><h3><span class="num">35</span>Savitzky–Golay smoothing</h3>
 <pre><span class="kw">from</span> scipy.signal <span class="kw">import</span> savgol_filter
