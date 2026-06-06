@@ -90,7 +90,7 @@ class _FormulaEdit(QPlainTextEdit):
                 self.setMaximumHeight(96)
             self.setMinimumHeight(72)
             # Very faint green background + PY strip, like a =PY grid cell.
-            self.setStyleSheet("QPlainTextEdit{background:#f3fbf4;}")
+            self.setStyleSheet("QPlainTextEdit{background:#f8fdf9;}")
             self._py_badge.show()
             self._py_badge.raise_()
             self._position_py_badge()

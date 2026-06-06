@@ -202,7 +202,7 @@ class CellFormatDelegate(QStyledItemDelegate):
         # Python (=PY) cells get a faint green tint + a "PY" badge.
         fm = self._cell_formulas.get(key)
         is_py = isinstance(fm, str) and fm.lstrip().upper().startswith("=PY")
-        py_tint = QColor(46, 160, 67, 16) if is_py else None
+        py_tint = QColor(46, 160, 67, 9) if is_py else None
 
         # Draw formula reference background tint before default paint.
         ref_color = self._ref_highlights.get(key)
