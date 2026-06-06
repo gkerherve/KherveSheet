@@ -1525,6 +1525,61 @@ class EmbeddedChart(QWidget):
                 self._source_sheet._selected_chart = None
         self.deleteLater()
 
+    # ── Categorical X-axis support ──────────────────────────────────
+
+    def _read_series_xy(self, sheet, s, yc):
+        """Read X and Y data for one series, detecting categorical X.
+
+        Returns ``(x, y, labels)`` where *labels* is a list of tick
+        label strings when the X column is categorical, or ``None``
+        when it is numeric.
+        """
+        xc = s.get("x_col", self._x_col)
+        y_full = sheet.numeric_column(yc)
+        y_r0 = s.get("y_row_start", 0)
+        y_r1 = s.get("y_row_end", len(y_full) - 1)
+        y_data = y_full[y_r0:y_r1 + 1]
+
+        if xc is None:
+            # No X column — use row indices.
+            x_data = np.arange(len(y_data), dtype=float)
+            mask = ~np.isnan(y_data[:len(x_data)])
+            return x_data[mask], y_data[:len(x_data)][mask], None
+
+        x_full_num = sheet.numeric_column(xc)
+        x_r0 = s.get("x_row_start", 0)
+        x_r1 = s.get("x_row_end", len(x_full_num) - 1)
+        x_num = x_full_num[x_r0:x_r1 + 1]
+
+        n = min(len(x_num), len(y_data))
+        x_num, y_data = x_num[:n], y_data[:n]
+
+        # Decide: if more than half the X values are NaN (text), treat
+        # the column as categorical.
+        nan_count = int(np.isnan(x_num).sum())
+        if nan_count > n / 2 and n > 0:
+            # Categorical X — read as strings.
+            x_str = sheet.string_column(xc)
+            labels = x_str[x_r0:x_r0 + n]
+            x_pos = np.arange(n, dtype=float)
+            # Filter only on Y NaN (keep text rows).
+            mask = ~np.isnan(y_data)
+            return x_pos[mask], y_data[mask], [labels[i] for i, m in enumerate(mask) if m]
+
+        # Numeric X — original behaviour.
+        mask = ~(np.isnan(x_num) | np.isnan(y_data))
+        return x_num[mask], y_data[mask], None
+
+    def _apply_categorical_x(self, labels):
+        """Set X-axis tick positions and labels for a categorical axis."""
+        if not labels:
+            return
+        import matplotlib.ticker as ticker
+        ax = self._ax
+        ax.set_xticks(np.arange(len(labels)))
+        ax.set_xticklabels(labels, rotation=45 if len(labels) > 5 else 0,
+                           ha='right' if len(labels) > 5 else 'center')
+
     # ── Live data update ─────────────────────────────────────────────
     def _on_data_changed(self, col: int):
         """Re-read source data and refresh the chart when a plotted
@@ -1541,30 +1596,14 @@ class EmbeddedChart(QWidget):
         if not relevant:
             return
         sheet = self._source_sheet
+        cat_labels = None
         # Update each series respecting per-series X column.
         for i, (s, yc) in enumerate(
                 zip(self._series, self._y_cols)):
-            xc = s.get("x_col", self._x_col)
-            if xc is not None:
-                x_full = sheet.numeric_column(xc)
-            else:
-                x_full = np.arange(sheet.row_count(), dtype=float)
-            y_full = sheet.numeric_column(yc)
-            # Apply row range bounds if set.
-            x_r0 = s.get("x_row_start", 0)
-            x_r1 = s.get("x_row_end", len(x_full) - 1)
-            y_r0 = s.get("y_row_start", 0)
-            y_r1 = s.get("y_row_end", len(y_full) - 1)
-            x_data = x_full[x_r0:x_r1 + 1]
-            y_data = y_full[y_r0:y_r1 + 1]
-            # Align lengths.
-            n = min(len(x_data), len(y_data))
-            x_data = x_data[:n]
-            y_data = y_data[:n]
-            mask = ~(np.isnan(x_data) | np.isnan(y_data))
-            x = x_data[mask]
-            y = y_data[mask]
+            x, y, labels = self._read_series_xy(sheet, s, yc)
             s["x"], s["y"] = x, y
+            if labels is not None:
+                cat_labels = labels
             self._update_artist(s, x, y)
         self._ax.dataLim.set_points(np.array(
             [[np.inf, np.inf], [-np.inf, -np.inf]]))
@@ -1573,6 +1612,8 @@ class EmbeddedChart(QWidget):
             if len(sx) and len(sy):
                 self._ax.update_datalim(np.column_stack([sx, sy]))
         self._ax.autoscale_view()
+        if cat_labels is not None:
+            self._apply_categorical_x(cat_labels)
         if self._header_row:
             self._apply_header_labels()
         self._canvas.draw()
@@ -1650,27 +1691,13 @@ class EmbeddedChart(QWidget):
         grid_on = bool(ax.xaxis.get_gridlines()[0].get_visible()
                        if ax.xaxis.get_gridlines() else False)
 
+        cat_labels = None
         for i, (s, yc) in enumerate(
                 zip(self._series, self._y_cols)):
-            xc = s.get("x_col", self._x_col)
-            if xc is not None:
-                x_full = sheet.numeric_column(xc)
-            else:
-                x_full = np.arange(sheet.row_count(), dtype=float)
-            y_full = sheet.numeric_column(yc)
-            x_r0 = s.get("x_row_start", 0)
-            x_r1 = s.get("x_row_end", len(x_full) - 1)
-            y_r0 = s.get("y_row_start", 0)
-            y_r1 = s.get("y_row_end", len(y_full) - 1)
-            x_data = x_full[x_r0:x_r1 + 1]
-            y_data = y_full[y_r0:y_r1 + 1]
-            n = min(len(x_data), len(y_data))
-            x_data = x_data[:n]
-            y_data = y_data[:n]
-            mask = ~(np.isnan(x_data) | np.isnan(y_data))
-            x = x_data[mask]
-            y = y_data[mask]
+            x, y, labels = self._read_series_xy(sheet, s, yc)
             s["x"], s["y"] = x, y
+            if labels is not None:
+                cat_labels = labels
             self._update_artist(s, x, y)
 
         ax.set_title(title)
@@ -1689,6 +1716,8 @@ class EmbeddedChart(QWidget):
             if len(sx) and len(sy):
                 ax.update_datalim(np.column_stack([sx, sy]))
         ax.autoscale_view(True, True, True)
+        if cat_labels is not None:
+            self._apply_categorical_x(cat_labels)
         ax.grid(grid_on)
         self._canvas.draw()
 
@@ -1700,25 +1729,14 @@ class EmbeddedChart(QWidget):
         sheet = self._source_sheet
         ax = self._ax
 
+        cat_labels = None
         for i, (s, yc) in enumerate(
                 zip(self._series, self._y_cols)):
-            xc = s.get("x_col", self._x_col)
-            if xc is not None:
-                x_full = sheet.numeric_column(xc)
-            else:
-                x_full = np.arange(sheet.row_count(), dtype=float)
-            y_full = sheet.numeric_column(yc)
-            x_r0 = s.get("x_row_start", 0)
-            x_r1 = s.get("x_row_end", len(x_full) - 1)
-            y_r0 = s.get("y_row_start", 0)
-            y_r1 = s.get("y_row_end", len(y_full) - 1)
-            x_data = x_full[x_r0:x_r1 + 1]
-            y_data = y_full[y_r0:y_r1 + 1]
-            n = min(len(x_data), len(y_data))
-            x_data, y_data = x_data[:n], y_data[:n]
-            mask = ~(np.isnan(x_data) | np.isnan(y_data))
-            s["x"], s["y"] = x_data[mask], y_data[mask]
-            self._update_artist(s, s["x"], s["y"])
+            x, y, labels = self._read_series_xy(sheet, s, yc)
+            s["x"], s["y"] = x, y
+            if labels is not None:
+                cat_labels = labels
+            self._update_artist(s, x, y)
 
         # Reset data limits from scratch so autoscale sees all artists.
         ax.dataLim.set_points(np.array(
@@ -1728,6 +1746,8 @@ class EmbeddedChart(QWidget):
             if len(x) and len(y):
                 ax.update_datalim(np.column_stack([x, y]))
         ax.autoscale_view(True, True, True)
+        if cat_labels is not None:
+            self._apply_categorical_x(cat_labels)
         if self._header_row:
             self._apply_header_labels()
         self._canvas.draw()

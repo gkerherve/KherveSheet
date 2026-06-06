@@ -3581,6 +3581,7 @@ class MainWindow(QMainWindow):
         first_chart = None
         row_start = s.topRow()
         row_end = s.bottomRow()
+        cat_labels = None  # categorical X tick labels
         for yc in y_cols:
             x_col = _find_x_for(yc)
             if x_col is not None:
@@ -3591,9 +3592,23 @@ class MainWindow(QMainWindow):
             y_data = sheet.numeric_column(yc)[row_start:row_end + 1]
             label = col_index_to_letter(yc)
 
-            mask = ~(np.isnan(x_data) | np.isnan(y_data))
-            x = x_data[mask]
-            y = y_data[mask]
+            # Detect categorical (text) X column.
+            n = min(len(x_data), len(y_data))
+            x_data, y_data = x_data[:n], y_data[:n]
+            nan_count = int(np.isnan(x_data).sum())
+            if x_col is not None and nan_count > n / 2 and n > 0:
+                # Categorical X — use text labels, integer positions.
+                x_str = sheet.string_column(x_col)
+                labels_slice = x_str[row_start:row_start + n]
+                mask = ~np.isnan(y_data)
+                x = np.arange(n, dtype=float)[mask]
+                y = y_data[mask]
+                cat_labels = [labels_slice[i]
+                              for i, m in enumerate(mask) if m]
+            else:
+                mask = ~(np.isnan(x_data) | np.isnan(y_data))
+                x = x_data[mask]
+                y = y_data[mask]
             if len(x) == 0:
                 continue
 
@@ -3617,6 +3632,10 @@ class MainWindow(QMainWindow):
                                        x_col=x_col, y_col=yc,
                                        row_start=s.topRow(),
                                        row_end=s.bottomRow())
+        # Apply categorical tick labels after chart is built.
+        if first_chart is not None and cat_labels is not None:
+            first_chart._apply_categorical_x(cat_labels)
+            first_chart._canvas.draw_idle()
 
         self._status_msg(
             f"Created {plot_type} chart", 3000)

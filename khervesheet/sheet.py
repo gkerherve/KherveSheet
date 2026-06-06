@@ -1508,6 +1508,14 @@ class SheetWidget(QWidget):
                 vals.append(np.nan)
         return np.array(vals)
 
+    def string_column(self, col: int) -> list:
+        """Return column data as a list of strings (empty for blank)."""
+        vals = []
+        for r in range(self.row_count()):
+            it = self.table.item(r, col)
+            vals.append(it.text() if it else "")
+        return vals
+
     def set_designation(self, col: int, desig: str):
         old_desig = self._col_designations.get(col)
         if desig.upper() == "NONE":

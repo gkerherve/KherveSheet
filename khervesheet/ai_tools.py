@@ -491,18 +491,26 @@ class AiToolExecutor:
             return {"error": f"Invalid chart_type {chart_type!r}. "
                     f"Valid: {valid_types}"}
         import numpy as np
-        # Read X data.
+        # Read X data — detect categorical (text) labels.
         xr1, xc1, xr2, xc2 = parse_range(inp["x_range"])
         x_vals = []
+        x_labels = []
         for r in range(xr1, xr2 + 1):
             t = sheet.cell_text(r, xc1)
+            x_labels.append(t)
             try:
                 x_vals.append(float(t))
             except (ValueError, TypeError):
                 x_vals.append(float('nan'))
         x = np.array(x_vals)
+        nan_count = int(np.isnan(x).sum())
+        cat_labels = None
+        if nan_count > len(x) / 2 and len(x) > 0:
+            # Categorical X — use integer positions.
+            cat_labels = x_labels
+            x = np.arange(len(x_labels), dtype=float)
         if len(x) == 0:
-            return {"error": "No numeric X data found."}
+            return {"error": "No X data found."}
 
         # Build list of (row_start, col, row_end) for each Y series.
         # Supports: single column "D5:D14", multi-column "D5:H14",
@@ -550,6 +558,9 @@ class AiToolExecutor:
 
         if chart is None:
             return {"error": "No numeric Y data found in the specified ranges."}
+        if cat_labels is not None:
+            chart._apply_categorical_x(cat_labels)
+            chart._canvas.draw_idle()
         offset = len(sheet._charts) * 30
         chart.move(40 + offset, 40 + offset)
         sheet._charts.append(chart)
