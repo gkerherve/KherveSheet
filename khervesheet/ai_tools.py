@@ -99,6 +99,12 @@ class AiToolExecutor:
             "clone_chart": self.tool_clone_chart,
             "modify_chart": self.tool_modify_chart,
             "delete_charts": self.tool_delete_charts,
+            "run_python": self.tool_run_python,
+            "apply_table_style": self.tool_apply_table_style,
+            "save_as_template": self.tool_save_as_template,
+            "set_column_width": self.tool_set_column_width,
+            "merge_cells": self.tool_merge_cells,
+            "auto_fit_columns": self.tool_auto_fit_columns,
         }
 
     # ── Dispatcher ──────────────────────────────────────────────
@@ -558,3 +564,169 @@ class AiToolExecutor:
             ch.deleteLater()
             deleted += 1
         return {"deleted": deleted}
+
+    # ── New tools ──────────────────────────────────────────────
+
+    def tool_run_python(self, inp: dict) -> dict:
+        """Run Python in the shared namespace without creating a =PY cell."""
+        sheet = self._sheet(inp["sheet_name"])
+        code = inp["code"]
+        # Use the workbook-wide PythonRuntime (same as =PY cells).
+        rt = sheet._py_runtime()
+        # Run with a dummy cell position (-1, -1) since this is not a cell.
+        res = rt.run(code, sheet, -1, -1)
+        if not res.ok:
+            return {"error": res.error}
+        result = res.value
+        parts = {}
+        if res.stdout:
+            parts["stdout"] = res.stdout
+        parts["result"] = repr(result) if result is not None else "None"
+        return parts
+
+    def tool_apply_table_style(self, inp: dict) -> dict:
+        """Apply a built-in table design style to a cell range."""
+        sheet = self._sheet(inp["sheet_name"])
+        r1, c1, r2, c2 = parse_range(inp["range"])
+        style_name = inp["style_name"]
+        use_header = inp.get("header_row", True)
+        use_banding = inp.get("banded_rows", True)
+
+        from .table_styles import BUILTIN_STYLES
+        from .cellformat import BorderSpec
+
+        style = None
+        # Case-insensitive lookup.
+        for s in BUILTIN_STYLES:
+            if s.name.lower() == style_name.lower():
+                style = s
+                break
+        if style is None:
+            names = [s.name for s in BUILTIN_STYLES[:20]]
+            return {"error": f"Style {style_name!r} not found. "
+                    f"Examples: {names}"}
+
+        from PyQt5.QtCore import Qt
+
+        old_fmts = {}
+        new_fmts = {}
+        for r in range(r1, r2 + 1):
+            for c in range(c1, c2 + 1):
+                existing = sheet._cell_formats.get((r, c))
+                old_fmts[(r, c)] = _snapshot_format(existing)
+                cf = CellFormat()
+                is_header = (r == r1 and use_header)
+                if is_header:
+                    cf.bg_color = style.header_bg
+                    cf.font_color = style.header_fg
+                    cf.bold = style.header_bold
+                    cf.alignment = Qt.AlignHCenter | Qt.AlignVCenter
+                else:
+                    data_row = r - r1 - (1 if use_header else 0)
+                    if use_banding and data_row % 2 == 1:
+                        cf.bg_color = style.odd_bg
+                    else:
+                        cf.bg_color = style.even_bg
+                    cf.font_color = style.text_fg
+                # Borders.
+                if style.border_color:
+                    bc = style.border_color
+                    if style.border_outer:
+                        if r == r1:
+                            cf.border_top = BorderSpec(bc, 1)
+                        if r == r2:
+                            cf.border_bottom = BorderSpec(bc, 1)
+                        if c == c1:
+                            cf.border_left = BorderSpec(bc, 1)
+                        if c == c2:
+                            cf.border_right = BorderSpec(bc, 1)
+                    if style.border_inner:
+                        if c < c2:
+                            cf.border_right = BorderSpec(bc, 1)
+                        if r < r2:
+                            cf.border_bottom = BorderSpec(bc, 1)
+                if is_header and style.border_header_bottom:
+                    bc = style.border_color or style.header_bg
+                    cf.border_bottom = BorderSpec(bc, 2)
+                new_fmts[(r, c)] = cf
+
+        label = f"AI: table style {_range_label(r1, c1, r2, c2)}"
+        cmd = FormatCellsCmd(sheet, old_fmts, new_fmts, label)
+        cmd._first_redo_done = False
+        self._undo.push(cmd)
+        cmd._apply(new_fmts)
+        return {"styled": True, "style": style.name,
+                "cells": len(new_fmts)}
+
+    def tool_save_as_template(self, inp: dict) -> dict:
+        """Save the current workbook as a template .ksheet file."""
+        import os
+        name = inp["name"].strip()
+        category = inp["category"].strip()
+        # Find the examples/templates/ directory.
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        templates_dir = os.path.join(base, "examples", "templates", category)
+        os.makedirs(templates_dir, exist_ok=True)
+        path = os.path.join(templates_dir, f"{name}.ksheet")
+        try:
+            self._mw._save_to_ksheet(path)
+            return {"saved": True, "path": path}
+        except Exception as exc:
+            return {"error": f"Failed to save template: {exc}"}
+
+    def tool_set_column_width(self, inp: dict) -> dict:
+        """Set column widths."""
+        sheet = self._sheet(inp["sheet_name"])
+        width = int(inp["width"])
+        cols_str = inp["columns"].strip()
+        cols = []
+        for part in cols_str.split(","):
+            part = part.strip()
+            if ":" in part:
+                a, b = part.split(":")
+                ca = letter_to_col_index(a.strip())
+                cb = letter_to_col_index(b.strip())
+                cols.extend(range(ca, cb + 1))
+            else:
+                cols.append(letter_to_col_index(part))
+        for c in cols:
+            sheet.table.setColumnWidth(c, width)
+        return {"columns_resized": len(cols), "width": width}
+
+    def tool_merge_cells(self, inp: dict) -> dict:
+        """Merge a range of cells."""
+        sheet = self._sheet(inp["sheet_name"])
+        r1, c1, r2, c2 = parse_range(inp["range"])
+        row_span = r2 - r1 + 1
+        col_span = c2 - c1 + 1
+        if row_span == 1 and col_span == 1:
+            return {"error": "Range must span more than one cell."}
+        sheet.table.setSpan(r1, c1, row_span, col_span)
+        sheet._merged_ranges.append((r1, c1, row_span, col_span))
+        return {"merged": True,
+                "range": _range_label(r1, c1, r2, c2)}
+
+    def tool_auto_fit_columns(self, inp: dict) -> dict:
+        """Auto-fit column widths to content."""
+        sheet = self._sheet(inp["sheet_name"])
+        cols_str = inp.get("columns", "").strip()
+        if cols_str:
+            cols = []
+            if ":" in cols_str:
+                a, b = cols_str.split(":")
+                ca = letter_to_col_index(a.strip())
+                cb = letter_to_col_index(b.strip())
+                cols = list(range(ca, cb + 1))
+            else:
+                for part in cols_str.split(","):
+                    cols.append(letter_to_col_index(part.strip()))
+        else:
+            # Auto-detect: fit all columns that have data.
+            max_col = 0
+            for (r, c) in sheet._shadow:
+                if c > max_col:
+                    max_col = c
+            cols = list(range(0, max_col + 1))
+        for c in cols:
+            sheet.table.resizeColumnToContents(c)
+        return {"columns_fitted": len(cols)}

@@ -474,6 +474,179 @@ TOOLS = [
             "required": ["sheet_name", "chart_index"],
         },
     },
+    {
+        "name": "run_python",
+        "description": (
+            "Execute Python code in the workbook-wide shared namespace "
+            "WITHOUT writing it into a cell. Use this when you need to "
+            "compute something, transform data, or do a one-off "
+            "calculation that should NOT remain as a =PY cell. "
+            "numpy (np), matplotlib.pyplot (plt), and pandas (pd) are "
+            "available. Use ks('A1') / ks('A1:B10') to read sheet data. "
+            "The value of the LAST expression is returned as the result. "
+            "If you need to write results back to the sheet, use "
+            "write_cells instead."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {
+                    "type": "string",
+                    "description": "Sheet whose data ks() will read from.",
+                },
+                "code": {
+                    "type": "string",
+                    "description": (
+                        "Python source code. May be multi-line. The value "
+                        "of the last expression is returned."
+                    ),
+                },
+            },
+            "required": ["sheet_name", "code"],
+        },
+    },
+    {
+        "name": "apply_table_style",
+        "description": (
+            "Apply a built-in table design style (header colours, banded "
+            "rows, borders) to a range of cells. Available categories: "
+            "Plain, Grid, List. Each has variants: Light, Medium, Dark, "
+            "Accent (Grid only). Colours: Black, Blue, Orange, Grey, "
+            "Gold, Light Blue, Green, Red, Purple, Pink, Bright Green. "
+            "Example names: 'Grid Light Blue', 'Plain Medium Red', "
+            "'List Dark Green'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {
+                    "type": "string",
+                    "description": "Sheet containing the range.",
+                },
+                "range": {
+                    "type": "string",
+                    "description": (
+                        "A1-notation range to style, e.g. 'A1:F20'. "
+                        "The first row is treated as the header."
+                    ),
+                },
+                "style_name": {
+                    "type": "string",
+                    "description": (
+                        "Name of the built-in table style, e.g. "
+                        "'Grid Light Blue', 'Plain Medium Red'."
+                    ),
+                },
+                "header_row": {
+                    "type": "boolean",
+                    "description": (
+                        "Whether first row is a header (default true)."
+                    ),
+                },
+                "banded_rows": {
+                    "type": "boolean",
+                    "description": (
+                        "Whether to alternate row colours (default true)."
+                    ),
+                },
+            },
+            "required": ["sheet_name", "range", "style_name"],
+        },
+    },
+    {
+        "name": "save_as_template",
+        "description": (
+            "Save the current workbook as a .ksheet template file in "
+            "the examples/templates/ directory. The user can then open "
+            "it from the Examples > Templates menu. Provide a category "
+            "(e.g. Finance, Science, Analysis, Business, Education, "
+            "Data Processing, Math, Planners, Daily Life, Reference) "
+            "and a name."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": (
+                        "Template name (becomes the filename), "
+                        "e.g. 'Lab Report'."
+                    ),
+                },
+                "category": {
+                    "type": "string",
+                    "description": (
+                        "Category folder, e.g. 'Science', 'Finance'."
+                    ),
+                },
+            },
+            "required": ["name", "category"],
+        },
+    },
+    {
+        "name": "set_column_width",
+        "description": (
+            "Set the width of one or more columns. Useful for making "
+            "header text fully visible or creating compact layouts."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {"type": "string"},
+                "columns": {
+                    "type": "string",
+                    "description": (
+                        "Column letters, e.g. 'A', 'B:D' for a range, "
+                        "or 'A,C,E' for specific columns."
+                    ),
+                },
+                "width": {
+                    "type": "integer",
+                    "description": "Column width in pixels (default ~100).",
+                },
+            },
+            "required": ["sheet_name", "columns", "width"],
+        },
+    },
+    {
+        "name": "merge_cells",
+        "description": (
+            "Merge a range of cells into one. The top-left cell's "
+            "value is kept. Useful for titles spanning multiple columns."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {"type": "string"},
+                "range": {
+                    "type": "string",
+                    "description": "A1-notation range to merge, e.g. 'A1:D1'.",
+                },
+            },
+            "required": ["sheet_name", "range"],
+        },
+    },
+    {
+        "name": "auto_fit_columns",
+        "description": (
+            "Automatically resize columns to fit their content. "
+            "Specify a range or leave empty to fit all columns."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {"type": "string"},
+                "columns": {
+                    "type": "string",
+                    "description": (
+                        "Column letters to auto-fit, e.g. 'A:F'. "
+                        "Omit to fit all columns with data."
+                    ),
+                },
+            },
+            "required": ["sheet_name"],
+        },
+    },
 ]
 
 
@@ -573,6 +746,19 @@ to a log scale, or rename the title/axis labels — use modify_chart. \
 Reversing the X axis is invert_x=true.
 - Available chart types: Line, Scatter, Line+Symbol, Bar, Step, Stem, \
 Histogram, Box, Heatmap, 3D Surface.
+- Use apply_table_style to quickly give a data range a polished look \
+(header colours, banded rows, borders) — much faster than formatting \
+cells one by one. Use it after writing headers and data.
+- To produce a finished template, use save_as_template after building \
+and verifying the workbook. This saves a .ksheet file in the templates \
+directory so the user can reopen it from Examples > Templates.
+- Use merge_cells for title rows that span multiple columns (e.g. a \
+report title in A1:F1). Use set_column_width or auto_fit_columns to \
+ensure text is visible.
+- Use run_python for one-off computations, data inspection, or complex \
+transformations that should NOT remain as a =PY cell in the sheet. \
+Useful for quickly checking statistical properties of data or doing \
+an intermediate calculation.
 - format_cells accepts: bg_color (hex), bold, italic, underline, \
 font_family, font_size, font_color (hex), alignment \
 ("left"/"center"/"right"), number_format ("General"/"0.00"/ \
