@@ -98,7 +98,7 @@ PROVIDERS: Dict[str, dict] = {
 
 DEFAULT_HOST = "http://localhost:11434"
 
-_MAX_TOKENS = 4096
+_MAX_TOKENS = 16384
 
 
 def is_available(provider_name: str) -> bool:

@@ -704,35 +704,35 @@ comment at the top of the code explaining what it does.
     - Helper function: def convert_c_to_f(c): return c * 9/5 + 32
 - Always read_cells first if you need to understand existing data \
 before modifying.
-- TEMPLATES MUST BE POLISHED, matching KherveSheet's shipped example \
-workbooks — never a bare grid of numbers. When you build a template:
+- EFFICIENCY IS CRITICAL — minimise tool calls. Batch as much as \
+possible into each write_cells / format_cells call. Do NOT write one \
+cell at a time when you can write a whole block at once. Plan the full \
+template layout BEFORE making any tool calls.
+- TEMPLATES MUST BE POLISHED. When you build a template:
   1. Put a bold, larger title in row 1 (e.g. A1, font_size ~14, bold).
   2. Make a proper header row: bold white text (font_color "#FFFFFF") \
 on a coloured fill (bg_color e.g. "#4472C4"), centered, and ALWAYS \
 include units in the header text, e.g. "Retention Time (min)".
-  3. Fill 10-20 rows of realistic example data with write_cells.
+  3. Fill 10-20 rows of realistic example data with write_cells. \
+Write ALL data in ONE write_cells call — pack every row into the \
+values array.
   4. Add calculated columns using set_formula with CORRECT cell \
 references — every argument that should be a cell must be a real \
-reference (e.g. E2), never a literal like "W0.05" or a column letter \
-with a value glued on.
-  5. Apply number formats to numeric columns via format_cells \
-(number_format), and light borders/zebra fills for readability.
+reference (e.g. E2), never a literal.
+  5. Use apply_table_style to format the data range in one call \
+instead of many individual format_cells calls.
   6. Create chart(s) with insert_chart, then use modify_chart to give \
-each a descriptive title and x_label/y_label (with units). \
-For multi-series charts, pass comma-separated y_range values \
-(e.g. 'B2:B20,C2:C20,D2:D20') — each range becomes a series.
-  7. Optionally add a short note explaining how to use the template.
-- After writing formulas, READ BACK the calculated cells with \
-read_cells; if any show #ERROR, #N/A or look wrong, diagnose and fix \
-the formula before telling the user you are done. A template with \
-#ERROR cells is not acceptable.
-- Look up exact function names and syntax with search_functions / \
-get_function_details when unsure — do not guess formula syntax.
-- KherveSheet has 150+ formula functions and many science/analysis \
-features (FFT, smoothing, peak fitting, baselines, solver, trendlines, \
-etc.). You do NOT know them all from memory — use search_functions to \
-look them up on demand, then get_function_details for exact syntax. \
-Do this before claiming a capability is missing.
+each a descriptive title and x_label/y_label (with units).
+  7. After formulas, read_cells ONCE to check for #ERROR — fix any \
+errors, then STOP. Do not keep reading and retrying in loops.
+- When a formula function is NOT available (e.g. PMT, EDATE, FV), \
+use a =PY cell instead of retrying different formula syntaxes. Python \
+is always available and always works. Do NOT waste turns searching \
+for functions and retrying — if the first attempt fails, switch \
+to =PY immediately.
+- KherveSheet has 150+ formula functions. Use search_functions to \
+look them up ONCE when unsure, then get_function_details for syntax. \
+Do NOT search repeatedly for the same function.
 - To copy or understand an existing plot, use list_charts and \
 get_chart_details to see each series' style and X/Y columns, and \
 clone_chart to reproduce a chart (with identical style) on another sheet.
