@@ -1,7 +1,8 @@
 """Build "London Weather (live)" — a =PY template that fetches real
-hourly temperatures for today and a 7-day forecast from the free
-Open-Meteo API (no key).  Network-resilient: falls back to labelled
-sample data when offline so the workbook always opens cleanly.
+hourly temperatures + weather conditions for today and a 7-day forecast
+from the free Open-Meteo API (no key).  Shows condition emoji in the
+cells and a plot of the conditions drawn as weather icons.  Network-
+resilient: falls back to labelled sample data when offline.
 
 Copyright (C) 2026 Gwilherm Kerherve
 
@@ -18,15 +19,104 @@ sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 from ksheet_author import Workbook, PALETTE  # noqa: E402
 
 PY_BODY = r'''# Live London weather from Open-Meteo (no API key needed).
-# Fetches today's hourly temperature and a 7-day forecast; if the network
-# is unavailable it falls back to clearly-labelled sample data so the
-# sheet still opens.
+# Today's hourly temperature + condition, and a 7-day forecast.  The
+# conditions are shown as emoji in the cells and as drawn icons in the
+# plot (matplotlib shapes, so they render without an emoji font).  Falls
+# back to labelled sample data when offline.
 import json, urllib.request
 import numpy as np, matplotlib.pyplot as plt
+from matplotlib.patches import Circle, Polygon
 
 lat  = float(ks("B3"))            # latitude  (London 51.5072)
 lon  = float(ks("B4"))            # longitude (London -0.1276)
 days = int(ks("B6"))              # forecast days
+
+# --- WMO weather code -> (emoji, label, icon category) ---------------
+def code_info(c):
+    t = {
+        0: ("☀️", "Clear", "sun"),
+        1: ("\U0001f324️", "Mainly clear", "sun"),
+        2: ("⛅", "Partly cloudy", "partly"),
+        3: ("☁️", "Overcast", "cloud"),
+        45: ("\U0001f32b️", "Fog", "fog"),
+        48: ("\U0001f32b️", "Rime fog", "fog"),
+        51: ("\U0001f326️", "Light drizzle", "rain"),
+        53: ("\U0001f326️", "Drizzle", "rain"),
+        55: ("\U0001f326️", "Dense drizzle", "rain"),
+        56: ("\U0001f327️", "Freezing drizzle", "rain"),
+        57: ("\U0001f327️", "Freezing drizzle", "rain"),
+        61: ("\U0001f327️", "Light rain", "rain"),
+        63: ("\U0001f327️", "Rain", "rain"),
+        65: ("\U0001f327️", "Heavy rain", "rain"),
+        66: ("\U0001f327️", "Freezing rain", "rain"),
+        67: ("\U0001f327️", "Freezing rain", "rain"),
+        71: ("\U0001f328️", "Light snow", "snow"),
+        73: ("\U0001f328️", "Snow", "snow"),
+        75: ("\U0001f328️", "Heavy snow", "snow"),
+        77: ("\U0001f328️", "Snow grains", "snow"),
+        80: ("\U0001f326️", "Rain showers", "rain"),
+        81: ("\U0001f326️", "Rain showers", "rain"),
+        82: ("\U0001f326️", "Violent showers", "rain"),
+        85: ("\U0001f328️", "Snow showers", "snow"),
+        86: ("\U0001f328️", "Snow showers", "snow"),
+        95: ("⛈️", "Thunderstorm", "thunder"),
+        96: ("⛈️", "Thunderstorm, hail", "thunder"),
+        99: ("⛈️", "Thunderstorm, hail", "thunder"),
+    }
+    return t.get(int(c), ("☁️", "Cloudy", "cloud"))
+
+# --- draw a weather icon from primitives (no emoji font needed) ------
+def draw_icon(ax, cx, cy, cat, s=0.42):
+    def sun(ox, oy, sc, col="#f6b73c"):
+        for k in range(8):
+            a = k * np.pi / 4
+            ax.plot([ox+0.55*sc*np.cos(a), ox+0.92*sc*np.cos(a)],
+                    [oy+0.55*sc*np.sin(a), oy+0.92*sc*np.sin(a)],
+                    color=col, lw=1.5, zorder=2, solid_capstyle="round")
+        ax.add_patch(Circle((ox, oy), 0.42*sc, color=col, ec="none", zorder=3))
+
+    def cloud(ox, oy, sc, col="#9aa3ad"):
+        for dx, dy, rr in [(-0.42, 0.0, 0.30), (0.42, 0.0, 0.32),
+                           (0.0, 0.20, 0.40), (0.0, -0.05, 0.50)]:
+            ax.add_patch(Circle((ox+dx*sc, oy+dy*sc), rr*sc,
+                                color=col, ec="none", zorder=3))
+
+    def drops(ox, oy, sc, col="#3b82f6", n=3):
+        for j in range(n):
+            dx = (j-(n-1)/2)*0.30*sc
+            ax.plot([ox+dx, ox+dx-0.05*sc], [oy-0.45*sc, oy-0.80*sc],
+                    color=col, lw=1.8, zorder=4, solid_capstyle="round")
+
+    def flakes(ox, oy, sc, col="#7fb2e6", n=3):
+        for j in range(n):
+            dx = (j-(n-1)/2)*0.30*sc
+            ax.scatter([ox+dx], [oy-0.62*sc], marker="*",
+                       s=70*sc, color=col, zorder=4)
+
+    def bolt(ox, oy, sc, col="#f5c518"):
+        p = np.array([(0.0, 0.45), (-0.22, -0.02), (-0.02, -0.02),
+                      (-0.18, -0.5), (0.24, 0.1), (0.04, 0.1)])
+        ax.add_patch(Polygon(np.column_stack([ox+p[:, 0]*sc, oy+p[:, 1]*sc]),
+                             closed=True, color=col, ec="none", zorder=4))
+
+    if cat == "sun":
+        sun(cx, cy, s)
+    elif cat == "partly":
+        sun(cx-0.28*s, cy+0.25*s, s*0.65); cloud(cx+0.1*s, cy-0.05*s, s*0.95)
+    elif cat == "fog":
+        cloud(cx, cy+0.12*s, s*0.9)
+        for j in range(3):
+            yy = cy-0.32*s-0.18*s*j
+            ax.plot([cx-0.5*s, cx+0.5*s], [yy, yy],
+                    color="#9aa3ad", lw=1.6, zorder=4, solid_capstyle="round")
+    elif cat == "rain":
+        cloud(cx, cy+0.12*s, s); drops(cx, cy, s)
+    elif cat == "snow":
+        cloud(cx, cy+0.12*s, s); flakes(cx, cy, s)
+    elif cat == "thunder":
+        cloud(cx, cy+0.12*s, s); bolt(cx, cy, s)
+    else:
+        cloud(cx, cy, s)
 
 def fetch_json(url, timeout=8):
     req = urllib.request.Request(url, headers={"User-Agent": "KherveSheet"})
@@ -35,52 +125,80 @@ def fetch_json(url, timeout=8):
 
 url = ("https://api.open-meteo.com/v1/forecast"
        f"?latitude={lat}&longitude={lon}"
-       "&hourly=temperature_2m"
-       "&daily=temperature_2m_max,temperature_2m_min"
+       "&hourly=temperature_2m,weathercode"
+       "&daily=temperature_2m_max,temperature_2m_min,weathercode"
        f"&timezone=Europe/London&forecast_days={days}")
 live = True
 try:
     d = fetch_json(url)
     htime = d["hourly"]["time"]; htemp = d["hourly"]["temperature_2m"]
+    hcode = d["hourly"]["weathercode"]
     dday = d["daily"]["time"]
     dmax = d["daily"]["temperature_2m_max"]
     dmin = d["daily"]["temperature_2m_min"]
+    dcode = d["daily"]["weathercode"]
 except Exception:
     live = False                                  # offline -> sample data
     rng = np.random.default_rng(0)
     htime = [f"2025-01-01T{h:02d}:00" for h in range(24)]
     htemp = (8 + 5*np.sin((np.arange(24)-9)/24*2*np.pi)
              + rng.normal(0, 0.5, 24)).round(1).tolist()
+    hcode = [3, 3, 3, 45, 2, 1, 0, 0, 1, 2, 2, 3, 61, 63, 61, 80,
+             3, 2, 1, 0, 0, 1, 2, 3]
     dday = [f"day {i+1}" for i in range(days)]
     dmax = (12 + rng.normal(0, 2, days)).round(1).tolist()
     dmin = (5 + rng.normal(0, 2, days)).round(1).tolist()
+    dcode = [0, 2, 3, 61, 80, 1, 95][:days]
 
 # Today = the first 24 hourly samples.
 hours = [t[11:16] for t in htime[:24]]
 temps = [float(v) for v in htemp[:24]]
-ks_set("A10", hours)               # write the hourly table (Hour, Temp)
+hcat = [code_info(c)[2] for c in hcode[:24]]
+hcond = [f"{code_info(c)[0]} {code_info(c)[1]}" for c in hcode[:24]]
+dcat = [code_info(c)[2] for c in dcode[:days]]
+dcond = [f"{code_info(c)[0]} {code_info(c)[1]}" for c in dcode[:days]]
+
+ks_set("A10", hours)                 # hourly table: Hour | Temp | Condition
 ks_set("B10", temps)
-ks_set("D10", [str(x) for x in dday[:days]])   # 7-day forecast table
+ks_set("C10", hcond)
+ks_set("D10", [str(x) for x in dday[:days]])   # forecast: Date|Min|Max|Cond
 ks_set("E10", [float(v) for v in dmin[:days]])
 ks_set("F10", [float(v) for v in dmax[:days]])
+ks_set("G10", dcond)
 ks_set("B7", "live" if live else "offline (sample data)")
 
-fig, (a1, a2) = plt.subplots(2, 1, figsize=(7.2, 5.2))
-a1.plot(range(24), temps, "o-", color="#ed7d31")
-a1.set_xticks(range(0, 24, 3))
-a1.set_xticklabels([hours[i] for i in range(0, 24, 3)])
-a1.set_ylabel("°C"); a1.grid(True, alpha=0.3)
-a1.set_title("London — temperature today (hourly)"
-             + ("" if live else "  [offline sample]"))
-xi = np.arange(len(dday[:days]))
-a2.plot(xi, dmax[:days], "o-", color="#c00000", label="max")
-a2.plot(xi, dmin[:days], "o-", color="#4472c4", label="min")
-a2.fill_between(xi, dmin[:days], dmax[:days], alpha=0.15, color="#4472c4")
-a2.set_xticks(xi); a2.set_xticklabels([str(x)[:10] for x in dday[:days]],
-                                      rotation=30, ha="right", fontsize=8)
-a2.set_ylabel("°C"); a2.grid(True, alpha=0.3); a2.legend()
-a2.set_title("7-day forecast (min / max)")
-plt.tight_layout()
+# --- plot: hourly condition icons, hourly temperature, 7-day icons ---
+fig, (axc, axt, axf) = plt.subplots(
+    3, 1, figsize=(7.8, 6.4),
+    gridspec_kw={"height_ratios": [1.1, 2.6, 1.4]})
+
+step = list(range(0, 24, 3))         # every 3 h -> 8 icons
+axc.set_xlim(-0.6, len(step)-0.4); axc.set_ylim(-0.9, 1.2)
+axc.set_aspect("equal"); axc.axis("off")
+axc.set_title("London — conditions today"
+              + ("" if live else "   [offline sample]"))
+for j, i in enumerate(step):
+    draw_icon(axc, j, 0.1, hcat[i], 0.40)
+    axc.text(j, -0.7, hours[i], ha="center", fontsize=7)
+    axc.text(j, 1.0, f"{temps[i]:.0f}°", ha="center", fontsize=8,
+             fontweight="bold")
+
+axt.plot(range(24), temps, "o-", ms=3, color="#ed7d31")
+axt.set_xticks(range(0, 24, 3))
+axt.set_xticklabels([hours[i] for i in range(0, 24, 3)])
+axt.set_ylabel("°C"); axt.grid(True, alpha=0.3)
+axt.set_title("Hourly temperature")
+
+ndays = len(dday[:days])
+axf.set_xlim(-0.6, ndays-0.4); axf.set_ylim(-1.0, 1.3)
+axf.set_aspect("equal"); axf.axis("off")
+axf.set_title("7-day forecast")
+for i in range(ndays):
+    draw_icon(axf, i, 0.15, dcat[i], 0.42)
+    axf.text(i, 1.05, f"{dmax[i]:.0f}°/{dmin[i]:.0f}°",
+             ha="center", fontsize=7, fontweight="bold")
+    axf.text(i, -0.8, str(dday[i])[5:], ha="center", fontsize=7)
+fig.subplots_adjust(hspace=0.55, top=0.93, bottom=0.04)
 plt.gcf()'''
 
 
@@ -88,7 +206,8 @@ def build():
     wb = Workbook(min_rows=60, min_cols=14)
     s = wb.add_sheet("London Weather")
     s.title_block("London Weather (live)",
-                  "Hourly today + 7-day forecast via Open-Meteo")
+                  "Hourly temperature + conditions and a 7-day forecast "
+                  "(Open-Meteo)")
 
     inputs = [("Latitude", 51.5072), ("Longitude", -0.1276),
               ("Location", "London, UK"), ("Forecast days", 7),
@@ -100,21 +219,25 @@ def build():
         s.fmt(r, 1, bg=PALETTE["warn"], align="center")
     s.fmt(6, 1, bg=PALETTE["good"], align="center")
 
-    # Result-table headers (filled by the =PY cell below them).
-    s.set(8, 0, "Hour"); s.set(8, 1, "Temp (°C)")
+    # Result-table headers (filled by the =PY cell).
+    s.set(8, 0, "Hour"); s.set(8, 1, "Temp (°C)"); s.set(8, 2, "Condition")
     s.set(8, 3, "Date"); s.set(8, 4, "Min °C"); s.set(8, 5, "Max °C")
-    for c in (0, 1, 3, 4, 5):
+    s.set(8, 6, "Condition")
+    for c in (0, 1, 2, 3, 4, 5, 6):
         s.fmt(8, c, bold=True, bg=PALETTE["header"],
               font_color=PALETTE["header_text"], align="center")
 
-    # =PY cell placed to the right (clear of the tables it writes).
-    s.set(1, 7, "Fetch ▼"); s.fmt(1, 7, bold=True, font_color=PALETTE["header"])
-    s.formula(2, 7, "=PY\n" + PY_BODY)
-    s.note(0, 8,
-           "Press Ctrl+Enter on the =PY cell to fetch live weather. Change "
-           "the latitude/longitude (B3/B4) for another city. Works offline "
-           "with sample data (see Data status in B7). Source: Open-Meteo.")
+    s.set(1, 8, "Fetch ▼"); s.fmt(1, 8, bold=True, font_color=PALETTE["header"])
+    s.formula(2, 8, "=PY\n" + PY_BODY)
+    s.note(0, 9,
+           "Press Ctrl+Enter on the =PY cell to fetch live weather. The "
+           "Condition columns show emoji; the plot draws the conditions as "
+           "icons. Change latitude/longitude (B3/B4) for another city. "
+           "Works offline with sample data (Data status, B7). "
+           "Source: Open-Meteo.")
     s.col_width(0, 90)
+    s.col_width(2, 130)
+    s.col_width(6, 130)
 
     out = os.path.join(os.path.dirname(__file__), "python", "Live Data",
                        "London Weather (live).ksheet")
