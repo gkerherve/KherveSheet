@@ -157,6 +157,11 @@ area</pre></div>
 <tr><th><code>ks("A1:C5")</code></th><td>2-D NumPy array</td></tr>
 <tr><th><code>ks("Sheet2!B2")</code></th><td>value from another sheet</td></tr>
 </table>
+<div class="tip"><b>Writing back:</b> <code>ks_set("C1", value)</code> (alias
+<code>write</code>) pushes a result into the grid — a scalar fills the
+range, a 1-D array writes down a column, a 2-D array writes a block. The
+cell running the code is never overwritten. e.g.
+<code>ks_set("D1:D50", np.cumsum(ks("A1:A50")))</code>.</div>
 
 <div class="ex"><h3><span class="num">9</span>Sum a column</h3>
 <pre><span class="kw">import</span> numpy <span class="kw">as</span> np

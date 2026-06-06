@@ -2637,6 +2637,14 @@ class SheetWidget(QWidget):
         from .python_engine import PyResult, badge_for, strip_marker
         self._clear_py_outputs(row, col)
         res = self._py_runtime().run(strip_marker(source), self, row, col)
+        # Recalc anything depending on cells this run wrote via ks_set.
+        writes = getattr(self._py_runtime(), "_last_writes", None)
+        if writes and not getattr(self, "_in_py_write_recalc", False):
+            self._in_py_write_recalc = True
+            try:
+                self._recalc_from_seeds(list(writes))
+            finally:
+                self._in_py_write_recalc = False
         if res.stdout:
             self._py_stdout[(row, col)] = res.stdout
         else:
@@ -2677,6 +2685,62 @@ class SheetWidget(QWidget):
             return head if isinstance(head, str) else str(
                 _format_number(head, decimals))
         return badge_for(val)
+
+    def _py_write(self, coords, value, cur_cell, written):
+        """Write *value* into the grid for ks_set(); records cells in
+        *written* and never overwrites *cur_cell* (the running cell)."""
+        from PyQt5.QtWidgets import QTableWidgetItem
+        r1, c1, r2, c2 = coords
+        # Normalise *value* into a 2-D list `block`.
+        block = self._py_value_to_block(value, r1, c1, r2, c2)
+        was = self.table.signalsBlocked()
+        self.table.blockSignals(True)
+        for i, rowvals in enumerate(block):
+            for j, v in enumerate(rowvals):
+                r, c = r1 + i, c1 + j
+                if (r, c) == cur_cell:
+                    continue  # never clobber the running cell
+                if r >= self.table.rowCount():
+                    self.table.setRowCount(r + 1)
+                if c >= self.table.columnCount():
+                    continue
+                it = self.table.item(r, c)
+                if it is None:
+                    it = QTableWidgetItem()
+                    self.table.setItem(r, c, it)
+                # A written literal replaces any formula/object at target.
+                self._cell_formulas.pop((r, c), None)
+                self._cell_objects.pop((r, c), None)
+                text = v if isinstance(v, str) else str(_format_number(v))
+                it.setText(text)
+                self._shadow[(r, c)] = text
+                if written is not None:
+                    written.add((r, c))
+        self.table.blockSignals(was)
+
+    @staticmethod
+    def _py_value_to_block(value, r1, c1, r2, c2):
+        """Shape a ks_set value into a 2-D list for the target range."""
+        try:
+            import numpy as np
+        except Exception:
+            np = None
+        single_row = (r1 == r2 and c2 > c1)
+        if np is not None and isinstance(value, np.ndarray):
+            if value.ndim == 0:
+                return [[value.item()]]
+            if value.ndim == 1:
+                v = value.tolist()
+                return [v] if single_row else [[x] for x in v]
+            return [list(row) for row in value.tolist()]
+        if isinstance(value, (list, tuple)):
+            seq = list(value)
+            if seq and all(isinstance(x, (list, tuple)) for x in seq):
+                return [list(x) for x in seq]
+            return [seq] if single_row else [[x] for x in seq]
+        # Scalar — fill the whole target range.
+        return [[value for _ in range(c1, c2 + 1)]
+                for _ in range(r1, r2 + 1)]
 
     def _py_spill(self, values, row, col, two_d=False):
         """Spill a list (1-D down a column, 2-D as a block); the anchor

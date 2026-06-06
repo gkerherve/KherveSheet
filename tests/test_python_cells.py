@@ -183,6 +183,29 @@ def test_sheet_xl_spill_object_recalc(qapp):
     assert s.table.item(0, 1).text() == "114"   # 100+2+3+4+5
 
 
+def test_ks_set_writes_and_recalcs(qapp):
+    from khervesheet.workbook import WorkbookWidget
+    wb = WorkbookWidget()
+    s = wb.tabs.widget(0)
+    # Scalar write to a single cell.
+    _put(s, 0, 0, '=PY\nks_set("C1", 99)\n"done"')
+    assert s.table.item(0, 2).text() == "99"
+    assert s.table.item(0, 0).text() == "done"
+    # Array writes down a column.
+    _put(s, 1, 0, '=PY\nimport numpy as np\nks_set("D1", np.arange(4)*10)\n0')
+    assert [s.table.item(r, 3).text() for r in range(4)] == \
+        ["0", "10", "20", "30"]
+    # Scalar fills a whole range.
+    _put(s, 2, 0, '=PY\nks_set("E1:F2", 7)\n0')
+    assert all(s.table.item(r, c).text() == "7"
+               for r in range(2) for c in (4, 5))
+    # A formula depending on a written cell recomputes.
+    _put(s, 0, 7, "=C1*2")
+    assert s.table.item(0, 7).text() in ("198", "198.00")
+    _put(s, 3, 0, '=PY\nks_set("C1", 50)\n0')
+    assert s.table.item(0, 7).text() in ("100", "100.00")
+
+
 def test_sheet_python_error_shows_pyerr(qapp):
     from khervesheet.workbook import WorkbookWidget
     wb = WorkbookWidget()

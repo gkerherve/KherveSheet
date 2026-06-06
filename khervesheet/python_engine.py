@@ -191,6 +191,9 @@ class PythonRuntime:
         g["ks"] = self._xl
         g["xl"] = self._xl
         g["cell"] = self._xl
+        # Write-back helpers: push values/arrays into the grid.
+        g["ks_set"] = self._ks_set
+        g["write"] = self._ks_set
         self._globals = g
         return g
 
@@ -205,6 +208,22 @@ class PythonRuntime:
         if sheet is None:
             raise RuntimeError("ks() is only available inside a =PY cell")
         return resolve_ref(sheet, str(ref))
+
+    def _ks_set(self, ref, value):
+        """Write *value* into the grid at *ref* (a cell or range).
+
+        A scalar fills the whole range; a 1-D list/array writes down a
+        column (or across a single-row range); a 2-D array writes a block.
+        The cell currently running is never overwritten.
+        """
+        sheet = self._sheet
+        if sheet is None:
+            raise RuntimeError("ks_set() is only available inside a =PY cell")
+        if "!" in str(ref):
+            raise ValueError("ks_set() cannot write to another sheet")
+        coords = parse_ref_coords(str(ref))
+        sheet._py_write(coords, value, self._cur_cell, self._written)
+        return value
 
     # ── execution ────────────────────────────────────────────────────
     def run(self, code, sheet, row, col) -> PyResult:
@@ -306,6 +325,25 @@ class PythonRuntime:
 _REF_RE = re.compile(r"^\$?([A-Za-z]{1,3})\$?(\d{1,7})$")
 _RANGE_RE = re.compile(
     r"^\$?([A-Za-z]{1,3})\$?(\d{1,7})\s*:\s*\$?([A-Za-z]{1,3})\$?(\d{1,7})$")
+
+
+def parse_ref_coords(ref):
+    """Parse "A1" or "A1:B10" → (r1, c1, r2, c2), 0-indexed, normalised."""
+    from .sheet import letter_to_col_index
+    ref = ref.strip()
+    m = _REF_RE.match(ref)
+    if m:
+        c = letter_to_col_index(m.group(1))
+        r = int(m.group(2)) - 1
+        return r, c, r, c
+    m = _RANGE_RE.match(ref)
+    if not m:
+        raise ValueError(f"bad cell reference: {ref!r}")
+    c1 = letter_to_col_index(m.group(1))
+    r1 = int(m.group(2)) - 1
+    c2 = letter_to_col_index(m.group(3))
+    r2 = int(m.group(4)) - 1
+    return min(r1, r2), min(c1, c2), max(r1, r2), max(c1, c2)
 
 
 def _read_one(sheet, r, c):
