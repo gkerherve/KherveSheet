@@ -75,14 +75,14 @@ from scipy.integrate import cumulative_trapezoid
 # --- data ranges + fitting range come from cells ---------------------
 x_range = str(ks("E4")).strip()        # X data range, e.g. A1:A161
 y_range = str(ks("E5")).strip()        # Y data range, e.g. B1:B161
-x = np.array(ks(x_range), dtype=float)
-y = np.array(ks(y_range), dtype=float)
-ok = np.isfinite(x) & np.isfinite(y)
-x, y = x[ok], y[ok]
+xa = np.array(ks(x_range), dtype=float)
+ya = np.array(ks(y_range), dtype=float)
+ok = np.isfinite(xa) & np.isfinite(ya)
+xa, ya = xa[ok], ya[ok]
+order = np.argsort(xa); xa, ya = xa[order], ya[order]   # full spectrum
 lo = float(ks("E7")); hi = float(ks("E8"))         # fitting X-range (eV)
-keep = (x >= min(lo, hi)) & (x <= max(lo, hi))     # clip to the range
-x, y = x[keep], y[keep]
-order = np.argsort(x); x, y = x[order], y[order]   # ascending energy
+keep = (xa >= min(lo, hi)) & (xa <= max(lo, hi))   # clip to the fit window
+x, y = xa[keep], ya[keep]                          # data used for the fit
 
 # --- read the parameter table (supports up to 10 peaks = 40 rows) ----
 names = ks("D13:D52"); vals = ks("E13:E52")
@@ -149,28 +149,39 @@ bg = shirley(x, y)
 out = lmfit.minimize(lambda p: peak_sum(p, x) - (y - bg), P)
 P = out.params
 fit = peak_sum(P, x) + bg
+resid = y - fit                                    # residuals over the fit
 r2 = 1 - np.sum((y - fit)**2) / np.sum((y - y.mean())**2)
 
 # --- write fitted values back into the table + the R^2 cell ---------
 ks_set("E13", [round(float(P[n].value), 4) for n in rows])
 ks_set("E10", round(float(r2), 5))
 
-# --- plot data, peaks, background, total fit + the fit-range lines ---
-fig, axp = plt.subplots(figsize=(7.2, 4.6))
-axp.plot(x, y, "o", ms=3, color="#1f4e79", label="data")
-axp.plot(x, bg, "--", lw=1, color="#7f7f7f", label="Shirley bg")
+# --- plot: residuals strip on top, full spectrum + fit below --------
+fig, (axr, axm) = plt.subplots(
+    2, 1, figsize=(7.4, 5.4), sharex=True,
+    gridspec_kw={"height_ratios": [1, 4], "hspace": 0.05})
+
+# residuals (data - fit) over the fitted window
+axr.plot(x, resid, "-", lw=0.8, color="#7f7f7f")
+axr.axhline(0, color="#c00000", lw=0.8)
+axr.set_ylabel("resid"); axr.tick_params(labelbottom=False)
+axr.set_title("Sr 3d  —  %d Pseudo-Voigt peaks, Shirley "
+              "(R² = %.4f)" % (len(ids), r2))
+
+# main panel: the WHOLE raw spectrum, with the fit on the fit window
+axm.plot(xa, ya, "o", ms=2.5, color="#1f4e79", label="data (full range)")
+axm.plot(x, bg, "--", lw=1, color="#7f7f7f", label="Shirley bg")
 for i in ids:
     comp = pv(x, P["p%d_amplitude" % i], P["p%d_center" % i],
               P["p%d_sigma" % i], P["p%d_fraction" % i]) + bg
-    axp.fill_between(x, bg, comp, alpha=0.30)
-    axp.plot(x, comp, lw=1)
-axp.plot(x, fit, "-", lw=1.7, color="#c00000", label="fit")
+    axm.fill_between(x, bg, comp, alpha=0.30)
+    axm.plot(x, comp, lw=1)
+axm.plot(x, fit, "-", lw=1.7, color="#c00000", label="fit")
 for xb in (lo, hi):                              # green fit-range markers
-    axp.axvline(xb, color="#2e9e44", ls="--", lw=1)
-axp.set_xlabel("Binding energy (eV)"); axp.set_ylabel("Counts")
-axp.set_title("Sr 3d  —  %d Pseudo-Voigt peaks, Shirley "
-              "(R² = %.4f)" % (len(ids), r2))
-axp.legend()
+    axm.axvline(xb, color="#2e9e44", ls="--", lw=1)
+    axr.axvline(xb, color="#2e9e44", ls="--", lw=1)
+axm.set_xlabel("Binding energy (eV)"); axm.set_ylabel("Counts")
+axm.legend()
 plt.gcf()'''
 
 
