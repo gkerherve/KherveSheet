@@ -15,8 +15,8 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional, Tuple
 
 from PyQt5.QtCore import Qt, QPoint, QRect, QRectF, QModelIndex
-from PyQt5.QtGui import (QPen, QColor, QPainter, QFontMetrics, QPolygon,
-                         QPalette, QBrush)
+from PyQt5.QtGui import (QPen, QColor, QPainter, QFont, QFontMetrics,
+                         QPolygon, QPalette, QBrush)
 from PyQt5.QtWidgets import (
     QStyledItemDelegate, QStyleOptionViewItem, QTableWidget,
     QStyle,
@@ -187,6 +187,9 @@ class CellFormatDelegate(QStyledItemDelegate):
         self._notes: Dict[Tuple[int, int], str] = {}
         # Dropdowns: {(row, col): list[str]} — pointer set by SheetWidget
         self._dropdowns: Dict[Tuple[int, int], list] = {}
+        # Cell formulas: {(row, col): "=..."} — pointer set by SheetWidget.
+        # Used to give Python (=PY) cells a green tint and a "PY" badge.
+        self._cell_formulas: Dict[Tuple[int, int], str] = {}
         # Live spell-check: when True, misspelled words get a red wavy
         # underline.  Toggled from the Tools menu.
         self._spell_enabled: bool = False
@@ -196,6 +199,11 @@ class CellFormatDelegate(QStyledItemDelegate):
               index: QModelIndex):
         key = (index.row(), index.column())
 
+        # Python (=PY) cells get a faint green tint + a "PY" badge.
+        fm = self._cell_formulas.get(key)
+        is_py = isinstance(fm, str) and fm.lstrip().upper().startswith("=PY")
+        py_tint = QColor(46, 160, 67, 28) if is_py else None
+
         # Draw formula reference background tint before default paint.
         ref_color = self._ref_highlights.get(key)
         if ref_color:
@@ -203,6 +211,12 @@ class CellFormatDelegate(QStyledItemDelegate):
             bg = QColor(ref_color)
             bg.setAlpha(30)
             painter.fillRect(option.rect, bg)
+            painter.restore()
+
+        # Green tint for Python cells (under the text, like a fill).
+        if py_tint is not None:
+            painter.save()
+            painter.fillRect(option.rect, py_tint)
             painter.restore()
 
         # Strip the built-in selection highlight completely: paint the
@@ -219,6 +233,9 @@ class CellFormatDelegate(QStyledItemDelegate):
                 painter.fillRect(option.rect, QColor(item_bg))
             else:
                 painter.fillRect(option.rect, option.palette.base())
+            # 1b) Re-apply the Python green tint over the base fill.
+            if py_tint is not None:
+                painter.fillRect(option.rect, py_tint)
             # 2) Light selection tint (10 % opacity ≈ alpha 25).
             hl = option.palette.highlight().color()
             hl.setAlpha(25)
@@ -285,6 +302,26 @@ class CellFormatDelegate(QStyledItemDelegate):
                 QPoint(cx, cy + 2),
             ])
             painter.drawPolygon(triangle)
+            painter.restore()
+
+        # Draw the "PY" badge on the RIGHT edge of a Python cell.
+        if is_py:
+            painter.save()
+            painter.setRenderHint(QPainter.Antialiasing, True)
+            r = option.rect
+            bw, bh = 22, 14
+            bx = r.right() - bw - 3
+            by = r.top() + (r.height() - bh) // 2
+            badge = QRect(bx, by, bw, bh)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor("#2e7d32"))      # Excel-like green
+            painter.drawRoundedRect(badge, 3, 3)
+            f = QFont(painter.font())
+            f.setPointSize(7)
+            f.setBold(True)
+            painter.setFont(f)
+            painter.setPen(QColor("#ffffff"))
+            painter.drawText(badge, Qt.AlignCenter, "PY")
             painter.restore()
 
         # Draw formula reference border on top.

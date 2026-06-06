@@ -1264,6 +1264,9 @@ class SheetWidget(QWidget):
         # ── Internal state ───────────────────────────────────────────
         self._shadow: dict = {}          # (row, col) → last-known text
         self._cell_formulas: dict = {}   # (row, col) → "=formula"
+        # Share the formulas dict with the delegate so it can tint =PY
+        # cells green and draw the "PY" badge.
+        self._fmt_delegate._cell_formulas = self._cell_formulas
         self._cell_objects: dict = {}    # (row, col) → live Python value (=PY)
         self._py_spills: dict = {}       # (row, col) → list of spilled cells
         self._py_errors: dict = {}       # (row, col) → traceback string
