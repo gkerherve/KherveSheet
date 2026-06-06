@@ -103,6 +103,54 @@ class ApiKeyDialog(QDialog):
         self._host_label = QLabel("Ollama Host:")
         layout.addRow(self._host_label, self._host_edit)
 
+        # Provider-specific help text.
+        self._help_texts = {
+            "anthropic": (
+                "To get an API key:\n"
+                "1. Go to console.anthropic.com\n"
+                "2. Sign up or log in\n"
+                "3. Navigate to API Keys in the left sidebar\n"
+                '4. Click "Create Key" and copy the key (starts with sk-ant-)\n'
+                "5. Add credit to your account under Billing"
+            ),
+            "openai": (
+                "To get an API key:\n"
+                "1. Go to platform.openai.com\n"
+                "2. Sign up or log in\n"
+                "3. Navigate to API Keys in the left sidebar\n"
+                '4. Click "Create new secret key" and copy it (starts with sk-)\n'
+                "5. Add credit under Billing > Payment methods"
+            ),
+            "mistral": (
+                "To get an API key:\n"
+                "1. Go to console.mistral.ai\n"
+                "2. Sign up or log in\n"
+                "3. Navigate to API Keys\n"
+                '4. Click "Create new key" and copy it\n'
+                "5. Add credit under Billing"
+            ),
+            "ollama": (
+                "Ollama runs locally \u2014 no API key needed.\n"
+                "1. Download and install from ollama.com\n"
+                '2. Run "ollama pull <model>" to download a model\n'
+                "   (e.g. ollama pull llama3, ollama pull mistral)\n"
+                "3. The server starts automatically on localhost:11434\n"
+                "4. Use the Refresh button (\u27f3) to see available models"
+            ),
+        }
+        from PyQt5.QtWidgets import QGroupBox
+        self._help_group = QGroupBox("How to get an API key")
+        help_layout = QVBoxLayout(self._help_group)
+        self._help_label = QLabel()
+        self._help_label.setWordWrap(True)
+        font = self._help_label.font()
+        font.setPointSize(max(font.pointSize() - 1, 7))
+        self._help_label.setFont(font)
+        self._help_label.setStyleSheet(
+            "color: #555; background: transparent; padding: 2px;")
+        help_layout.addWidget(self._help_label)
+        layout.addRow(self._help_group)
+
         btns = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept)
@@ -147,6 +195,12 @@ class ApiKeyDialog(QDialog):
         self._host_edit.setVisible(spec["needs_host"])
         # Refresh button only for providers that support model listing.
         self._refresh_btn.setVisible(spec.get("refreshable", False))
+        # Update help text for this provider.
+        self._help_label.setText(
+            self._help_texts.get(provider, ""))
+        title = ("How to set up Ollama" if provider == "ollama"
+                 else "How to get an API key")
+        self._help_group.setTitle(title)
 
     def _refresh_models(self):
         """Fetch the live model list from the provider's server."""
