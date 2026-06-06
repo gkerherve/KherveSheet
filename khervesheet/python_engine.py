@@ -276,36 +276,43 @@ class PythonRuntime:
         return PyResult(value=norm, kind=kind, stdout=out)
 
     def _call_with_timeout(self, fn):
-        """Run *fn* aborting with TimeoutError after ``self.timeout`` s.
+        """Run *fn* in a worker thread, raising TimeoutError if it exceeds
+        ``self.timeout`` seconds.
 
-        A watchdog thread asynchronously raises TimeoutError in the calling
-        thread once the deadline passes.  This interrupts pure-Python loops
-        (the usual freeze cause); a single long C call (e.g. a giant numpy
-        op) finishes before the exception is delivered.
+        Unlike the previous implementation that used
+        ``PyThreadState_SetAsyncExc`` to inject an asynchronous exception
+        into the *calling* thread, this version runs *fn* on a separate
+        daemon thread and simply abandons it on timeout.  The old approach
+        could corrupt C stack frames when the exception landed inside
+        native code (Qt, numpy), causing STATUS_STACK_BUFFER_OVERRUN
+        (0xC0000409) crashes on Windows that faulthandler cannot catch.
         """
         timeout = self.timeout
         if not timeout or timeout <= 0:
             return fn()
-        import ctypes
         import threading
-        thread_id = threading.get_ident()
-        done = threading.Event()
 
-        def _watchdog():
-            if done.wait(timeout):
-                return  # finished in time
-            ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                ctypes.c_long(thread_id), ctypes.py_object(TimeoutError))
+        result = [None]
+        error = [None]
 
-        wd = threading.Thread(target=_watchdog, daemon=True)
-        wd.start()
-        try:
-            return fn()
-        finally:
-            done.set()
-            # Clear any async exception that fired after fn returned.
-            ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                ctypes.c_long(thread_id), ctypes.c_long(0))
+        def _worker():
+            try:
+                result[0] = fn()
+            except Exception as exc:
+                error[0] = exc
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+        t.join(timeout)
+        if t.is_alive():
+            # Thread is still running — abandon it (daemon, will die
+            # with the process).  Do NOT inject async exceptions.
+            raise TimeoutError(
+                f"execution exceeded {timeout:g} s — possible infinite "
+                "loop.  Increase the limit or fix the code.")
+        if error[0] is not None:
+            raise error[0]
+        return result[0]
 
     @staticmethod
     def _exec_with_value(code, g):

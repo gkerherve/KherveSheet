@@ -380,7 +380,7 @@ class AiToolExecutor:
         if not formula.startswith("="):
             formula = "=" + formula
         r, c = parse_a1(inp["cell"])
-        self._commit_cell(sheet, r, c, formula)
+        self._bulk_write(sheet, [(r, c, formula)])
         return {"cell": inp["cell"], "formula": formula}
 
     def tool_set_python_cell(self, inp: dict) -> dict:
@@ -399,7 +399,7 @@ class AiToolExecutor:
         text = "=PY\n" + code
         r, c = parse_a1(inp["cell"])
         try:
-            self._commit_cell(sheet, r, c, text)
+            self._bulk_write(sheet, [(r, c, text)])
         except Exception as exc:
             return {"cell": inp["cell"], "error": str(exc)}
         result = sheet.cell_text(r, c)
