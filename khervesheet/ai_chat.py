@@ -223,12 +223,14 @@ class ChatBubble(QFrame):
 
         self._label = QLabel()
         self._label.setWordWrap(True)
+        self._label.setMinimumWidth(0)
         self._label.setTextInteractionFlags(
             Qt.TextSelectableByMouse | Qt.LinksAccessibleByMouse)
         self._label.setOpenExternalLinks(True)
         self._label.setStyleSheet("background: transparent;")
         layout.addWidget(self._label)
 
+        self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._apply_style()
         self.set_font_pt(font_pt)
@@ -341,6 +343,7 @@ class _ChatInput(QPlainTextEdit):
         super().__init__(parent)
         self.setPlaceholderText("Ask Claude to edit the spreadsheet…")
         self.setMaximumHeight(80)
+        self.setMinimumWidth(40)
         self.setTabChangesFocus(True)
         # Sent-message history (oldest first), loaded from settings.
         s = QSettings("KherveSheet", "KherveSheet")
@@ -453,7 +456,7 @@ class AiChatDock(QDockWidget):
         super().__init__("AI Chat", mainwindow)
         self.setObjectName("AiChatDock")
         self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
-        self.setMinimumWidth(180)
+        self.setMinimumWidth(120)
         self.setMaximumWidth(600)
         self._mw = mainwindow
         self._current_bubble: ChatBubble | None = None
@@ -471,7 +474,10 @@ class AiChatDock(QDockWidget):
         # Header.
         header = QHBoxLayout()
         self._title = QLabel("<b>AI Assistant</b>")
-        header.addWidget(self._title)
+        self._title.setMinimumWidth(0)
+        self._title.setSizePolicy(
+            QSizePolicy.Ignored, QSizePolicy.Preferred)
+        header.addWidget(self._title, stretch=1)
         header.addStretch()
         smaller_btn = QToolButton()
         smaller_btn.setText("A−")  # A−
@@ -500,6 +506,7 @@ class AiChatDock(QDockWidget):
         self._scroll.setWidgetResizable(True)
         self._scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._scroll.setFrameShape(QFrame.NoFrame)
+        self._scroll.setMinimumWidth(0)
         self._msg_container = QWidget()
         self._msg_layout = QVBoxLayout(self._msg_container)
         self._msg_layout.setAlignment(Qt.AlignTop)
@@ -571,7 +578,7 @@ class AiChatDock(QDockWidget):
         self._apply_font()
 
     def sizeHint(self):
-        return QSize(360, 600)
+        return QSize(280, 600)
 
     # ── Actions ─────────────────────────────────────────────────
 
