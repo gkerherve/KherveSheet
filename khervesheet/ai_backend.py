@@ -977,18 +977,31 @@ class AiBackend(QObject):
     @pyqtSlot(str, str)
     def _on_tool_call(self, name: str, input_json: str):
         """Execute a tool on the main thread, then wake the worker."""
+        from .app import _CRASH_LOG_FILE
         try:
+            if _CRASH_LOG_FILE is not None:
+                _CRASH_LOG_FILE.write(f"[AI] tool START: {name}\n")
+                _CRASH_LOG_FILE.flush()
             inp = json.loads(input_json)
             # Open undo macro on first tool call of the turn.
             if not self._macro_open:
                 self._mw._undo_stack.beginMacro("AI Assistant")
                 self._macro_open = True
             result = self._executor.execute(name, inp)
+            if _CRASH_LOG_FILE is not None:
+                _CRASH_LOG_FILE.write(f"[AI] tool OK: {name}\n")
+                _CRASH_LOG_FILE.flush()
             # Build a short summary for the UI.
             summary = self._summarise(name, inp, result)
             self.tool_performed.emit(name, summary)
             result_json = json.dumps(result)
         except Exception as exc:
+            if _CRASH_LOG_FILE is not None:
+                import traceback
+                _CRASH_LOG_FILE.write(
+                    f"[AI] tool EXCEPTION: {name}: {exc}\n"
+                    f"{traceback.format_exc()}\n")
+                _CRASH_LOG_FILE.flush()
             # Must always wake the worker, otherwise it deadlocks.
             result_json = json.dumps({"error": str(exc)})
         self._worker.post_tool_result(result_json)

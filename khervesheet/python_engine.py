@@ -276,43 +276,57 @@ class PythonRuntime:
         return PyResult(value=norm, kind=kind, stdout=out)
 
     def _call_with_timeout(self, fn):
-        """Run *fn* in a worker thread, raising TimeoutError if it exceeds
-        ``self.timeout`` seconds.
+        """Run *fn* on the calling thread with a timeout guard.
 
-        Unlike the previous implementation that used
-        ``PyThreadState_SetAsyncExc`` to inject an asynchronous exception
-        into the *calling* thread, this version runs *fn* on a separate
-        daemon thread and simply abandons it on timeout.  The old approach
-        could corrupt C stack frames when the exception landed inside
-        native code (Qt, numpy), causing STATUS_STACK_BUFFER_OVERRUN
-        (0xC0000409) crashes on Windows that faulthandler cannot catch.
+        A watchdog thread sets a flag after ``self.timeout`` seconds, and
+        a ``sys.settrace`` hook checks that flag at every Python line,
+        raising ``TimeoutError`` cleanly from pure-Python context.
+
+        This is safe because:
+        - The code runs on the calling (main) thread, so Qt widget
+          access via ``ks()``/``ks_set()`` is legal.
+        - The exception is raised from the trace hook at a Python line
+          boundary, never inside C code — no stack corruption.
+        - Unlike ``PyThreadState_SetAsyncExc``, this cannot cause
+          STATUS_STACK_BUFFER_OVERRUN (0xC0000409) crashes.
+
+        The only downside is that a single long-running C call (e.g. a
+        huge numpy operation) will not be interrupted until it returns
+        to Python, but that is acceptable.
         """
         timeout = self.timeout
         if not timeout or timeout <= 0:
             return fn()
+        import sys
         import threading
+        import time
 
-        result = [None]
-        error = [None]
+        deadline = time.monotonic() + timeout
+        expired = False
 
-        def _worker():
-            try:
-                result[0] = fn()
-            except Exception as exc:
-                error[0] = exc
+        def _watchdog():
+            nonlocal expired
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                threading.Event().wait(remaining)
+            expired = True
 
-        t = threading.Thread(target=_worker, daemon=True)
-        t.start()
-        t.join(timeout)
-        if t.is_alive():
-            # Thread is still running — abandon it (daemon, will die
-            # with the process).  Do NOT inject async exceptions.
-            raise TimeoutError(
-                f"execution exceeded {timeout:g} s — possible infinite "
-                "loop.  Increase the limit or fix the code.")
-        if error[0] is not None:
-            raise error[0]
-        return result[0]
+        def _trace(frame, event, arg):
+            if expired:
+                raise TimeoutError(
+                    f"execution exceeded {timeout:g} s — possible "
+                    "infinite loop.  Increase the limit or fix the code.")
+            return _trace
+
+        wd = threading.Thread(target=_watchdog, daemon=True)
+        wd.start()
+        old_trace = sys.gettrace()
+        sys.settrace(_trace)
+        try:
+            return fn()
+        finally:
+            sys.settrace(old_trace)
+            expired = True  # stop watchdog early
 
     @staticmethod
     def _exec_with_value(code, g):

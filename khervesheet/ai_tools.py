@@ -278,8 +278,17 @@ class AiToolExecutor:
         """Fast-path bulk write: set all cells, then evaluate formulas
         and recalc once.  Much faster than per-cell _commit_cell for
         large batches (avoids redundant recalcs and per-cell undo)."""
+        from .app import _CRASH_LOG_FILE
         from .python_engine import is_python_source
         from .sheet import _format_number
+
+        def _log(msg):
+            if _CRASH_LOG_FILE is not None:
+                _CRASH_LOG_FILE.write(f"  [bulk] {msg}\n")
+                _CRASH_LOG_FILE.flush()
+
+        _log(f"start: {len(writes)} cells")
+
         # 1. Record old values for a single undo command.
         old_vals = {}
         for r, c, sval in writes:
@@ -296,6 +305,7 @@ class AiToolExecutor:
                 it.setText(sval)
             sheet._shadow[(r, c)] = sval
         sheet.table.blockSignals(False)
+        _log("step2 setText done")
 
         # 3. Evaluate formulas (=...) and Python cells (=PY) in a
         #    second pass, and register dependencies.
@@ -307,12 +317,14 @@ class AiToolExecutor:
             if is_python_source(sval):
                 sheet._cell_formulas[(r, c)] = sval
                 sheet._register_py_deps(r, c, sval)
+                _log(f"step3 eval =PY ({r},{c})")
                 try:
                     display = sheet._evaluate_python(sval, r, c, dec)
                 except Exception:
                     import traceback
                     display = "#PYERR"
                     sheet._py_errors[(r, c)] = traceback.format_exc()
+                _log(f"step3 =PY ({r},{c}) → {display!r:.60}")
                 sheet.table.blockSignals(True)
                 it = sheet.table.item(r, c)
                 if it:
@@ -342,6 +354,8 @@ class AiToolExecutor:
                         pass
 
         # 4. Evaluate spreadsheet formulas.
+        if formula_cells:
+            _log(f"step4 eval {len(formula_cells)} formulas")
         for r, c in formula_cells:
             formula = sheet._cell_formulas.get((r, c))
             if not formula:
@@ -360,7 +374,9 @@ class AiToolExecutor:
 
         # 5. Recalc dependents once for all changed cells.
         all_seeds = [(r, c) for r, c, _ in writes]
+        _log(f"step5 recalc_from_seeds ({len(all_seeds)} seeds)")
         sheet._recalc_from_seeds(all_seeds)
+        _log("step5 recalc done")
 
         # 6. Push one undo command for the whole batch.
         if sheet._undo_stack is not None:
@@ -371,8 +387,10 @@ class AiToolExecutor:
             sheet._undo_stack.push(cmd)
 
         # 7. Emit data_changed once per affected column.
+        _log(f"step7 data_changed cols={sorted(changed_cols)}")
         for c in changed_cols:
             sheet.data_changed.emit(c)
+        _log("done")
 
     def tool_set_formula(self, inp: dict) -> dict:
         sheet = self._sheet(inp["sheet_name"])
@@ -411,6 +429,12 @@ class AiToolExecutor:
         return out
 
     def tool_format_cells(self, inp: dict) -> dict:
+        from .app import _CRASH_LOG_FILE
+        if _CRASH_LOG_FILE is not None:
+            _CRASH_LOG_FILE.write(
+                f"  [format] range={inp.get('range')} "
+                f"props={inp.get('format_props')}\n")
+            _CRASH_LOG_FILE.flush()
         sheet = self._sheet(inp["sheet_name"])
         r1, c1, r2, c2 = parse_range(inp["range"])
         props = inp.get("format_props", {})

@@ -44,7 +44,7 @@ def _enable_crash_logging():
 
 
 def _install_recursion_watchdog(threshold=550, interval=0.05):
-    """Capture *and* break a runaway recursion on the main thread.
+    """Monitor and log runaway recursion on the main thread.
 
     A recursion that crosses the Python↔C boundary (Qt signals, numpy,
     matplotlib) can overflow the *native* stack at well under Python's
@@ -52,15 +52,14 @@ def _install_recursion_watchdog(threshold=550, interval=0.05):
     STATUS_STACK_BUFFER_OVERRUN (0xC0000409) via Windows ``__fastfail`` —
     which bypasses ``faulthandler`` and leaves no traceback.
 
-    A sampling watchdog (a) dumps the offending stack to the crash log so
-    the recursive cycle is identifiable, and (b) injects an exception
-    into the main thread to unwind it before the native stack overflows,
-    turning a hard crash into a caught, logged error.  The injection uses
-    the same ``PyThreadState_SetAsyncExc`` mechanism the =PY timeout relies
-    on; the exception propagates up through the recursive call chain and
-    is caught by the broad ``except`` guards in the recalc / formula code.
+    This watchdog dumps the offending stack to the crash log when depth
+    exceeds *threshold*, providing diagnostic information.  It no longer
+    injects asynchronous exceptions via ``PyThreadState_SetAsyncExc``
+    because that can corrupt C stack frames when it lands inside native
+    code (Qt, numpy, matplotlib), causing the very crash it was meant
+    to prevent.  Instead, the depth guard in ``_on_cell_changed``
+    (threshold 40) handles the Python-level protection.
     """
-    import ctypes
     import threading
     import time
 
@@ -88,7 +87,7 @@ def _install_recursion_watchdog(threshold=550, interval=0.05):
                     if _CRASH_LOG_FILE is not None:
                         _CRASH_LOG_FILE.write(
                             "\n=== Recursion watchdog: main-thread "
-                            f"stack depth {d} — breaking runaway ===\n")
+                            f"stack depth {d} ===\n")
                         _CRASH_LOG_FILE.flush()
                         # C-level atomic snapshot of all threads — robust
                         # against the live main thread mutating its frames.
@@ -96,10 +95,8 @@ def _install_recursion_watchdog(threshold=550, interval=0.05):
                             file=_CRASH_LOG_FILE, all_threads=True)
                         _CRASH_LOG_FILE.write("=== end watchdog dump ===\n")
                         _CRASH_LOG_FILE.flush()
-                    # Unwind the runaway before the native stack overflows.
-                    ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                        ctypes.c_long(main_id),
-                        ctypes.py_object(RecursionError))
+                    # Do NOT inject async exceptions — they can corrupt
+                    # C stack frames and cause 0xC0000409 crashes.
                 elif d < threshold // 2:
                     armed[0] = True  # re-arm once depth is healthy again
             except Exception:
