@@ -1689,6 +1689,8 @@ class MainWindow(QMainWindow):
                         if d.get('cat_labels'):
                             cg.attrs['cat_labels'] = json.dumps(
                                 d['cat_labels'])
+                        if d.get('time_x'):
+                            cg.attrs['time_x'] = True
                         # Legend properties.
                         cg.attrs['legend_visible'] = d.get(
                             'legend_visible', True)
@@ -2137,6 +2139,8 @@ class MainWindow(QMainWindow):
                             cl_json = cl_json.decode('utf-8')
                         if cl_json:
                             cd["cat_labels"] = json.loads(cl_json)
+                        if cg.attrs.get('time_x', False):
+                            cd["time_x"] = True
                         # Trendlines.
                         tl_json = cg.attrs.get('trendlines', '')
                         if isinstance(tl_json, bytes):
@@ -3609,6 +3613,7 @@ class MainWindow(QMainWindow):
         row_start = s.topRow()
         row_end = s.bottomRow()
         cat_labels = None  # categorical X tick labels
+        is_time = False     # True when X values are time-of-day
         for yc in y_cols:
             x_col = _find_x_for(yc)
             if x_col is not None:
@@ -3619,19 +3624,28 @@ class MainWindow(QMainWindow):
             y_data = sheet.numeric_column(yc)[row_start:row_end + 1]
             label = col_index_to_letter(yc)
 
-            # Detect categorical (text) X column.
+            # Detect categorical (text) or time X column.
             n = min(len(x_data), len(y_data))
             x_data, y_data = x_data[:n], y_data[:n]
             nan_count = int(np.isnan(x_data).sum())
             if x_col is not None and nan_count > n / 2 and n > 0:
-                # Categorical X — use text labels, integer positions.
                 x_str = sheet.string_column(x_col)
                 labels_slice = x_str[row_start:row_start + n]
-                mask = ~np.isnan(y_data)
-                x = np.arange(n, dtype=float)[mask]
-                y = y_data[mask]
-                cat_labels = [labels_slice[i]
-                              for i, m in enumerate(mask) if m]
+                # Try time parsing first.
+                from .graph import parse_time_column
+                t_hours, _ = parse_time_column(labels_slice)
+                if t_hours is not None:
+                    mask = ~(np.isnan(t_hours) | np.isnan(y_data))
+                    x = t_hours[mask]
+                    y = y_data[mask]
+                    is_time = True
+                else:
+                    # Categorical X — use text labels, integer positions.
+                    mask = ~np.isnan(y_data)
+                    x = np.arange(n, dtype=float)[mask]
+                    y = y_data[mask]
+                    cat_labels = [labels_slice[i]
+                                  for i, m in enumerate(mask) if m]
             else:
                 mask = ~(np.isnan(x_data) | np.isnan(y_data))
                 x = x_data[mask]
@@ -3659,10 +3673,14 @@ class MainWindow(QMainWindow):
                                        x_col=x_col, y_col=yc,
                                        row_start=s.topRow(),
                                        row_end=s.bottomRow())
-        # Apply categorical tick labels after chart is built.
-        if first_chart is not None and cat_labels is not None:
-            first_chart._apply_categorical_x(cat_labels)
-            first_chart._canvas.draw_idle()
+        # Apply time or categorical tick labels after chart is built.
+        if first_chart is not None:
+            if is_time:
+                first_chart._apply_time_x()
+                first_chart._canvas.draw_idle()
+            elif cat_labels is not None:
+                first_chart._apply_categorical_x(cat_labels)
+                first_chart._canvas.draw_idle()
 
         self._status_msg(
             f"Created {plot_type} chart", 3000)

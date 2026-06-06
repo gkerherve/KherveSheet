@@ -55,6 +55,80 @@ _HANDLE = 12  # matches layout margin for handle hit-testing
 _chart_clipboard = None
 
 
+# ── Time string parsing ────────────────────────────────────────────
+import re as _re
+
+_TIME_HM = _re.compile(
+    r'^(\d{1,2}):(\d{2})(?::(\d{2}))?$')           # 8:00  20:00  13:45:30
+_TIME_AMPM = _re.compile(
+    r'^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$', _re.I)   # 8am  8:30pm
+
+
+def _parse_time_str(text: str):
+    """Try to parse *text* as a time-of-day string.
+
+    Returns fractional hours (float) on success, or ``None``.
+    """
+    text = text.strip()
+    m = _TIME_HM.match(text)
+    if m:
+        h, mi = int(m.group(1)), int(m.group(2))
+        s = int(m.group(3)) if m.group(3) else 0
+        if 0 <= h <= 23 and 0 <= mi <= 59 and 0 <= s <= 59:
+            return h + mi / 60.0 + s / 3600.0
+    m = _TIME_AMPM.match(text)
+    if m:
+        h = int(m.group(1))
+        mi = int(m.group(2)) if m.group(2) else 0
+        pm = m.group(3).lower() == 'pm'
+        if 1 <= h <= 12 and 0 <= mi <= 59:
+            if h == 12:
+                h = 0
+            if pm:
+                h += 12
+            return h + mi / 60.0
+    return None
+
+
+def parse_time_column(strings, start=0, count=None):
+    """Parse a list of strings as time values.
+
+    Returns ``(hours, labels)`` where *hours* is a float ndarray of
+    fractional hours (with day-wrap adjustment so the sequence is
+    monotonically non-decreasing when it crosses midnight) and *labels*
+    is a list of the original strings.  Returns ``(None, None)`` if
+    fewer than half the values parse as valid times.
+    """
+    if count is None:
+        count = len(strings) - start
+    sub = strings[start:start + count]
+    hours = []
+    for s in sub:
+        h = _parse_time_str(s)
+        hours.append(h)
+
+    valid = sum(1 for h in hours if h is not None)
+    if valid < len(hours) / 2 or valid == 0:
+        return None, None
+
+    # Replace None entries with NaN, then adjust day wraps.
+    result = np.empty(len(hours))
+    day_offset = 0.0
+    prev = None
+    for i, h in enumerate(hours):
+        if h is None:
+            result[i] = np.nan
+            continue
+        val = h + day_offset
+        if prev is not None and val < prev - 1.0:
+            # Clock wrapped past midnight — add 24h.
+            day_offset += 24.0
+            val += 24.0
+        result[i] = val
+        prev = val
+    return result, sub
+
+
 class _RangeOverlay(QWidget):
     """Transparent overlay that draws a coloured dashed border around
     a cell range, like Excel's data-highlight rectangles.
@@ -385,6 +459,7 @@ class EmbeddedChart(QWidget):
         self._axis_props = {}    # persisted axis dialog state
         self._header_row = False  # series labels come from column headers
         self._cat_labels = None   # categorical X-axis tick labels
+        self._time_x = False      # True when X axis shows time-of-day
         # Source column indices for live data updates.
         self._x_col = x_col      # None means row-index X
         self._y_cols = []         # populated by add_series
@@ -839,6 +914,8 @@ class EmbeddedChart(QWidget):
             d["y_cols"] = self._y_cols
         if self._cat_labels:
             d["cat_labels"] = self._cat_labels
+        if self._time_x:
+            d["time_x"] = True
         # Trendlines
         if self._trendlines:
             d["trendlines"] = [t.to_dict() for t in self._trendlines]
@@ -1221,10 +1298,13 @@ class EmbeddedChart(QWidget):
         if chart._source_sheet and chart._y_cols:
             chart._source_sheet.data_changed.connect(
                 chart._on_data_changed)
-        # Restore categorical X-axis labels.
-        saved_cat = d.get("cat_labels")
-        if saved_cat:
-            chart._apply_categorical_x(saved_cat)
+        # Restore categorical X-axis labels or time formatting.
+        if d.get("time_x"):
+            chart._apply_time_x()
+        else:
+            saved_cat = d.get("cat_labels")
+            if saved_cat:
+                chart._apply_categorical_x(saved_cat)
         # Restore visual properties, fill, and visibility per series.
         from matplotlib.collections import PathCollection
         for i, sd in enumerate(series):
@@ -1561,17 +1641,23 @@ class EmbeddedChart(QWidget):
         n = min(len(x_num), len(y_data))
         x_num, y_data = x_num[:n], y_data[:n]
 
-        # Decide: if more than half the X values are NaN (text), treat
-        # the column as categorical.
+        # Decide: if more than half the X values are NaN (text), try
+        # time parsing first, then fall back to categorical.
         nan_count = int(np.isnan(x_num).sum())
         if nan_count > n / 2 and n > 0:
-            # Categorical X — read as strings.
             x_str = sheet.string_column(xc)
             labels = x_str[x_r0:x_r0 + n]
+            # Try parsing as time-of-day strings.
+            t_hours, _ = parse_time_column(labels)
+            if t_hours is not None:
+                mask = ~(np.isnan(t_hours) | np.isnan(y_data))
+                # Return numeric hours — caller applies time formatter.
+                return t_hours[mask], y_data[mask], "TIME"
+            # Categorical X — evenly spaced with text labels.
             x_pos = np.arange(n, dtype=float)
-            # Filter only on Y NaN (keep text rows).
             mask = ~np.isnan(y_data)
-            return x_pos[mask], y_data[mask], [labels[i] for i, m in enumerate(mask) if m]
+            return x_pos[mask], y_data[mask], \
+                [labels[i] for i, m in enumerate(mask) if m]
 
         # Numeric X — original behaviour.
         mask = ~(np.isnan(x_num) | np.isnan(y_data))
@@ -1598,6 +1684,19 @@ class EmbeddedChart(QWidget):
             except Exception:
                 pass
 
+    def _apply_time_x(self):
+        """Format X-axis ticks as HH:MM for time-valued data."""
+        import matplotlib.ticker as ticker
+        ax = self._ax
+
+        def _fmt(val, _pos):
+            h = val % 24
+            m = round((h - int(h)) * 60)
+            return f"{int(h):02d}:{m:02d}"
+
+        ax.xaxis.set_major_formatter(ticker.FuncFormatter(_fmt))
+        self._time_x = True
+
     # ── Live data update ─────────────────────────────────────────────
     def _on_data_changed(self, col: int):
         """Re-read source data and refresh the chart when a plotted
@@ -1615,12 +1714,15 @@ class EmbeddedChart(QWidget):
             return
         sheet = self._source_sheet
         cat_labels = None
+        is_time = False
         # Update each series respecting per-series X column.
         for i, (s, yc) in enumerate(
                 zip(self._series, self._y_cols)):
             x, y, labels = self._read_series_xy(sheet, s, yc)
             s["x"], s["y"] = x, y
-            if labels is not None:
+            if labels == "TIME":
+                is_time = True
+            elif labels is not None:
                 cat_labels = labels
             self._update_artist(s, x, y)
         self._ax.dataLim.set_points(np.array(
@@ -1630,7 +1732,9 @@ class EmbeddedChart(QWidget):
             if len(sx) and len(sy):
                 self._ax.update_datalim(np.column_stack([sx, sy]))
         self._ax.autoscale_view()
-        if cat_labels is not None:
+        if is_time:
+            self._apply_time_x()
+        elif cat_labels is not None:
             self._apply_categorical_x(cat_labels)
         if self._header_row:
             self._apply_header_labels()
@@ -1710,11 +1814,14 @@ class EmbeddedChart(QWidget):
                        if ax.xaxis.get_gridlines() else False)
 
         cat_labels = None
+        is_time = False
         for i, (s, yc) in enumerate(
                 zip(self._series, self._y_cols)):
             x, y, labels = self._read_series_xy(sheet, s, yc)
             s["x"], s["y"] = x, y
-            if labels is not None:
+            if labels == "TIME":
+                is_time = True
+            elif labels is not None:
                 cat_labels = labels
             self._update_artist(s, x, y)
 
@@ -1734,7 +1841,9 @@ class EmbeddedChart(QWidget):
             if len(sx) and len(sy):
                 ax.update_datalim(np.column_stack([sx, sy]))
         ax.autoscale_view(True, True, True)
-        if cat_labels is not None:
+        if is_time:
+            self._apply_time_x()
+        elif cat_labels is not None:
             self._apply_categorical_x(cat_labels)
         ax.grid(grid_on)
         self._canvas.draw()
@@ -1748,11 +1857,14 @@ class EmbeddedChart(QWidget):
         ax = self._ax
 
         cat_labels = None
+        is_time = False
         for i, (s, yc) in enumerate(
                 zip(self._series, self._y_cols)):
             x, y, labels = self._read_series_xy(sheet, s, yc)
             s["x"], s["y"] = x, y
-            if labels is not None:
+            if labels == "TIME":
+                is_time = True
+            elif labels is not None:
                 cat_labels = labels
             self._update_artist(s, x, y)
 
@@ -1764,7 +1876,9 @@ class EmbeddedChart(QWidget):
             if len(x) and len(y):
                 ax.update_datalim(np.column_stack([x, y]))
         ax.autoscale_view(True, True, True)
-        if cat_labels is not None:
+        if is_time:
+            self._apply_time_x()
+        elif cat_labels is not None:
             self._apply_categorical_x(cat_labels)
         if self._header_row:
             self._apply_header_labels()

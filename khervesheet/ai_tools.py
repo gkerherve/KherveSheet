@@ -491,7 +491,8 @@ class AiToolExecutor:
             return {"error": f"Invalid chart_type {chart_type!r}. "
                     f"Valid: {valid_types}"}
         import numpy as np
-        # Read X data — detect categorical (text) labels.
+        from .graph import parse_time_column
+        # Read X data — detect categorical (text) or time labels.
         xr1, xc1, xr2, xc2 = parse_range(inp["x_range"])
         x_vals = []
         x_labels = []
@@ -505,10 +506,17 @@ class AiToolExecutor:
         x = np.array(x_vals)
         nan_count = int(np.isnan(x).sum())
         cat_labels = None
+        is_time = False
         if nan_count > len(x) / 2 and len(x) > 0:
-            # Categorical X — use integer positions.
-            cat_labels = x_labels
-            x = np.arange(len(x_labels), dtype=float)
+            # Try time parsing first.
+            t_hours, _ = parse_time_column(x_labels)
+            if t_hours is not None:
+                x = t_hours
+                is_time = True
+            else:
+                # Categorical X — use integer positions.
+                cat_labels = x_labels
+                x = np.arange(len(x_labels), dtype=float)
         if len(x) == 0:
             return {"error": "No X data found."}
 
@@ -558,7 +566,10 @@ class AiToolExecutor:
 
         if chart is None:
             return {"error": "No numeric Y data found in the specified ranges."}
-        if cat_labels is not None:
+        if is_time:
+            chart._apply_time_x()
+            chart._canvas.draw_idle()
+        elif cat_labels is not None:
             chart._apply_categorical_x(cat_labels)
             chart._canvas.draw_idle()
         offset = len(sheet._charts) * 30
