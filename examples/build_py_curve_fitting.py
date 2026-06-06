@@ -1,11 +1,12 @@
 """Build the "XPS Peak Fitting (Sr 3d)" Python-cell example .ksheet.
 
 Replicates KherveSheet's Curve Fitting dialog entirely in cells + a =PY
-cell: Pseudo-Voigt peaks on an active Shirley background, with a full
-parameter table (Value / Min / Max / Vary / Expr) that supports
-constraints and expression-linking between peaks (e.g. peak 2's centre =
-peak 1's centre + 1.74).  The Sr 3d data is embedded from the user's
-STO.ksheet so the example is self-contained.
+cell: Pseudo-Voigt peaks on an active Shirley background, with cells for
+the X/Y data ranges and the fitting X-range, plus a full parameter table
+(Value / Min / Max / Vary / Expr) that supports constraints and
+expression-linking between peaks (e.g. peak 2's centre = peak 1's centre
++ 1.74).  The Sr 3d data is embedded from the user's STO.ksheet so the
+example is self-contained.
 
 Copyright (C) 2026 Gwilherm Kerherve
 
@@ -48,7 +49,6 @@ def _load_sr3d():
                     except (TypeError, ValueError):
                         pass
                 return np.array(xs), np.array(ys)
-    # Fallback synthetic Sr 3d doublet (so the build never fails).
     x = np.round(np.arange(142.08, 126.0, -0.1), 2)
 
     def pv(x, a, c, s, fr):
@@ -64,34 +64,31 @@ def _load_sr3d():
 
 # The =PY fit program (body only; the "=PY" marker is added on write).
 PY_BODY = r'''# XPS curve fitting — Pseudo-Voigt peaks on an active Shirley
-# background.  All parameters live in the table above (Value / Min / Max /
-# Vary / Expr).  This cell reads them, fits with lmfit, writes the fitted
-# Values back into the table, and plots the result.
+# background.  The X/Y data ranges, the fitting X-range and every peak
+# parameter (Value / Min / Max / Vary / Expr) all come from the cells in
+# the panel above.  This cell reads them, fits with lmfit, writes the
+# fitted Values back into the table, and plots the result.
 import numpy as np, matplotlib.pyplot as plt
 import lmfit
 from scipy.integrate import cumulative_trapezoid
 
-# --- read the x,y data (columns A,B) and clip to the fit range -------
-ax = ks("A1:A2000"); ay = ks("B1:B2000")
-xs, ys = [], []
-for a, b in zip(ax, ay):
-    try:
-        av, bv = float(a), float(b)
-    except (TypeError, ValueError):
-        continue
-    if np.isfinite(av) and np.isfinite(bv):   # skip blank cells (NaN)
-        xs.append(av); ys.append(bv)
-x = np.array(xs); y = np.array(ys)
-lo = float(ks("E5")); hi = float(ks("F5"))         # fit window (eV)
-keep = (x >= min(lo, hi)) & (x <= max(lo, hi))
+# --- data ranges + fitting range come from cells ---------------------
+x_range = str(ks("E4")).strip()        # X data range, e.g. A1:A161
+y_range = str(ks("E5")).strip()        # Y data range, e.g. B1:B161
+x = np.array(ks(x_range), dtype=float)
+y = np.array(ks(y_range), dtype=float)
+ok = np.isfinite(x) & np.isfinite(y)
+x, y = x[ok], y[ok]
+lo = float(ks("E7")); hi = float(ks("E8"))         # fitting X-range (eV)
+keep = (x >= min(lo, hi)) & (x <= max(lo, hi))     # clip to the range
 x, y = x[keep], y[keep]
 order = np.argsort(x); x, y = x[order], y[order]   # ascending energy
 
 # --- read the parameter table (supports up to 10 peaks = 40 rows) ----
-names = ks("D10:D49"); vals = ks("E10:E49")
-mins  = ks("F10:F49"); maxs = ks("G10:G49")
-varys = ks("H10:H49"); exprs = ks("I10:I49")
-def val(v):                       # treat None / "" / NaN (blank) as empty
+names = ks("D13:D52"); vals = ks("E13:E52")
+mins  = ks("F13:F52"); maxs = ks("G13:G52")
+varys = ks("H13:H52"); exprs = ks("I13:I52")
+def val(v):                        # treat None / "" / NaN (blank) as empty
     if v is None or v == "":
         return None
     if isinstance(v, float) and not np.isfinite(v):
@@ -109,27 +106,26 @@ for i, nm in enumerate(names):
     kw["vary"] = True if vy is None else bool(float(vy))
     if val(mins[i]) is not None: kw["min"] = float(mins[i])
     if val(maxs[i]) is not None: kw["max"] = float(maxs[i])
-    if ex: kw["expr"] = str(ex).strip()       # link to another parameter
+    if ex: kw["expr"] = str(ex).strip()        # link to another parameter
     P.add(nm, **kw)
     rows.append(nm)
 
-# Peak indices from names like "p0_amplitude".
 ids = sorted({int(n[1:n.index("_")]) for n in rows
               if n.startswith("p") and "_" in n})
 
-def pv(x, amp, cen, sig, fr):     # Pseudo-Voigt (height-normalised)
+def pv(x, amp, cen, sig, fr):      # Pseudo-Voigt (height-normalised)
     g = np.exp(-(x-cen)**2/(2*sig*sig))
     lor = sig*sig/((x-cen)**2 + sig*sig)
     return amp*((1-fr)*g + fr*lor)
 
-def peak_sum(p, x):               # all peaks added together
+def peak_sum(p, x):                # all peaks added together
     t = np.zeros_like(x)
     for i in ids:
         t += pv(x, p["p%d_amplitude" % i], p["p%d_center" % i],
                 p["p%d_sigma" % i], p["p%d_fraction" % i])
     return t
 
-def shirley(x, y, nit=40):        # iterative Shirley background
+def shirley(x, y, nit=40):         # iterative Shirley background
     yl, yr = y[0], y[-1]; B = np.zeros_like(y)
     for _ in range(nit):
         inten = y - yr - B
@@ -148,16 +144,16 @@ bg = shirley(x, y)
 for _ in range(8):
     out = lmfit.minimize(lambda p: peak_sum(p, x) - (y - bg), P)
     P = out.params
-    bg = shirley(x, y - peak_sum(P, x))     # background under the peaks
+    bg = shirley(x, y - peak_sum(P, x))
 
 fit = peak_sum(P, x) + bg
 r2 = 1 - np.sum((y - fit)**2) / np.sum((y - y.mean())**2)
 
 # --- write fitted values back into the table + the R^2 cell ---------
-ks_set("E10", [round(float(P[n].value), 4) for n in rows])
-ks_set("E7", round(float(r2), 5))
+ks_set("E13", [round(float(P[n].value), 4) for n in rows])
+ks_set("E10", round(float(r2), 5))
 
-# --- plot data, each peak, the background and the total fit ---------
+# --- plot data, peaks, background, total fit + the fit-range lines ---
 fig, axp = plt.subplots(figsize=(7.2, 4.6))
 axp.plot(x, y, "o", ms=3, color="#1f4e79", label="data")
 axp.plot(x, bg, "--", lw=1, color="#7f7f7f", label="Shirley bg")
@@ -167,6 +163,8 @@ for i in ids:
     axp.fill_between(x, bg, comp, alpha=0.30)
     axp.plot(x, comp, lw=1)
 axp.plot(x, fit, "-", lw=1.7, color="#c00000", label="fit")
+for xb in (lo, hi):                              # green fit-range markers
+    axp.axvline(xb, color="#2e9e44", ls="--", lw=1)
 axp.set_xlabel("Binding energy (eV)"); axp.set_ylabel("Counts")
 axp.set_title("Sr 3d  —  %d Pseudo-Voigt peaks, active Shirley "
               "(R² = %.4f)" % (len(ids), r2))
@@ -176,11 +174,12 @@ plt.gcf()'''
 
 def build():
     x, y = _load_sr3d()
-    wb = Workbook(min_rows=max(200, x.size + 5), min_cols=14)
+    n = x.size
+    wb = Workbook(min_rows=max(220, n + 5), min_cols=14)
     s = wb.add_sheet("Sr 3d Fit")
 
     # ── Data in columns A (x) and B (y) ──────────────────────────────
-    for r in range(x.size):
+    for r in range(n):
         s.set(r, 0, round(float(x[r]), 3))
         s.set(r, 1, round(float(y[r]), 1))
 
@@ -193,24 +192,32 @@ def build():
     s.fmt(1, 3, italic=True, font_color="#555555")
     s.merge(1, 3, 1, 6)
 
-    s.set(3, 3, "Background"); s.set(3, 4, "Active Shirley")
-    s.set(4, 3, "Fit range (eV)"); s.set(4, 4, 126.0); s.set(4, 5, 142.0)
-    s.set(5, 3, "Peaks"); s.set(5, 4, 2)
-    s.set(6, 3, "R² (after Fit)"); s.set(6, 4, "")
-    for r in (3, 4, 5, 6):
+    # Settings rows (label in D, value in E, second value in F).
+    settings = [
+        (3, "Data X range", "A1:A%d" % n, None),
+        (4, "Data Y range", "B1:B%d" % n, None),
+        (5, "Background", "Active Shirley", None),
+        (6, "Fit X min (eV)", 128.0, None),
+        (7, "Fit X max (eV)", 140.0, None),
+        (8, "Number of peaks", 2, None),
+        (9, "R² (after Fit)", "", None),
+    ]
+    for r, label, v, _ in settings:
+        s.set(r, 3, label)
+        s.set(r, 4, v)
         s.fmt(r, 3, bold=True)
-    for ref in ((3, 4), (4, 4), (4, 5), (5, 4)):
-        s.fmt(*ref, bg=PALETTE["warn"], align="center")
-    s.fmt(6, 4, bg=PALETTE["good"], align="center", number_format="0.0000")
+        s.fmt(r, 4, bg=PALETTE["warn"], align="center")
+    s.fmt(9, 4, bg=PALETTE["good"], align="center", number_format="0.0000")
+    s.box(3, 3, 9, 4, color=PALETTE["header"], width=1.0)
 
     # ── Parameter table ──────────────────────────────────────────────
     headers = ["Parameter", "Value", "Min", "Max", "Vary", "Expr (link)"]
     for j, h in enumerate(headers):
-        s.set(8, 3 + j, h)
-        s.fmt(8, 3 + j, bold=True, bg=PALETTE["header"],
+        s.set(11, 3 + j, h)
+        s.fmt(11, 3 + j, bold=True, bg=PALETTE["header"],
               font_color=PALETTE["header_text"], align="center")
 
-    # (name, value, min, max, vary, expr)  — peak 0 free, peak 1 linked.
+    # (name, value, min, max, vary, expr) — peak 0 free, peak 1 linked.
     params = [
         ("p0_amplitude", 90000, 0,  "", 1, ""),
         ("p0_center",    132.5, 130, 135, 1, ""),
@@ -222,7 +229,7 @@ def build():
         ("p1_fraction",  0.3,   "", "", 0, "p0_fraction"),
     ]
     for i, (nm, v, mn, mx, vy, ex) in enumerate(params):
-        r = 9 + i
+        r = 12 + i
         s.set(r, 3, nm)
         s.set(r, 4, v)
         s.set(r, 5, mn)
@@ -234,18 +241,19 @@ def build():
         for c in (5, 6, 7):
             s.fmt(r, c, align="center")
         s.fmt(r, 8, font_color="#0a7", italic=True)
-    s.box(8, 3, 17, 8, color=PALETTE["header"], width=1.0)
+    s.box(11, 3, 19, 8, color=PALETTE["header"], width=1.0)
 
     # ── The fit program ──────────────────────────────────────────────
-    s.formula(19, 3, "=PY\n" + PY_BODY)
+    s.formula(21, 3, "=PY\n" + PY_BODY)
 
     s.note(
-        21, 3,
-        "Press Ctrl+Enter on the =PY cell to fit. Edit any Value / Min / "
-        "Max / Vary, or an Expr to LINK a parameter to another (e.g. "
-        "p1_center = p0_center+1.74, p1_amplitude = p0_amplitude*0.667). "
-        "Add more peaks by adding rows p2_amplitude … p2_fraction (up to "
-        "10 peaks). Fitted values are written back into the Value column.")
+        23, 3,
+        "Set the X/Y data ranges (E4/E5) and the fitting X-range "
+        "(E7/E8 — shown as green lines on the plot). Edit any Value / Min "
+        "/ Max / Vary, or an Expr to LINK a parameter to another (e.g. "
+        "p1_center = p0_center+1.74). Add peaks with rows p2_amplitude … "
+        "p2_fraction (up to 10). Press Ctrl+Enter to fit; fitted values "
+        "are written back into the Value column.")
 
     s.col_width(3, 130)
     s.col_width(8, 170)
