@@ -147,6 +147,13 @@ class PythonRuntime:
     def __init__(self):
         self._globals = None
         self._sheet = None      # sheet bound to the current run (for xl())
+        self._cur_cell = None   # (row, col) of the running cell (for ks_set)
+        self._written = None    # cells written via ks_set during a run
+        self._last_writes = set()  # cells written by the most recent run
+        #: Max seconds a single =PY cell may run before it is aborted.
+        #: Guards against infinite loops freezing the app.  Set to 0/None
+        #: to disable.
+        self.timeout = 30.0
 
     # ── namespace ────────────────────────────────────────────────────
     def _ensure_globals(self):
@@ -206,18 +213,33 @@ class PythonRuntime:
         import io
         import traceback
         g = self._ensure_globals()
+        # Re-entrancy safe: a ks_set()-triggered recalc may run another
+        # =PY cell while this one is mid-flight, so save/restore context.
+        prev_sheet, prev_cell, prev_written = (
+            self._sheet, self._cur_cell, self._written)
         self._sheet = sheet
+        self._cur_cell = (row, col)
+        self._written = set()
         plt = g.get("plt")
         before = set(plt.get_fignums()) if plt is not None else set()
         buf = io.StringIO()
         try:
             with contextlib.redirect_stdout(buf):
-                value = self._exec_with_value(code, g)
+                value = self._call_with_timeout(
+                    lambda: self._exec_with_value(code, g))
+        except TimeoutError:
+            return PyResult(
+                error=("TimeoutError: execution exceeded "
+                       f"{self.timeout:g} s — possible infinite loop. "
+                       "Increase the limit or fix the code."),
+                stdout=buf.getvalue())
         except Exception:
             return PyResult(error=traceback.format_exc(),
                             stdout=buf.getvalue())
         finally:
-            self._sheet = None
+            self._last_writes = self._written or set()
+            self._sheet, self._cur_cell, self._written = (
+                prev_sheet, prev_cell, prev_written)
         out = buf.getvalue()
 
         kind, norm = _classify(value)
@@ -233,6 +255,38 @@ class PythonRuntime:
         if kind == PyResult.FIGURE:
             return PyResult(value=norm, kind=kind, figure=norm, stdout=out)
         return PyResult(value=norm, kind=kind, stdout=out)
+
+    def _call_with_timeout(self, fn):
+        """Run *fn* aborting with TimeoutError after ``self.timeout`` s.
+
+        A watchdog thread asynchronously raises TimeoutError in the calling
+        thread once the deadline passes.  This interrupts pure-Python loops
+        (the usual freeze cause); a single long C call (e.g. a giant numpy
+        op) finishes before the exception is delivered.
+        """
+        timeout = self.timeout
+        if not timeout or timeout <= 0:
+            return fn()
+        import ctypes
+        import threading
+        thread_id = threading.get_ident()
+        done = threading.Event()
+
+        def _watchdog():
+            if done.wait(timeout):
+                return  # finished in time
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                ctypes.c_long(thread_id), ctypes.py_object(TimeoutError))
+
+        wd = threading.Thread(target=_watchdog, daemon=True)
+        wd.start()
+        try:
+            return fn()
+        finally:
+            done.set()
+            # Clear any async exception that fired after fn returned.
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                ctypes.c_long(thread_id), ctypes.c_long(0))
 
     @staticmethod
     def _exec_with_value(code, g):

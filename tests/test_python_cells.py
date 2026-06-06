@@ -112,6 +112,16 @@ def test_error_is_captured():
     assert "ZeroDivisionError" in res.error
 
 
+def test_timeout_aborts_infinite_loop():
+    rt = PythonRuntime()
+    rt.timeout = 0.5
+    res = rt.run("while True:\n    pass", None, 0, 0)
+    assert not res.ok
+    assert "TimeoutError" in res.error
+    # Normal code still runs after a timeout.
+    assert rt.run("2 + 2", None, 0, 0).value == 4
+
+
 def test_badge_for():
     assert badge_for(np.arange(7)).startswith("▮ ndarray(7,)")
     assert "dict" in badge_for({"a": 1})
