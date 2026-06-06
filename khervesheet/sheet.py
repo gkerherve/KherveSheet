@@ -1142,6 +1142,59 @@ class _SelectionOverlay(QWidget):
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WA_NoSystemBackground)
 
+    @staticmethod
+    def _coalesce(ranges):
+        """Merge overlapping/adjacent selection ranges into bounding rects.
+
+        QTableWidget returns many 1-cell ranges when a merged cell
+        (setSpan) is present anywhere in the table.  This method groups
+        selected cells into contiguous rectangular blocks so that the
+        overlay draws one border per block instead of per cell.
+        """
+        if not ranges:
+            return ranges
+        # If there are few ranges and they already look normal, skip.
+        if len(ranges) <= 1:
+            return ranges
+        # Collect every selected cell.
+        cells = set()
+        for s in ranges:
+            for r in range(s.topRow(), s.bottomRow() + 1):
+                for c in range(s.leftColumn(), s.rightColumn() + 1):
+                    cells.add((r, c))
+        if not cells:
+            return ranges
+        # Flood-fill contiguous rectangular blocks.
+        remaining = set(cells)
+        blocks = []
+        while remaining:
+            seed = min(remaining)
+            r1 = r2 = seed[0]
+            c1 = c2 = seed[1]
+            # Expand the bounding box as long as every cell inside it
+            # is selected.
+            changed = True
+            while changed:
+                changed = False
+                # Try expanding right.
+                if all((r, c2 + 1) in remaining or (r, c2 + 1) in (cells - remaining)
+                       for r in range(r1, r2 + 1)) and \
+                   any((r, c2 + 1) in remaining for r in range(r1, r2 + 1)):
+                    c2 += 1
+                    changed = True
+                # Try expanding down.
+                if all((r2 + 1, c) in remaining or (r2 + 1, c) in (cells - remaining)
+                       for c in range(c1, c2 + 1)) and \
+                   any((r2 + 1, c) in remaining for c in range(c1, c2 + 1)):
+                    r2 += 1
+                    changed = True
+            # Remove all cells in this block.
+            for r in range(r1, r2 + 1):
+                for c in range(c1, c2 + 1):
+                    remaining.discard((r, c))
+            blocks.append(QTableWidgetSelectionRange(r1, c1, r2, c2))
+        return blocks
+
     def paintEvent(self, event):
         table = self._sheet.table
         sel = table.selectedRanges()
@@ -1151,6 +1204,8 @@ class _SelectionOverlay(QWidget):
             if r < 0 or c < 0:
                 return
             sel = [QTableWidgetSelectionRange(r, c, r, c)]
+
+        sel = self._coalesce(sel)
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
