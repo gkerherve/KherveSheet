@@ -13,7 +13,27 @@
 # Written for PyInstaller 6.x.  On 5.x change ``PYZ(a.pure)`` to
 # ``PYZ(a.pure, a.zipped_data)``.
 
+import sys
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_all
+
+ROOT = Path(SPECPATH)
+
+# ── Generate the Windows .ico from the runtime make_app_icon() ─────
+#
+# Single source of truth for the green "KS" monogram lives in
+# khervesheet/icons.py.  tools/generate_icon.py renders it at all 7
+# sizes (16..256) into a multi-resolution ICO under build/.  The
+# resulting file is referenced by the EXE() block below.
+ICON_PATH = ROOT / "build" / "KherveSheet.ico"
+if not ICON_PATH.exists():
+    import subprocess as _sp
+    _sp.run(
+        [sys.executable, str(ROOT / "tools" / "generate_icon.py"),
+         str(ICON_PATH)],
+        check=True,
+    )
 
 # ── Data files shipped with the app (read-only at runtime) ───────────
 datas = [
@@ -68,7 +88,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="KherveSheet",
-    icon="khervesheet.ico",
+    icon=str(ICON_PATH),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
