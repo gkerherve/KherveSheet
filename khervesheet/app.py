@@ -737,6 +737,16 @@ def main():
     except Exception:
         pass
 
+    # Tell Windows this is its own app, not "python.exe", so the taskbar
+    # shows our icon instead of the Python logo.
+    if sys.platform.startswith("win"):
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+                "khervesheet.khervesheet.app")
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("KherveSheet")
