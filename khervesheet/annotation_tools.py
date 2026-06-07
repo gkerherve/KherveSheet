@@ -124,36 +124,85 @@ def clear_selection_artists(artists, canvas):
 
 # ── Hit-testing helpers ───────────────────────────────────────────────
 
+_HIT_TOL_PX = 8   # pixel tolerance for clicking near a line / point
+
+
+def _point_to_px(pt, ax):
+    """Convert a data-coordinate (x, y) tuple to display pixels."""
+    return ax.transData.transform(pt)
+
+
+def _dist_point_to_segment_px(px, py, ax, pt_a, pt_b):
+    """Pixel distance from (px, py) to segment pt_a→pt_b (data coords)."""
+    a = _point_to_px(pt_a, ax)
+    b = _point_to_px(pt_b, ax)
+    ab = b - a
+    ap = np.array([px, py]) - a
+    t = np.dot(ap, ab) / max(np.dot(ab, ab), 1e-12)
+    t = np.clip(t, 0, 1)
+    closest = a + t * ab
+    return np.linalg.norm(np.array([px, py]) - closest)
+
+
+def _dist_point_px(px, py, ax, pt):
+    """Pixel distance from (px, py) to a data-coordinate point."""
+    s = _point_to_px(pt, ax)
+    return np.hypot(px - s[0], py - s[1])
+
+
+def _hit_text(event, artist, ax, canvas):
+    """Check if *event* hits a text annotation's bounding box."""
+    try:
+        renderer = canvas.get_renderer()
+        bbox = artist.get_window_extent(renderer)
+        return bbox.contains(event.x, event.y)
+    except Exception:
+        return False
+
+
+def _hit_line_or_arrow(event, artist, ax):
+    """Check if *event* is within tolerance of a line/arrow segment."""
+    try:
+        xy = np.asarray(artist.xy, dtype=float)
+        xytext = np.asarray(artist.get_position(), dtype=float)
+        return _dist_point_to_segment_px(
+            event.x, event.y, ax, xy, xytext) <= _HIT_TOL_PX
+    except Exception:
+        return False
+
+
 def hit_test_annotations(event, annotations, ax, canvas):
     """Return the index of the annotation under *event*, or -1.
 
-    *event* is a matplotlib ``MouseEvent``.
+    *event* is a matplotlib ``MouseEvent`` (real or fake with .x, .y,
+    .xdata, .ydata, .inaxes).
     """
     if event.inaxes is not ax:
         return -1
-    renderer = canvas.get_renderer()
     # Walk backwards so the topmost annotation wins.
     for i in range(len(annotations) - 1, -1, -1):
         a = annotations[i]
         artist = a["artist"]
         atype = a["type"]
-        if atype in ("text", "arrow", "line"):
+        if atype == "text":
+            if _hit_text(event, artist, ax, canvas):
+                return i
+        elif atype in ("arrow", "line"):
+            # Check text label first (arrows can have labels).
+            if artist.get_text().strip():
+                if _hit_text(event, artist, ax, canvas):
+                    return i
+            # Check the line/arrow segment itself.
+            if _hit_line_or_arrow(event, artist, ax):
+                return i
+        else:
+            # Legacy axhline/axvline — try matplotlib contains().
             try:
                 hit, _ = artist.contains(event)
                 if hit:
                     return i
             except Exception:
                 pass
-            # For arrows/lines also check the arrow patch.
-            if atype in ("arrow", "line"):
-                ap = getattr(artist, "arrow_patch", None)
-                if ap is not None:
-                    try:
-                        hit, _ = ap.contains(event)
-                        if hit:
-                            return i
-                    except Exception:
-                        pass
     return -1
 
 
@@ -163,8 +212,9 @@ def hit_test_handle(event, handles, ax):
         return None
     for h in handles:
         try:
-            hit, _ = h["artist"].contains(event)
-            if hit:
+            d = _dist_point_px(event.x, event.y, ax,
+                               np.asarray(h["artist"].center))
+            if d <= _HIT_TOL_PX + 3:
                 return h
         except Exception:
             pass

@@ -2643,6 +2643,10 @@ class MainWindow(QMainWindow):
             return
         sel = getattr(s, '_selected_chart', None)
         if sel:
+            # If the chart has a selected annotation, delete that instead.
+            if getattr(sel, '_selected_ann_idx', -1) >= 0:
+                sel._delete_selected_annotation()
+                return
             sel._close_chart()
             s._selected_chart = None
         else:

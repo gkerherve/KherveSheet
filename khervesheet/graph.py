@@ -2709,11 +2709,12 @@ class EmbeddedChart(QWidget):
         try:
             canvas_pos = self._canvas.mapFromGlobal(qevent.globalPos())
             dpr = self._canvas.devicePixelRatio()
-            x_px = canvas_pos.x() * dpr
-            y_px = (self._canvas.height() - canvas_pos.y()) * dpr
-            # Build a fake matplotlib event for hit-testing.
+            # matplotlib display coords: origin at bottom-left, in
+            # physical pixels.
+            mx = canvas_pos.x() * dpr
+            my = (self._canvas.height() - canvas_pos.y()) * dpr
             inv = self._ax.transData.inverted()
-            xdata, ydata = inv.transform((x_px, y_px))
+            xdata, ydata = inv.transform((mx, my))
 
             class _FakeEvent:
                 pass
@@ -2721,14 +2722,14 @@ class EmbeddedChart(QWidget):
             fe.inaxes = self._ax
             fe.xdata = xdata
             fe.ydata = ydata
-            fe.x = x_px
-            fe.y = y_px
+            fe.x = mx
+            fe.y = my
             idx = hit_test_annotations(fe, self._annotations,
                                        self._ax, self._canvas)
             if idx >= 0:
                 self._select_annotation(idx)
-            else:
-                self._deselect_annotation()
+            # Don't deselect on right-click miss — user may want chart
+            # menu while annotation stays selected.
         except Exception:
             pass
 
