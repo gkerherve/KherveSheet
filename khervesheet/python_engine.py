@@ -497,7 +497,7 @@ PY_TINT = QColor(55, 118, 171, 12)
 def paint_py_badge(painter, rect):
     """Paint a rounded, two-tone (Python blue over yellow), raised "PY"
     badge into *rect* with the given QPainter."""
-    from PyQt5.QtCore import QRectF
+    from PyQt5.QtCore import QRectF, QPointF
     from PyQt5.QtGui import QPainter, QPainterPath, QPen
     painter.save()
     painter.setRenderHint(QPainter.Antialiasing, True)
@@ -515,6 +515,16 @@ def paint_py_badge(painter, rect):
     painter.fillRect(QRectF(r.left(), r.top() + half, r.width(),
                             r.height() - half),
                      QColor(PY_YELLOW))                     # bottom = yellow
+    # Two tiny white "eyes" echoing the Python logo: one on the blue
+    # (top-left), one on the yellow (bottom-right), diagonally arranged.
+    dot = max(1.0, r.width() * 0.12)
+    dx = r.width() * 0.17
+    dy = r.height() * 0.17
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(QColor("#ffffff"))
+    painter.drawEllipse(QPointF(r.center().x() - dx, r.top() + dy), dot, dot)
+    painter.drawEllipse(QPointF(r.center().x() + dx, r.bottom() - dy),
+                        dot, dot)
     painter.setClipping(False)
     # Raised bevel: light highlight inset, darker outer edge.
     painter.setBrush(Qt.NoBrush)
