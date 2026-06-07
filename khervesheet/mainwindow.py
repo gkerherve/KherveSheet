@@ -1707,6 +1707,10 @@ class MainWindow(QMainWindow):
                         if d.get('legend_props'):
                             cg.attrs['legend_props'] = json.dumps(
                                 d['legend_props'])
+                        # Bar chart config.
+                        if d.get('bar_config'):
+                            cg.attrs['bar_config'] = json.dumps(
+                                d['bar_config'])
                         # Trendlines.
                         if d.get('trendlines'):
                             cg.attrs['trendlines'] = json.dumps(
@@ -1728,6 +1732,8 @@ class MainWindow(QMainWindow):
                                     v = v.item()
                                 if isinstance(v, (str, int, float,
                                                   bool, type(None))):
+                                    props[k] = v
+                                elif isinstance(v, dict):
                                     props[k] = v
                             if props:
                                 srg.attrs['props'] = json.dumps(
@@ -2164,6 +2170,12 @@ class MainWindow(QMainWindow):
                             cd["cat_labels"] = json.loads(cl_json)
                         if cg.attrs.get('time_x', False):
                             cd["time_x"] = True
+                        # Bar chart config.
+                        bc_json = cg.attrs.get('bar_config', '')
+                        if isinstance(bc_json, bytes):
+                            bc_json = bc_json.decode('utf-8')
+                        if bc_json:
+                            cd["bar_config"] = json.loads(bc_json)
                         # Trendlines.
                         tl_json = cg.attrs.get('trendlines', '')
                         if isinstance(tl_json, bytes):
@@ -2446,12 +2458,17 @@ class MainWindow(QMainWindow):
         sel = getattr(s, '_selected_chart', None)
         if sel:
             from . import graph as _g
+            cb_series = []
+            for sr in sel._series:
+                sd = {"x": sr["x"].tolist(), "y": sr["y"].tolist(),
+                      "label": sr["label"],
+                      "plot_type": sr["plot_type"]}
+                if sr.get("bar"):
+                    sd["bar"] = dict(sr["bar"])
+                cb_series.append(sd)
             _g._chart_clipboard = {
-                "series": [
-                    {"x": sr["x"].tolist(), "y": sr["y"].tolist(),
-                     "label": sr["label"], "plot_type": sr["plot_type"]}
-                    for sr in sel._series
-                ],
+                "series": cb_series,
+                "bar_config": dict(sel._bar_config),
             }
             sel._close_chart()
             s._selected_chart = None
@@ -2481,12 +2498,17 @@ class MainWindow(QMainWindow):
         sel = getattr(s, '_selected_chart', None)
         if sel:
             from . import graph as _g
+            cb_series = []
+            for sr in sel._series:
+                sd = {"x": sr["x"].tolist(), "y": sr["y"].tolist(),
+                      "label": sr["label"],
+                      "plot_type": sr["plot_type"]}
+                if sr.get("bar"):
+                    sd["bar"] = dict(sr["bar"])
+                cb_series.append(sd)
             _g._chart_clipboard = {
-                "series": [
-                    {"x": sr["x"].tolist(), "y": sr["y"].tolist(),
-                     "label": sr["label"], "plot_type": sr["plot_type"]}
-                    for sr in sel._series
-                ],
+                "series": cb_series,
+                "bar_config": dict(sel._bar_config),
             }
             _sh._shape_clipboard = None
             self._status_msg("Chart copied", 2000)
@@ -2510,7 +2532,7 @@ class MainWindow(QMainWindow):
                 s._charts = []
             viewport = s.table.viewport()
             first_chart = None
-            for sr in cb["series"]:
+            for i, sr in enumerate(cb["series"]):
                 x = np.array(sr["x"])
                 y = np.array(sr["y"])
                 if first_chart is None:
@@ -2521,6 +2543,14 @@ class MainWindow(QMainWindow):
                     s._charts.append(first_chart)
                 else:
                     first_chart.add_series(x, y, sr["label"], sr["plot_type"])
+                # Restore per-series bar props.
+                if sr.get("bar") and i < len(first_chart._series):
+                    first_chart._series[i]["bar"] = dict(sr["bar"])
+            # Restore bar config and redraw.
+            bc = cb.get("bar_config")
+            if bc and first_chart:
+                first_chart._bar_config.update(bc)
+                first_chart._redraw_bars()
             _g._chart_clipboard = None
             self._status_msg("Chart pasted", 2000)
             return
@@ -3704,6 +3734,9 @@ class MainWindow(QMainWindow):
             elif cat_labels is not None:
                 first_chart._apply_categorical_x(cat_labels)
                 first_chart._canvas.draw_idle()
+            # Bar charts need a coordinated redraw for grouped offsets.
+            if plot_type == "Bar":
+                first_chart._redraw_bars()
 
         self._status_msg(
             f"Created {plot_type} chart", 3000)

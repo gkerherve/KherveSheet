@@ -460,6 +460,9 @@ class EmbeddedChart(QWidget):
         self._header_row = False  # series labels come from column headers
         self._cat_labels = None   # categorical X-axis tick labels
         self._time_x = False      # True when X axis shows time-of-day
+        # Bar chart config (grouping mode, orientation, gap).
+        from .bar_options import DEFAULT_BAR_CONFIG
+        self._bar_config = dict(DEFAULT_BAR_CONFIG)
         # Source column indices for live data updates.
         self._x_col = x_col      # None means row-index X
         self._y_cols = []         # populated by add_series
@@ -560,6 +563,10 @@ class EmbeddedChart(QWidget):
         if y_col is not None:
             self._y_cols.append(y_col)
 
+        # Bar series need coordinated redraw for grouped offsets.
+        if plot_type == "Bar":
+            self._redraw_bars()
+
         leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
         if leg:
             leg.set_draggable(True)
@@ -590,15 +597,17 @@ class EmbeddedChart(QWidget):
                 ax.update_datalim(
                     np.column_stack([x, y]))
         else:
-            # Bar, stem, etc. — snapshot face colour, remove, re-plot.
             from matplotlib.container import BarContainer
+            if isinstance(artist, BarContainer):
+                # Bar series — update data in the dict and let
+                # _redraw_bars handle the coordinated redraw.
+                s["x"], s["y"] = x, y
+                self._redraw_bars()
+                return
+            # Stem, etc. — snapshot face colour, remove, re-plot.
             old_color = None
             try:
-                if isinstance(artist, BarContainer):
-                    # BarContainer stores colour on individual patches.
-                    if artist.patches:
-                        old_color = artist.patches[0].get_facecolor()
-                elif hasattr(artist, 'get_facecolor'):
+                if hasattr(artist, 'get_facecolor'):
                     fc = artist.get_facecolor()
                     if hasattr(fc, '__len__') and len(fc) > 0:
                         old_color = fc[0]
@@ -612,14 +621,57 @@ class EmbeddedChart(QWidget):
                                  s["plot_type"])
             if old_color is not None and new is not None:
                 try:
-                    if isinstance(new, BarContainer):
-                        for patch in new.patches:
-                            patch.set_facecolor(old_color)
-                    elif hasattr(new, 'set_facecolor'):
+                    if hasattr(new, 'set_facecolor'):
                         new.set_facecolor(old_color)
                 except Exception:
                     pass
             s["artist"] = new
+
+    def _redraw_bars(self):
+        """Recalculate and redraw all bar-type series.
+
+        Bar charts need coordinated layout (grouped offsets or stacked
+        bottoms), so whenever a bar series is added, removed, or
+        modified all bars must be redrawn together.
+        """
+        from .bar_options import plot_bars
+        has_bars = any(s.get("plot_type") == "Bar"
+                       and not s.get("is_trendline")
+                       for s in self._series)
+        if not has_bars:
+            return
+        # Collect current face colours so the redraw preserves them.
+        from matplotlib.container import BarContainer
+        from matplotlib.colors import to_hex
+        colors = []
+        for s in self._series:
+            if s.get("plot_type") != "Bar" or s.get("is_trendline"):
+                continue
+            a = s.get("artist")
+            c = None
+            # Prefer explicitly saved fill_color in bar props.
+            bp = s.get("bar", {})
+            if bp.get("fill_color"):
+                c = bp["fill_color"]
+            elif isinstance(a, BarContainer) and a.patches:
+                try:
+                    c = to_hex(a.patches[0].get_facecolor())
+                except Exception:
+                    pass
+            colors.append(c)
+        # Fill None entries from the default cycle.
+        from .bar_options import _DEFAULT_COLORS
+        for i, c in enumerate(colors):
+            if c is None:
+                colors[i] = _DEFAULT_COLORS[i % len(_DEFAULT_COLORS)]
+        plot_bars(self._ax, self._series, self._bar_config,
+                  _colors=colors)
+        # Refresh legend.
+        if self._ax.get_legend() is not None:
+            leg = self._ax.legend(loc="best", framealpha=0.8, fontsize=8)
+            if leg:
+                leg.set_draggable(True)
+        self._canvas.draw_idle()
 
     @staticmethod
     def _plot_one(ax, x, y, label, plot_type):
@@ -681,6 +733,7 @@ class EmbeddedChart(QWidget):
         s = self._series[series_idx]
         if s["plot_type"] == new_plot_type:
             return
+        old_type = s["plot_type"]
         old_artist = s.get("artist")
         # Remove old artist from axes.
         if old_artist is not None:
@@ -701,6 +754,9 @@ class EmbeddedChart(QWidget):
             self._ax, x, y, s["label"], new_plot_type)
         s["artist"] = new_artist
         s["plot_type"] = new_plot_type
+        # If changing to or from Bar, recalculate bar layout.
+        if new_plot_type == "Bar" or old_type == "Bar":
+            self._redraw_bars()
         # Refresh legend.
         leg = self._ax.legend(loc="best", framealpha=0.8, fontsize=8)
         if leg:
@@ -779,7 +835,19 @@ class EmbeddedChart(QWidget):
             if artist is not None:
                 from matplotlib.colors import to_hex
                 from matplotlib.collections import PathCollection
-                if isinstance(artist, PathCollection):
+                from matplotlib.container import BarContainer
+                if isinstance(artist, BarContainer):
+                    # Bar — save face colour from first patch.
+                    if artist.patches:
+                        try:
+                            sd["color"] = to_hex(
+                                artist.patches[0].get_facecolor())
+                        except Exception:
+                            pass
+                    if hasattr(artist, 'get_visible'):
+                        if not artist.get_visible():
+                            sd["visible"] = False
+                elif isinstance(artist, PathCollection):
                     # Scatter — save face/edge colors and sizes.
                     try:
                         fc = artist.get_facecolors()
@@ -842,6 +910,10 @@ class EmbeddedChart(QWidget):
                 sd["fill_target"] = s.get("fill_target", 0)
                 sd["fill_color"] = s.get("fill_color", "#1f77b4")
                 sd["fill_alpha"] = s.get("fill_alpha", 0.3)
+            # Bar-specific per-series properties.
+            bar_p = s.get("bar")
+            if bar_p:
+                sd["bar"] = dict(bar_p)
             # Per-series X column (if different from chart default).
             if s.get("x_col") is not None:
                 sd["x_col"] = s["x_col"]
@@ -877,6 +949,10 @@ class EmbeddedChart(QWidget):
         }
         if self._axis_props:
             d["axis_props"] = self._axis_props
+        # Bar chart config.
+        from .bar_options import DEFAULT_BAR_CONFIG
+        if self._bar_config != DEFAULT_BAR_CONFIG:
+            d["bar_config"] = dict(self._bar_config)
         gp = getattr(self, '_general_props', None)
         if gp:
             d["general_props"] = gp
@@ -1305,6 +1381,10 @@ class EmbeddedChart(QWidget):
             saved_cat = d.get("cat_labels")
             if saved_cat:
                 chart._apply_categorical_x(saved_cat)
+        # Restore bar chart config.
+        bc = d.get("bar_config")
+        if bc:
+            chart._bar_config.update(bc)
         # Restore visual properties, fill, and visibility per series.
         from matplotlib.collections import PathCollection
         for i, sd in enumerate(series):
@@ -1312,8 +1392,19 @@ class EmbeddedChart(QWidget):
                 break
             artist = chart._series[i].get("artist")
             if artist is not None:
+                from matplotlib.container import BarContainer
+                is_bar = isinstance(artist, BarContainer)
                 is_scatter = isinstance(artist, PathCollection)
-                if is_scatter:
+                if is_bar:
+                    # Bar visuals are handled by _redraw_bars above;
+                    # just restore face colour for the initial render.
+                    if "color" in sd and artist.patches:
+                        try:
+                            for p in artist.patches:
+                                p.set_facecolor(sd["color"])
+                        except Exception:
+                            pass
+                elif is_scatter:
                     # Scatter: restore face/edge colors and sizes.
                     if "color" in sd or "markerfacecolor" in sd:
                         c = sd.get("markerfacecolor", sd.get("color"))
@@ -1370,12 +1461,17 @@ class EmbeddedChart(QWidget):
                         "y_row_start", "y_row_end"):
                 if rk in sd:
                     chart._series[i][rk] = int(sd[rk])
+            # Per-series bar properties.
+            if "bar" in sd:
+                chart._series[i]["bar"] = dict(sd["bar"])
             fm = sd.get("fill_mode", "none")
             if fm != "none":
                 chart.apply_fill(
                     i, fm, sd.get("fill_target", 0),
                     sd.get("fill_color", "#1f77b4"),
                     sd.get("fill_alpha", 0.3))
+        # Redraw bars with restored config (grouped/stacked offsets).
+        chart._redraw_bars()
         # Header mode: resync labels from header cells before the legend
         # is built so it reflects the (possibly edited) column headers.
         chart._header_row = bool(d.get("header_row", False))
@@ -3107,6 +3203,7 @@ class PlotDetailsDialog(QDialog):
         self._build_line_tab()
         self._build_symbol_tab()
         self._build_fill_tab()
+        self._build_bar_tab()
 
         # Per-series range edits: {row: (x_range_str, y_range_str)}
         self._range_edits = {}
@@ -3374,6 +3471,12 @@ class PlotDetailsDialog(QDialog):
 
         self._tabs.addTab(w, "Fill")
 
+    def _build_bar_tab(self):
+        """Bar options tab — delegates to bar_options.BarOptionsTab."""
+        from .bar_options import BarOptionsTab
+        self._bar_tab = BarOptionsTab(self._chart, self)
+        self._tabs.addTab(self._bar_tab, "Bar")
+
     def _save_current_range(self):
         """Save range edit values for the previously selected series."""
         prev = getattr(self, '_prev_series_row', -1)
@@ -3437,9 +3540,19 @@ class PlotDetailsDialog(QDialog):
         # Try to read line/scatter properties from the artist.
         from matplotlib.colors import to_hex
         from matplotlib.collections import PathCollection
+        from matplotlib.container import BarContainer
         is_scatter = isinstance(artist, PathCollection)
+        is_bar = isinstance(artist, BarContainer)
 
-        if is_scatter:
+        if is_bar:
+            # BarContainer — read face colour into Line tab colour.
+            if artist.patches:
+                try:
+                    self.line_color.set_color(
+                        to_hex(artist.patches[0].get_facecolor()))
+                except Exception:
+                    pass
+        elif is_scatter:
             # Scatter: PathCollection has different APIs.
             try:
                 fc = artist.get_facecolors()
@@ -3524,6 +3637,10 @@ class PlotDetailsDialog(QDialog):
         if fa is not None:
             self.fill_alpha.setValue(fa)
 
+        # Bar tab — populate from series data.
+        if hasattr(self, '_bar_tab'):
+            self._bar_tab.read_from_series(s)
+
     @staticmethod
     def _parse_range(range_str):
         """Parse a range like 'A1:A20' into (col_idx, row_start, row_end).
@@ -3583,9 +3700,20 @@ class PlotDetailsDialog(QDialog):
             s["label"] = self.label_edit.text()
 
             from matplotlib.collections import PathCollection
+            from matplotlib.container import BarContainer
             is_scatter = isinstance(artist, PathCollection)
+            is_bar = isinstance(artist, BarContainer)
 
-            if is_scatter:
+            if is_bar:
+                # BarContainer — colour is set via _redraw_bars; just
+                # sync the fill_color into bar props from Line tab.
+                bp = s.setdefault("bar", {})
+                bp["fill_color"] = self.line_color.color()
+                if hasattr(artist, 'set_label'):
+                    for p in artist.patches:
+                        pass  # label is on container
+                    artist.set_label(self.label_edit.text())
+            elif is_scatter:
                 # PathCollection (scatter) — use collection APIs.
                 try:
                     artist.set_facecolors(self.marker_fill.color())
@@ -3640,6 +3768,13 @@ class PlotDetailsDialog(QDialog):
             chart.apply_fill(
                 row, mode, self.fill_target.currentIndex(),
                 self.fill_color.color(), self.fill_alpha.value())
+
+            # Bar options — save per-series bar props and chart config,
+            # then redraw all bars with the updated layout.
+            if hasattr(self, '_bar_tab'):
+                self._bar_tab.write_to_series(s)
+                chart._bar_config = self._bar_tab.write_chart_config()
+                chart._redraw_bars()
 
             # Refresh legend if one exists.
             if ax.get_legend() is not None:
