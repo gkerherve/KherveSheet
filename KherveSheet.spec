@@ -68,6 +68,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="KherveSheet",
+    icon="khervesheet.ico",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
