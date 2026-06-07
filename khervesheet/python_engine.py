@@ -64,6 +64,7 @@ class PyResult:
     ARRAY2D = "array2d"
     OBJECT = "object"
     FIGURE = "figure"
+    IMAGE = "image"
     NONE = "none"
 
     def __init__(self, value=None, kind=NONE, figure=None, error=None,
@@ -79,6 +80,74 @@ class PyResult:
         return self.error is None
 
 
+def to_pixmap(value):
+    """Convert an image-like value to a QPixmap, or return None.
+
+    Accepts a QPixmap, QImage, PIL.Image, raw PNG/JPEG bytes, or a NumPy
+    H×W×3/4 uint8 array."""
+    from PyQt5.QtGui import QPixmap, QImage
+    if isinstance(value, QPixmap):
+        return value if not value.isNull() else None
+    if isinstance(value, QImage):
+        return QPixmap.fromImage(value) if not value.isNull() else None
+    if isinstance(value, (bytes, bytearray)):
+        pm = QPixmap()
+        pm.loadFromData(bytes(value))
+        return pm if not pm.isNull() else None
+    # PIL image?
+    try:
+        from PIL import Image
+        if isinstance(value, Image.Image):
+            import io
+            buf = io.BytesIO()
+            value.convert("RGBA").save(buf, format="PNG")
+            pm = QPixmap()
+            pm.loadFromData(buf.getvalue())
+            return pm if not pm.isNull() else None
+    except Exception:
+        pass
+    # NumPy H×W×3/4 uint8 image array?
+    try:
+        import numpy as np
+        if (isinstance(value, np.ndarray) and value.ndim == 3
+                and value.shape[2] in (3, 4)):
+            a = np.ascontiguousarray(value.astype(np.uint8))
+            h, w, ch = a.shape
+            fmt = QImage.Format_RGBA8888 if ch == 4 else QImage.Format_RGB888
+            img = QImage(a.data, w, h, ch * w, fmt).copy()
+            return QPixmap.fromImage(img)
+    except Exception:
+        pass
+    return None
+
+
+def ks_image(src, timeout=8):
+    """Load an image from a URL, file path, bytes, or image object and
+    return a QPixmap (for a =PY cell to display).  Use as the last line of
+    a cell, e.g. ks_image("https://example.com/photo.jpg")."""
+    if isinstance(src, str):
+        if src.startswith(("http://", "https://")):
+            import urllib.request
+            req = urllib.request.Request(
+                src, headers={"User-Agent": "KherveSheet"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                from PyQt5.QtGui import QPixmap
+                pm = QPixmap()
+                pm.loadFromData(r.read())
+                if pm.isNull():
+                    raise ValueError("ks_image: could not decode the image")
+                return pm
+        from PyQt5.QtGui import QPixmap
+        pm = QPixmap(src)               # local file path
+        if pm.isNull():
+            raise ValueError(f"ks_image: could not load {src!r}")
+        return pm
+    pm = to_pixmap(src)
+    if pm is None:
+        raise ValueError("ks_image: unsupported image source")
+    return pm
+
+
 def _classify(value):
     """Map a Python value to a (kind, normalised_value) pair."""
     if value is None:
@@ -91,6 +160,11 @@ def _classify(value):
             return PyResult.FIGURE, value
     except Exception:
         pass
+
+    # An image (QPixmap/QImage/PIL/bytes/HxWx3 array) -> embed as a picture.
+    pm = to_pixmap(value)
+    if pm is not None:
+        return PyResult.IMAGE, pm
 
     # Scalars (treat numpy 0-d scalars and bools/str as scalar).
     if isinstance(value, (bool, int, float, complex, str)):
@@ -194,6 +268,8 @@ class PythonRuntime:
         # Write-back helpers: push values/arrays into the grid.
         g["ks_set"] = self._ks_set
         g["write"] = self._ks_set
+        # Image helper: load a picture (URL / path / bytes) to embed.
+        g["ks_image"] = ks_image
         self._globals = g
         return g
 
@@ -263,8 +339,9 @@ class PythonRuntime:
 
         kind, norm = _classify(value)
 
-        # If the cell did not itself yield a figure but created one, grab it.
-        if kind != PyResult.FIGURE and plt is not None:
+        # If the cell did not itself yield a figure/image but created a
+        # matplotlib figure, grab it.
+        if kind not in (PyResult.FIGURE, PyResult.IMAGE) and plt is not None:
             new = [n for n in plt.get_fignums() if n not in before]
             if new:
                 fig = plt.figure(new[-1])

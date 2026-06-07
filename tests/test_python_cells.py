@@ -303,6 +303,27 @@ def test_py_loop_set_clear_and_tick(qapp):
     assert not s._py_errors
 
 
+def test_image_classification(qapp):
+    import numpy as np
+    from khervesheet.python_engine import _classify, PyResult, to_pixmap
+    img = np.zeros((8, 8, 3), dtype=np.uint8)
+    assert _classify(img)[0] == PyResult.IMAGE        # H×W×3 -> image
+    assert _classify(np.zeros((3, 3)))[0] != PyResult.IMAGE   # 2-D -> not
+    assert _classify(np.arange(5))[0] != PyResult.IMAGE       # 1-D -> not
+    assert to_pixmap(img) is not None
+
+
+def test_py_cell_embeds_image(qapp):
+    from khervesheet.workbook import WorkbookWidget
+    wb = WorkbookWidget()
+    s = wb.tabs.widget(0)
+    _put(s, 0, 0,
+         "=PY\nimport numpy as np\nnp.zeros((20, 20, 3), dtype=np.uint8)")
+    assert s.table.item(0, 0).text().endswith("image")   # 🖼 image
+    assert s._images                                     # picture embedded
+    assert not s._py_errors
+
+
 def test_sheet_python_error_shows_pyerr(qapp):
     from khervesheet.workbook import WorkbookWidget
     wb = WorkbookWidget()

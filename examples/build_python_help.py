@@ -496,7 +496,16 @@ built-in functions are never overridden.</div>
 strip for a larger editor with line numbers, autocomplete (Ctrl+Space),
 comment toggle (Ctrl+/), a <b>Pick cell</b> button to click-insert a
 <code>ks("…")</code> reference, and an output pane. <b>Run</b> keeps the
-window open so you can iterate.</div>"""
+window open so you can iterate.</div>
+<div class="tip"><b>Images &amp; plots.</b> Return a matplotlib figure to
+embed a plot. Return an image to embed a picture — or use
+<code>ks_image(src)</code> where <i>src</i> is a URL, file path, raw bytes,
+a PIL image or a NumPy H&times;W&times;3 array, e.g.
+<code>ks_image("https://example.com/photo.jpg")</code>.</div>
+<div class="tip"><b>Auto-refresh.</b> Right-click a <code>=PY</code> cell
+&rarr; <b>Python loop</b> to re-run it on an interval (5&nbsp;s, 30&nbsp;s,
+&hellip;) — handy for the live weather / stock / image cells. The PY badge
+shows the period.</div>"""
 
 
 def main():

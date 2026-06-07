@@ -2915,6 +2915,9 @@ class SheetWidget(QWidget):
         if res.kind == PyResult.FIGURE:
             self._embed_py_figure(res.figure, row, col)
             return "📈 plot"
+        if res.kind == PyResult.IMAGE:
+            self._embed_py_image(res.value, row, col)
+            return "🖼 image"
         if res.kind == PyResult.NONE:
             self._cell_objects.pop((row, col), None)
             return ""
@@ -3063,6 +3066,20 @@ class SheetWidget(QWidget):
             plt.close(figure)
         except Exception:
             pass
+        x = (self.table.columnViewportPosition(col)
+             + self.table.columnWidth(col) + 4)
+        y = self.table.rowViewportPosition(row)
+        img.move(max(0, x), max(0, y))
+        img.show()
+        self._images.append(img)
+        self._py_figures[(row, col)] = img
+
+    def _embed_py_image(self, pixmap, row, col):
+        """Embed a picture (QPixmap) produced by a =PY cell near the cell."""
+        from .embedded_image import EmbeddedImage
+        if pixmap is None or pixmap.isNull():
+            return
+        img = EmbeddedImage(pixmap, self.table.viewport())
         x = (self.table.columnViewportPosition(col)
              + self.table.columnWidth(col) + 4)
         y = self.table.rowViewportPosition(row)
