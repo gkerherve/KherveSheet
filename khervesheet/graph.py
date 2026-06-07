@@ -481,9 +481,14 @@ class EmbeddedChart(QWidget):
         self._aspect_ratio = 480 / 320  # w/h ratio at creation
         self._tight_layout = False      # tight layout off by default
         self._annotations = []            # user text/arrow/line annotations
+        self._selected_ann_idx = -1       # index of selected annotation
+        self._ann_select_artists = []     # visual selection markers
+        self._ann_handles = []            # endpoint handle dicts
+        self._ann_dragging_handle = None  # handle being dragged
 
         self.setMinimumSize(240, 180)
         self.resize(480, 320)
+        self.setFocusPolicy(Qt.StrongFocus)
 
         # ── Layout ──────────────────────────────────────────────────
         _m = 12  # margin for selection handles
@@ -517,6 +522,11 @@ class EmbeddedChart(QWidget):
 
         # Double-click on labels/spines opens edit dialogs.
         self._canvas.mpl_connect("button_press_event", self._on_canvas_click)
+        # Annotation endpoint dragging.
+        self._canvas.mpl_connect("motion_notify_event",
+                                  self._on_ann_motion)
+        self._canvas.mpl_connect("button_release_event",
+                                  self._on_ann_release)
 
         # Add the initial series.
         self.add_series(x, y, label, plot_type, x_col=x_col, y_col=y_col,
@@ -1042,18 +1052,54 @@ class EmbeddedChart(QWidget):
                     artist = a["artist"]
                     ad["text"] = artist.get_text()
                     ad["xy"] = list(artist.xy)
+                    ad["fontsize"] = float(artist.get_fontsize())
+                    ad["fontweight"] = str(artist.get_fontweight())
+                    ad["fontstyle"] = str(artist.get_fontstyle())
+                    ad["color"] = artist.get_color()
+                    ad["rotation"] = float(artist.get_rotation())
+                    bp = artist.get_bbox_patch()
+                    if bp is not None:
+                        from matplotlib.colors import to_hex
+                        fc = bp.get_facecolor()
+                        ad["bbox_fc"] = to_hex(fc[:3])
+                        ad["bbox_alpha"] = float(fc[3]) if len(fc) > 3 else 1.0
+                        ad["bbox_style"] = str(bp.get_boxstyle()).split("(")[0]
                 elif a["type"] == "arrow":
                     artist = a["artist"]
                     ad["text"] = artist.get_text()
                     ad["xy"] = list(artist.xy)
                     ad["xytext"] = list(artist.get_position())
+                    ap = getattr(artist, "arrow_patch", None)
+                    if ap is not None:
+                        from matplotlib.colors import to_hex
+                        ad["arrow_color"] = to_hex(ap.get_edgecolor()[:3])
+                        ad["arrow_lw"] = float(ap.get_linewidth())
+                        ad["arrow_ls"] = ap.get_linestyle()
+                        try:
+                            ad["arrow_style"] = str(
+                                ap.get_arrowstyle()).split("(")[0]
+                        except Exception:
+                            ad["arrow_style"] = "->"
                 elif a["type"] == "line":
-                    ad["direction"] = a["direction"]
-                    line = a["artist"]
-                    if a["direction"] == "horizontal":
-                        ad["value"] = float(line.get_ydata()[0])
+                    artist = a["artist"]
+                    # New-style: finite line segment (Annotation object).
+                    if hasattr(artist, 'xy') and hasattr(artist, 'get_position'):
+                        ad["xy"] = list(artist.xy)
+                        ad["xytext"] = list(artist.get_position())
+                        ap = getattr(artist, "arrow_patch", None)
+                        if ap is not None:
+                            from matplotlib.colors import to_hex
+                            ad["arrow_color"] = to_hex(
+                                ap.get_edgecolor()[:3])
+                            ad["arrow_lw"] = float(ap.get_linewidth())
+                            ad["arrow_ls"] = ap.get_linestyle()
                     else:
-                        ad["value"] = float(line.get_xdata()[0])
+                        # Legacy axhline/axvline — save for compat.
+                        ad["direction"] = a.get("direction", "horizontal")
+                        if ad["direction"] == "horizontal":
+                            ad["value"] = float(artist.get_ydata()[0])
+                        else:
+                            ad["value"] = float(artist.get_xdata()[0])
                 ann_list.append(ad)
             d["annotations"] = ann_list
         return d
@@ -1584,22 +1630,37 @@ class EmbeddedChart(QWidget):
         for ad in d.get("annotations", []):
             atype = ad.get("type")
             if atype == "text":
+                fs = ad.get("fontsize", 10)
+                fw = ad.get("fontweight", "normal")
+                fst = ad.get("fontstyle", "normal")
+                tc = ad.get("color", "black")
+                rot = ad.get("rotation", 0)
+                bs = ad.get("bbox_style", "round")
+                bfc = ad.get("bbox_fc", "wheat")
+                ba = ad.get("bbox_alpha", 0.8)
+                bbox_d = dict(boxstyle=f'{bs},pad=0.3',
+                              fc=bfc, alpha=ba)
                 ann = ax.annotate(
                     ad["text"], xy=tuple(ad["xy"]),
                     xytext=tuple(ad["xy"]),
-                    fontsize=10, ha='center', va='center',
-                    bbox=dict(boxstyle='round,pad=0.3',
-                              fc='wheat', alpha=0.8))
+                    fontsize=fs, fontweight=fw, fontstyle=fst,
+                    color=tc, rotation=rot,
+                    ha='center', va='center', bbox=bbox_d)
                 ann.draggable(True)
                 chart._annotations.append(
                     {"type": "text", "artist": ann})
             elif atype == "arrow":
+                ac = ad.get("arrow_color", "black")
+                alw = ad.get("arrow_lw", 1.5)
+                als = ad.get("arrow_ls", "-")
+                astyle = ad.get("arrow_style", "->")
                 ann = ax.annotate(
                     ad.get("text", ""), xy=tuple(ad["xy"]),
                     xytext=tuple(ad.get("xytext", ad["xy"])),
                     fontsize=9,
-                    arrowprops=dict(arrowstyle='->',
-                                    color='black', lw=1.5),
+                    arrowprops=dict(arrowstyle=astyle,
+                                    color=ac, lw=alw,
+                                    linestyle=als),
                     bbox=dict(boxstyle='round,pad=0.2',
                               fc='white', alpha=0.7)
                     if ad.get("text", "").strip() else None)
@@ -1607,16 +1668,34 @@ class EmbeddedChart(QWidget):
                 chart._annotations.append(
                     {"type": "arrow", "artist": ann})
             elif atype == "line":
-                dirn = ad.get("direction", "horizontal")
-                val = ad.get("value", 0)
-                if dirn == "horizontal":
-                    line = ax.axhline(val, color='red', ls='--', lw=1.2)
+                if "xy" in ad and "xytext" in ad:
+                    # New-style finite line segment.
+                    ac = ad.get("arrow_color", "black")
+                    alw = ad.get("arrow_lw", 1.5)
+                    als = ad.get("arrow_ls", "-")
+                    ann = ax.annotate(
+                        "", xy=tuple(ad["xy"]),
+                        xytext=tuple(ad["xytext"]),
+                        arrowprops=dict(arrowstyle='-',
+                                        color=ac, lw=alw,
+                                        linestyle=als))
+                    ann.draggable(True)
+                    chart._annotations.append(
+                        {"type": "line", "artist": ann})
                 else:
-                    line = ax.axvline(val, color='red', ls='--', lw=1.2)
-                dl = _DraggableLine(line, dirn, chart._canvas)
-                chart._annotations.append(
-                    {"type": "line", "artist": line,
-                     "direction": dirn, "dragger": dl})
+                    # Legacy axhline/axvline format.
+                    dirn = ad.get("direction", "horizontal")
+                    val = ad.get("value", 0)
+                    if dirn == "horizontal":
+                        line = ax.axhline(
+                            val, color='red', ls='--', lw=1.2)
+                    else:
+                        line = ax.axvline(
+                            val, color='red', ls='--', lw=1.2)
+                    dl = _DraggableLine(line, dirn, chart._canvas)
+                    chart._annotations.append(
+                        {"type": "line", "artist": line,
+                         "direction": dirn, "dragger": dl})
         chart._canvas.draw_idle()
         return chart
 
@@ -2171,7 +2250,10 @@ class EmbeddedChart(QWidget):
         pass
 
     def _on_canvas_click(self, event):
-        """Handle double-click: label edit or axis properties."""
+        """Handle clicks: single-click selects annotations, double-click
+        opens label edit or axis properties."""
+        if event.button == 1 and not event.dblclick:
+            self._handle_annotation_click(event)
         if event.dblclick:
             # Ignore double-click on legend (use right-click menu).
             if self._hit_legend_mpl(event):
@@ -2348,6 +2430,9 @@ class EmbeddedChart(QWidget):
 
     # ── Context menu ────────────────────────────────────────────────
     def contextMenuEvent(self, event):
+        # Try to select annotation under cursor before building menu.
+        self._try_select_ann_at_pos(event)
+
         menu = QMenu(self)
         menu.addAction("Update Plot", self._refresh_data)
 
@@ -2411,6 +2496,12 @@ class EmbeddedChart(QWidget):
         ann_menu.addAction("Add Text\u2026", self._add_text_annotation)
         ann_menu.addAction("Add Arrow\u2026", self._add_arrow_annotation)
         ann_menu.addAction("Add Line\u2026", self._add_line_annotation)
+        if self._selected_ann_idx >= 0:
+            ann_menu.addSeparator()
+            ann_menu.addAction("Properties\u2026",
+                               self._open_annotation_properties)
+            ann_menu.addAction("Delete",
+                               self._delete_selected_annotation)
 
         # Resize presets — dimensions at 100 dpi (pixels = inches × 100)
         size_menu = menu.addMenu("Size")
@@ -2557,7 +2648,6 @@ class EmbeddedChart(QWidget):
 
     def _add_text_annotation(self):
         """Add a draggable text label at the centre of the current view."""
-        from PyQt5.QtWidgets import QInputDialog
         text, ok = QInputDialog.getText(self, "Add Text", "Text:")
         if not ok or not text.strip():
             return
@@ -2575,7 +2665,6 @@ class EmbeddedChart(QWidget):
 
     def _add_arrow_annotation(self):
         """Add a draggable arrow from one data point to another."""
-        from PyQt5.QtWidgets import QInputDialog
         text, ok = QInputDialog.getText(
             self, "Add Arrow", "Label (blank for none):")
         if not ok:
@@ -2598,28 +2687,196 @@ class EmbeddedChart(QWidget):
         self._canvas.draw_idle()
 
     def _add_line_annotation(self):
-        """Add a draggable horizontal or vertical line."""
-        from PyQt5.QtWidgets import QInputDialog
-        items = ["Horizontal", "Vertical"]
-        choice, ok = QInputDialog.getItem(
-            self, "Add Line", "Direction:", items, 0, False)
-        if not ok:
-            return
+        """Add a finite line segment (like an arrow without arrowheads)."""
         xl, xr = self._ax.get_xlim()
         yb, yt = self._ax.get_ylim()
-        if choice == "Horizontal":
-            val = (yb + yt) / 2
-            line = self._ax.axhline(val, color='red', ls='--', lw=1.2)
-        else:
-            val = (xl + xr) / 2
-            line = self._ax.axvline(val, color='red', ls='--', lw=1.2)
-        # axhline/axvline are not natively draggable — wrap with a
-        # DraggableLine helper that responds to mouse events.
-        dl = _DraggableLine(line, choice.lower(), self._canvas)
-        self._annotations.append({"type": "line", "artist": line,
-                                   "direction": choice.lower(),
-                                   "value": val, "dragger": dl})
+        dx, dy = (xr - xl) * 0.15, (yt - yb) * 0.15
+        cx, cy = (xl + xr) / 2, (yb + yt) / 2
+        ann = self._ax.annotate(
+            "", xy=(cx - dx, cy - dy), xytext=(cx + dx, cy + dy),
+            arrowprops=dict(arrowstyle='-', color='black', lw=1.5))
+        ann.draggable(True)
+        self._annotations.append({"type": "line", "artist": ann,
+                                   "xy": (cx - dx, cy - dy),
+                                   "xytext": (cx + dx, cy + dy)})
         self._canvas.draw_idle()
+
+    # ── Annotation selection / deletion / properties ──────────────────
+
+    def _try_select_ann_at_pos(self, qevent):
+        """Select annotation under a Qt *qevent* (e.g. right-click)."""
+        from .annotation_tools import hit_test_annotations
+        try:
+            canvas_pos = self._canvas.mapFromGlobal(qevent.globalPos())
+            dpr = self._canvas.devicePixelRatio()
+            x_px = canvas_pos.x() * dpr
+            y_px = (self._canvas.height() - canvas_pos.y()) * dpr
+            # Build a fake matplotlib event for hit-testing.
+            inv = self._ax.transData.inverted()
+            xdata, ydata = inv.transform((x_px, y_px))
+
+            class _FakeEvent:
+                pass
+            fe = _FakeEvent()
+            fe.inaxes = self._ax
+            fe.xdata = xdata
+            fe.ydata = ydata
+            fe.x = x_px
+            fe.y = y_px
+            idx = hit_test_annotations(fe, self._annotations,
+                                       self._ax, self._canvas)
+            if idx >= 0:
+                self._select_annotation(idx)
+            else:
+                self._deselect_annotation()
+        except Exception:
+            pass
+
+    def _handle_annotation_click(self, event):
+        """Select or deselect an annotation on single left-click."""
+        from .annotation_tools import (hit_test_annotations,
+                                        hit_test_handle)
+        # If handles are showing, check if user is starting a drag.
+        if self._ann_handles and self._selected_ann_idx >= 0:
+            h = hit_test_handle(event, self._ann_handles, self._ax)
+            if h is not None:
+                self._ann_dragging_handle = h
+                return  # don't deselect — start endpoint drag
+        idx = hit_test_annotations(event, self._annotations,
+                                   self._ax, self._canvas)
+        if idx >= 0:
+            self._select_annotation(idx)
+        else:
+            self._deselect_annotation()
+
+    def _select_annotation(self, idx):
+        """Mark annotation *idx* as selected and draw visual cues."""
+        from .annotation_tools import (draw_text_selection,
+                                        draw_endpoint_handles,
+                                        clear_selection_artists)
+        self._deselect_annotation()
+        if idx < 0 or idx >= len(self._annotations):
+            return
+        self._selected_ann_idx = idx
+        a = self._annotations[idx]
+        atype = a["type"]
+        if atype == "text":
+            arts = draw_text_selection(a["artist"], self._ax, self._canvas)
+            self._ann_select_artists = arts
+        elif atype in ("arrow", "line"):
+            arts, handles = draw_endpoint_handles(
+                a["artist"], self._ax, self._canvas)
+            self._ann_select_artists = arts
+            self._ann_handles = handles
+        # Disable draggable while selected (we manage interaction).
+        try:
+            a["artist"].draggable(False)
+        except Exception:
+            pass
+        self.setFocus()
+        self._canvas.draw_idle()
+
+    def _deselect_annotation(self):
+        """Clear annotation selection visuals."""
+        from .annotation_tools import clear_selection_artists
+        if self._selected_ann_idx < 0:
+            return
+        clear_selection_artists(self._ann_select_artists, self._canvas)
+        self._ann_select_artists = []
+        self._ann_handles = []
+        self._ann_dragging_handle = None
+        # Re-enable draggable.
+        if self._selected_ann_idx < len(self._annotations):
+            a = self._annotations[self._selected_ann_idx]
+            try:
+                a["artist"].draggable(True)
+            except Exception:
+                pass
+        self._selected_ann_idx = -1
+        self._canvas.draw_idle()
+
+    def _delete_selected_annotation(self):
+        """Remove the currently selected annotation."""
+        if self._selected_ann_idx < 0:
+            return
+        from .annotation_tools import clear_selection_artists
+        clear_selection_artists(self._ann_select_artists, self._canvas)
+        self._ann_select_artists = []
+        self._ann_handles = []
+        self._ann_dragging_handle = None
+        a = self._annotations.pop(self._selected_ann_idx)
+        artist = a["artist"]
+        try:
+            artist.remove()
+        except Exception:
+            pass
+        # Disconnect old-style dragger if present (legacy).
+        dragger = a.get("dragger")
+        if dragger is not None:
+            try:
+                dragger.disconnect()
+            except Exception:
+                pass
+        self._selected_ann_idx = -1
+        self._canvas.draw_idle()
+
+    def _open_annotation_properties(self):
+        """Open the property dialog for the selected annotation."""
+        if self._selected_ann_idx < 0:
+            return
+        a = self._annotations[self._selected_ann_idx]
+        if a["type"] == "text":
+            from .annotation_tools import TextAnnotationDialog
+            dlg = TextAnnotationDialog(a, self)
+            if dlg.exec_() == QDialog.Accepted:
+                dlg.apply()
+                # Refresh selection visuals.
+                idx = self._selected_ann_idx
+                self._deselect_annotation()
+                self._select_annotation(idx)
+                self._canvas.draw_idle()
+        elif a["type"] in ("arrow", "line"):
+            from .annotation_tools import LineArrowPropertiesDialog
+            dlg = LineArrowPropertiesDialog(a, self)
+            if dlg.exec_() == QDialog.Accepted:
+                dlg.apply()
+                idx = self._selected_ann_idx
+                self._deselect_annotation()
+                self._select_annotation(idx)
+                self._canvas.draw_idle()
+
+    def keyPressEvent(self, event):
+        """Delete selected annotation on Delete/Backspace."""
+        if event.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+            if self._selected_ann_idx >= 0:
+                self._delete_selected_annotation()
+                return
+        if event.key() == Qt.Key_Escape:
+            self._deselect_annotation()
+            return
+        super().keyPressEvent(event)
+
+    def _on_ann_motion(self, event):
+        """Drag an annotation endpoint handle."""
+        h = self._ann_dragging_handle
+        if h is None or event.inaxes is not self._ax:
+            return
+        idx = self._selected_ann_idx
+        if idx < 0 or idx >= len(self._annotations):
+            return
+        artist = self._annotations[idx]["artist"]
+        pt = (event.xdata, event.ydata)
+        if h["role"] == "xy":
+            artist.xy = pt
+        else:
+            artist.set_position(pt)
+        # Move the handle circle.
+        h["artist"].center = pt
+        self._canvas.draw_idle()
+
+    def _on_ann_release(self, event):
+        """Finish endpoint drag."""
+        self._ann_dragging_handle = None
 
     # ── Double-click opens axis properties ─────────────────────────
     def mouseDoubleClickEvent(self, event):
