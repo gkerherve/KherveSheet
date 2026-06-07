@@ -66,13 +66,10 @@ class _FormulaEdit(QPlainTextEdit):
         self._python_mode = False
         self._highlighter = None
         self._normal_font = self.font()
-        # A "PY" badge pinned to the right edge while editing a Python cell
-        # (matches the green badge drawn on =PY grid cells).
-        self._py_badge = QLabel("PY", self)
-        self._py_badge.setAlignment(Qt.AlignCenter)
-        self._py_badge.setStyleSheet(
-            "background:#2e7d32; color:#ffffff; font-weight:bold; "
-            "font-size:9px;")
+        # A Python "PY" badge pinned to the right edge while editing a
+        # Python cell (matches the badge drawn on =PY grid cells).
+        from .python_engine import PyBadge
+        self._py_badge = PyBadge(self)
         self._py_badge.hide()
         # Pop-out button: opens a larger editor for the cell's program.
         self._pop_btn = QToolButton(self)
@@ -85,7 +82,7 @@ class _FormulaEdit(QPlainTextEdit):
             # Bake to a pixmap (themed icons can render blank on tool
             # buttons — see themed-icon-blank-gotcha).
             pm = icons.themed_icon(
-                "mdi.open-in-new", color="#2e7d32").pixmap(16, 16)
+                "mdi.open-in-new", color="#3776ab").pixmap(16, 16)
             if not pm.isNull():
                 self._pop_btn.setIcon(QIcon(pm))
             else:
@@ -112,7 +109,7 @@ class _FormulaEdit(QPlainTextEdit):
                 self.setMaximumHeight(96)
             self.setMinimumHeight(72)
             # Very faint green background + PY strip, like a =PY grid cell.
-            self.setStyleSheet("QPlainTextEdit{background:#f8fdf9;}")
+            self.setStyleSheet("QPlainTextEdit{background:#f5f9fc;}")
             self._py_badge.show()
             self._py_badge.raise_()
             self._pop_btn.show()

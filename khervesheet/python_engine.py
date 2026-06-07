@@ -486,6 +486,64 @@ class PythonHighlighter(QSyntaxHighlighter):
                 self.setFormat(m.start(), m.end() - m.start(), fmt)
 
 
+# ── "PY" badge (Python brand colours) ────────────────────────────────
+
+PY_BLUE = "#3776ab"      # Python logo blue
+PY_YELLOW = "#ffd43b"    # Python logo yellow
+#: Very faint Python-blue tint for the body of a =PY cell / formula bar.
+PY_TINT = QColor(55, 118, 171, 12)
+
+
+def paint_py_badge(painter, rect):
+    """Paint a rounded, two-tone (Python blue over yellow), raised "PY"
+    badge into *rect* with the given QPainter."""
+    from PyQt5.QtCore import QRectF
+    from PyQt5.QtGui import QPainter, QPainterPath, QPen
+    painter.save()
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    r = QRectF(rect).adjusted(1.5, 1.5, -1.5, -1.5)
+    if r.width() <= 1 or r.height() <= 1:
+        painter.restore()
+        return
+    radius = min(6.0, r.width() * 0.40)
+    clip = QPainterPath()
+    clip.addRoundedRect(r, radius, radius)
+    painter.setClipPath(clip)
+    half = r.height() / 2.0
+    painter.fillRect(QRectF(r.left(), r.top(), r.width(), half),
+                     QColor(PY_BLUE))                       # top = blue
+    painter.fillRect(QRectF(r.left(), r.top() + half, r.width(),
+                            r.height() - half),
+                     QColor(PY_YELLOW))                     # bottom = yellow
+    painter.setClipping(False)
+    # Raised bevel: light highlight inset, darker outer edge.
+    painter.setBrush(Qt.NoBrush)
+    painter.setPen(QPen(QColor(255, 255, 255, 150), 1.2))
+    painter.drawRoundedRect(r.adjusted(0.6, 0.6, -0.6, -0.6), radius, radius)
+    painter.setPen(QPen(QColor(0, 0, 0, 80), 1.0))
+    painter.drawRoundedRect(r, radius, radius)
+    # "PY" text — white with a soft shadow so it reads on both colours.
+    f = QFont(painter.font())
+    f.setBold(True)
+    f.setPointSizeF(max(6.5, min(9.5, r.width() * 0.42)))
+    painter.setFont(f)
+    painter.setPen(QColor(0, 0, 0, 110))
+    painter.drawText(QRectF(r).translated(0.6, 0.9), Qt.AlignCenter, "PY")
+    painter.setPen(QColor("#ffffff"))
+    painter.drawText(r, Qt.AlignCenter, "PY")
+    painter.restore()
+
+
+class PyBadge(QWidget):
+    """Widget that paints the Python "PY" badge (used on the formula bar)."""
+
+    def paintEvent(self, event):
+        from PyQt5.QtGui import QPainter
+        p = QPainter(self)
+        paint_py_badge(p, self.rect())
+        p.end()
+
+
 # ── Help ─────────────────────────────────────────────────────────────
 
 PYTHON_HELP_HTML = """
