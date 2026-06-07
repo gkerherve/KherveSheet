@@ -123,12 +123,16 @@ def fetch_json(url, timeout=8):
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.load(r)
 
+# timezone=auto -> times are in the location's local zone; "current"
+# gives "now" so we can show the NEXT 24 hours, not the past ones.
 url = ("https://api.open-meteo.com/v1/forecast"
        f"?latitude={lat}&longitude={lon}"
        "&hourly=temperature_2m,weathercode"
        "&daily=temperature_2m_max,temperature_2m_min,weathercode"
-       f"&timezone=Europe/London&forecast_days={days}")
+       "&current=temperature_2m,weathercode"
+       f"&timezone=auto&forecast_days={days}")
 live = True
+now = None
 try:
     d = fetch_json(url)
     htime = d["hourly"]["time"]; htemp = d["hourly"]["temperature_2m"]
@@ -137,24 +141,52 @@ try:
     dmax = d["daily"]["temperature_2m_max"]
     dmin = d["daily"]["temperature_2m_min"]
     dcode = d["daily"]["weathercode"]
+    now = d["current"]["time"]                    # local "now", e.g. 14:15
 except Exception:
     live = False                                  # offline -> sample data
     rng = np.random.default_rng(0)
-    htime = [f"2025-01-01T{h:02d}:00" for h in range(24)]
-    htemp = (8 + 5*np.sin((np.arange(24)-9)/24*2*np.pi)
-             + rng.normal(0, 0.5, 24)).round(1).tolist()
-    hcode = [3, 3, 3, 45, 2, 1, 0, 0, 1, 2, 2, 3, 61, 63, 61, 80,
-             3, 2, 1, 0, 0, 1, 2, 3]
+    htime = [f"2025-01-01T{h:02d}:00" for h in range(48)]
+    htemp = (8 + 5*np.sin((np.arange(48)-9)/24*2*np.pi)
+             + rng.normal(0, 0.5, 48)).round(1).tolist()
+    hcode = ([3, 3, 3, 45, 2, 1, 0, 0, 1, 2, 2, 3, 61, 63, 61, 80,
+              3, 2, 1, 0, 0, 1, 2, 3]) * 2
     dday = [f"day {i+1}" for i in range(days)]
     dmax = (12 + rng.normal(0, 2, days)).round(1).tolist()
     dmin = (5 + rng.normal(0, 2, days)).round(1).tolist()
     dcode = [0, 2, 3, 61, 80, 1, 95][:days]
 
-# Today = the first 24 hourly samples.
-hours = [t[11:16] for t in htime[:24]]
-temps = [float(v) for v in htemp[:24]]
-hcat = [code_info(c)[2] for c in hcode[:24]]
-hcond = [f"{code_info(c)[0]} {code_info(c)[1]}" for c in hcode[:24]]
+# Find "now" in the hourly series and take the NEXT 24 hours from there.
+start = 0
+if now is not None:
+    for i, t in enumerate(htime):
+        if t <= now:
+            start = i              # last hour bucket at or before now
+        else:
+            break
+end = start + 24
+htime = htime[start:end]
+htemp = htemp[start:end]
+hcode = hcode[start:end]
+
+# Reverse-geocode the latitude/longitude into a place name for B5.
+location = f"{lat:.4f}, {lon:.4f}"
+try:
+    g = fetch_json("https://api.bigdatacloud.net/data/"
+                   f"reverse-geocode-client?latitude={lat}&longitude={lon}"
+                   "&localityLanguage=en")
+    place = (g.get("city") or g.get("locality")
+             or g.get("principalSubdivision") or "")
+    cc = g.get("countryCode") or ""
+    if place:
+        location = place + (f", {cc}" if cc else "")
+except Exception:
+    pass
+ks_set("B5", location)             # write the resolved location name
+
+hours = [t[11:16] for t in htime]
+temps = [float(v) for v in htemp]
+hcat = [code_info(c)[2] for c in hcode]
+hcond = [f"{code_info(c)[0]} {code_info(c)[1]}" for c in hcode]
 dcat = [code_info(c)[2] for c in dcode[:days]]
 dcond = [f"{code_info(c)[0]} {code_info(c)[1]}" for c in dcode[:days]]
 
@@ -172,11 +204,13 @@ fig, (axc, axt, axf) = plt.subplots(
     3, 1, figsize=(7.8, 6.4),
     gridspec_kw={"height_ratios": [1.1, 2.6, 1.4]})
 
+fig.suptitle(f"{location} — weather"
+             + ("" if live else "   [offline sample]"),
+             fontsize=12, fontweight="bold")
 step = list(range(0, 24, 3))         # every 3 h -> 8 icons
 axc.set_xlim(-0.6, len(step)-0.4); axc.set_ylim(-0.9, 1.2)
 axc.set_aspect("equal"); axc.axis("off")
-axc.set_title("London — conditions today"
-              + ("" if live else "   [offline sample]"))
+axc.set_title("Next 24 hours")
 for j, i in enumerate(step):
     draw_icon(axc, j, 0.1, hcat[i], 0.40)
     axc.text(j, -0.7, hours[i], ha="center", fontsize=7)
@@ -198,7 +232,7 @@ for i in range(ndays):
     axf.text(i, 1.05, f"{dmax[i]:.0f}°/{dmin[i]:.0f}°",
              ha="center", fontsize=7, fontweight="bold")
     axf.text(i, -0.8, str(dday[i])[5:], ha="center", fontsize=7)
-fig.subplots_adjust(hspace=0.55, top=0.93, bottom=0.04)
+fig.subplots_adjust(hspace=0.55, top=0.90, bottom=0.04)
 plt.gcf()'''
 
 
@@ -210,13 +244,15 @@ def build():
                   "(Open-Meteo)")
 
     inputs = [("Latitude", 51.5072), ("Longitude", -0.1276),
-              ("Location", "London, UK"), ("Forecast days", 7),
+              ("Location (auto)", ""), ("Forecast days", 7),
               ("Data status", "")]
     for i, (label, v) in enumerate(inputs):
         r = 2 + i
         s.set(r, 0, label); s.set(r, 1, v)
         s.fmt(r, 0, bold=True)
         s.fmt(r, 1, bg=PALETTE["warn"], align="center")
+    # Location (B5) and Data status (B7) are filled by the =PY cell.
+    s.fmt(4, 1, bg=PALETTE["good"], align="center")
     s.fmt(6, 1, bg=PALETTE["good"], align="center")
 
     # Result-table headers (filled by the =PY cell).
