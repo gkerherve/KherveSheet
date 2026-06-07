@@ -1382,6 +1382,11 @@ class SheetWidget(QWidget):
         self._py_stdout: dict = {}       # (row, col) → captured print output
         self._py_figures: dict = {}      # (row, col) → EmbeddedImage (plot)
         self._py_udf_names: set = set()  # UPPER names of Python funcs as UDFs
+        self._py_loops: dict = {}        # (row, col) → loop interval seconds
+        self._py_loop_last: dict = {}    # (row, col) → last run monotonic time
+        self._py_loop_timer = None       # QTimer ticking due loop cells
+        self._py_loop_running = False     # guard against overlapping runs
+        self._fmt_delegate._py_loops = self._py_loops
         self._dependents: dict = {}      # (row, col) → set of (r, c) that depend on it
         self._xref_cells: set = set()    # formula cells using Sheet!ref
         self._col_formats: dict = {}     # col → format string
@@ -1489,6 +1494,9 @@ class SheetWidget(QWidget):
         self._py_errors.clear()
         self._py_stdout.clear()
         self._py_figures.clear()
+        self._py_loops.clear()
+        self._py_loop_last.clear()
+        self._stop_py_loops()
         self._dependents.clear()
         self._xref_cells.clear()
         self._cell_formats.clear()
@@ -1802,6 +1810,7 @@ class SheetWidget(QWidget):
         formula = self._cell_formulas.get((row, col))
         if formula:
             self._formula_bar.set_python_mode(is_python_source(formula))
+            self._formula_bar._py_badge.set_loop(self._py_loops.get((row, col)))
             self._formula_bar.setText(formula)
         else:
             self._formula_bar.set_python_mode(False)
@@ -2344,6 +2353,78 @@ class SheetWidget(QWidget):
             "stdout": self._py_stdout.get((row, col), ""),
             "has_plot": (row, col) in self._py_figures,
         }
+
+    # ── Python auto-refresh loops ────────────────────────────────────
+    def _set_py_loop(self, row, col, secs):
+        """Set (or clear, when *secs* is falsy) the auto-refresh interval
+        for a =PY cell, then (re)start or stop the loop timer."""
+        if secs:
+            self._py_loops[(row, col)] = int(secs)
+            import time
+            self._py_loop_last[(row, col)] = time.monotonic()
+            self._start_py_loops()
+        else:
+            self._py_loops.pop((row, col), None)
+            self._py_loop_last.pop((row, col), None)
+            if not self._py_loops:
+                self._stop_py_loops()
+        # Refresh the cell badge and the formula bar badge.
+        idx = self.table.model().index(row, col)
+        self.table.update(idx)
+        cur = self.table.currentIndex()
+        if cur.isValid() and (cur.row(), cur.column()) == (row, col):
+            self._formula_bar._py_badge.set_loop(self._py_loops.get((row, col)))
+
+    def _start_py_loops(self):
+        """Start the 1 Hz timer that re-runs due =PY loop cells."""
+        if self._py_loop_timer is None:
+            self._py_loop_timer = QTimer(self)
+            self._py_loop_timer.setInterval(1000)
+            self._py_loop_timer.timeout.connect(self._py_loop_tick)
+        if self._py_loops and not self._py_loop_timer.isActive():
+            self._py_loop_timer.start()
+
+    def _stop_py_loops(self):
+        if self._py_loop_timer is not None:
+            self._py_loop_timer.stop()
+
+    def _py_loop_custom(self, row, col):
+        """Prompt for a custom loop interval (seconds) for a =PY cell."""
+        cur = self._py_loops.get((row, col), 10)
+        secs, ok = QInputDialog.getInt(
+            self, "Python loop", "Re-run this cell every (seconds):",
+            cur, 1, 86400, 1)
+        if ok:
+            self._set_py_loop(row, col, secs)
+
+    def _py_loop_tick(self):
+        """Re-run any =PY loop cell whose interval has elapsed."""
+        if not self._py_loops or self._py_loop_running:
+            return
+        import time
+        now = time.monotonic()
+        editor = self._find_inline_editor()
+        cur = self.table.currentIndex()
+        for (r, c), secs in list(self._py_loops.items()):
+            src = self._cell_formulas.get((r, c))
+            if not is_python_source(src):
+                self._py_loops.pop((r, c), None)   # cell no longer =PY
+                continue
+            if now - self._py_loop_last.get((r, c), 0) < secs:
+                continue
+            # Don't clobber the cell while the user is editing it.
+            if (editor is not None and cur.isValid()
+                    and (cur.row(), cur.column()) == (r, c)):
+                continue
+            self._py_loop_last[(r, c)] = now
+            self._py_loop_running = True
+            try:
+                self._reeval_formula_cell(r, c)    # re-run, no undo push
+                self._recalc_dependents(r, c)
+            except Exception:
+                pass
+            finally:
+                self._py_loop_running = False
 
     def _py_help(self):
         """Open the Python examples (HTML page, or the in-app dialog)."""
@@ -4089,6 +4170,29 @@ class SheetWidget(QWidget):
                 "Ignore All",
                 lambda: (spellcheck.ignore_word(word),
                          self.table.viewport().update()))
+            menu.addSeparator()
+
+        # Python loop (auto-refresh) submenu — only for =PY cells.
+        cidx = self.table.indexAt(pos)
+        if cidx.isValid() and is_python_source(
+                self._cell_formulas.get((cidx.row(), cidx.column()))):
+            r0, c0 = cidx.row(), cidx.column()
+            current = self._py_loops.get((r0, c0), 0)
+            lm = menu.addMenu("Python loop (auto-refresh)")
+            for label, sec in (("Off", 0), ("5 seconds", 5),
+                               ("10 seconds", 10), ("30 seconds", 30),
+                               ("1 minute", 60), ("5 minutes", 300),
+                               ("15 minutes", 900)):
+                act = lm.addAction(label)
+                act.setCheckable(True)
+                act.setChecked(current == sec)
+                act.triggered.connect(
+                    lambda _=False, rr=r0, cc=c0, s=sec:
+                    self._set_py_loop(rr, cc, s))
+            lm.addSeparator()
+            cact = lm.addAction("Custom…")
+            cact.triggered.connect(
+                lambda _=False, rr=r0, cc=c0: self._py_loop_custom(rr, cc))
             menu.addSeparator()
 
         # Plot submenu first (like KhervePlot)

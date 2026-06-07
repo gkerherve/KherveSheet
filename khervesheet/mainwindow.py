@@ -1640,6 +1640,12 @@ class MainWindow(QMainWindow):
                     if iops_json:
                         sg.attrs['insert_ops'] = iops_json
 
+                    # Python loop (auto-refresh) intervals.
+                    loops = getattr(sheet, "_py_loops", None)
+                    if loops:
+                        sg.attrs['py_loops'] = json.dumps(
+                            {f"{r},{c}": int(s) for (r, c), s in loops.items()})
+
                     # Column widths.
                     widths = [sheet.table.columnWidth(c)
                               for c in range(n_cols)]
@@ -1942,7 +1948,9 @@ class MainWindow(QMainWindow):
                     # defs precede later uses), but only if the user trusts
                     # this file — opening a workbook must not silently run
                     # code it carries.
-                    if pending_python and self._confirm_python_trust(path):
+                    trusted = (self._confirm_python_trust(path)
+                               if pending_python else False)
+                    if pending_python and trusted:
                         for r, c, src in pending_python:
                             sheet._register_py_deps(r, c, src)
                             display = sheet._evaluate_python(src, r, c)
@@ -1965,6 +1973,21 @@ class MainWindow(QMainWindow):
                             if it:
                                 it.setText("⟨Python — not run⟩")
                             sheet._shadow[(r, c)] = "⟨Python — not run⟩"
+
+                    # Restore Python auto-refresh loop intervals; only
+                    # start ticking them on a trusted workbook.
+                    loops_json = sg.attrs.get('py_loops')
+                    if isinstance(loops_json, bytes):
+                        loops_json = loops_json.decode('utf-8')
+                    if loops_json:
+                        try:
+                            for k, sv in json.loads(loops_json).items():
+                                rr, cc = (int(x) for x in k.split(','))
+                                sheet._py_loops[(rr, cc)] = int(sv)
+                        except Exception:
+                            pass
+                        if trusted:
+                            sheet._start_py_loops()
                     # NB: keep table signals blocked through the
                     # designation / insert-ops / cell-format restore
                     # below.  Those steps mutate items (setBackground,

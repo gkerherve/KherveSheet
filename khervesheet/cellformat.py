@@ -188,8 +188,11 @@ class CellFormatDelegate(QStyledItemDelegate):
         # Dropdowns: {(row, col): list[str]} — pointer set by SheetWidget
         self._dropdowns: Dict[Tuple[int, int], list] = {}
         # Cell formulas: {(row, col): "=..."} — pointer set by SheetWidget.
-        # Used to give Python (=PY) cells a green tint and a "PY" badge.
+        # Used to give Python (=PY) cells a tint and a "PY" badge.
         self._cell_formulas: Dict[Tuple[int, int], str] = {}
+        # Python loop intervals: {(row, col): seconds} — pointer set by
+        # SheetWidget; drives the loop marker on the PY badge.
+        self._py_loops: Dict[Tuple[int, int], int] = {}
         # Live spell-check: when True, misspelled words get a red wavy
         # underline.  Toggled from the Tools menu.
         self._spell_enabled: bool = False
@@ -318,7 +321,8 @@ class CellFormatDelegate(QStyledItemDelegate):
             r = option.rect
             bw = 20
             paint_py_badge(
-                painter, QRect(r.right() - bw, r.top(), bw, r.height()))
+                painter, QRect(r.right() - bw, r.top(), bw, r.height()),
+                self._py_loops.get(key))
 
         # Draw formula reference border on top.
         if ref_color:

@@ -270,6 +270,39 @@ def test_ks_set_to_own_input_does_not_rerun(qapp):
     assert s.table.item(0, 1).text() in ("15", "15.0")
 
 
+def test_fmt_loop_period():
+    from khervesheet.python_engine import fmt_loop_period
+    assert fmt_loop_period(5) == "5s"
+    assert fmt_loop_period(90) == "1m"
+    assert fmt_loop_period(7200) == "2h"
+
+
+def test_py_loop_set_clear_and_tick(qapp):
+    import time
+    from khervesheet.workbook import WorkbookWidget
+    wb = WorkbookWidget()
+    s = wb.tabs.widget(0)
+    _put(s, 0, 1, "0")                                  # B1 counter
+    _put(s, 0, 0, '=PY\nv = ks("B1")\nks_set("B1", v + 1)\nint(v + 1)')
+    assert s.table.item(0, 1).text() == "1"
+    # Enable a loop -> recorded and the timer starts.
+    s._set_py_loop(0, 0, 5)
+    assert s._py_loops == {(0, 0): 5}
+    assert s._py_loop_timer.isActive()
+    # A due tick re-runs the cell (counter increments).
+    s._py_loop_last[(0, 0)] = time.monotonic() - 10
+    s._py_loop_tick()
+    assert s.table.item(0, 1).text() == "2"
+    # A not-yet-due tick does nothing.
+    s._py_loop_tick()
+    assert s.table.item(0, 1).text() == "2"
+    # Turning it off clears it and stops the timer.
+    s._set_py_loop(0, 0, 0)
+    assert (0, 0) not in s._py_loops
+    assert not s._py_loop_timer.isActive()
+    assert not s._py_errors
+
+
 def test_sheet_python_error_shows_pyerr(qapp):
     from khervesheet.workbook import WorkbookWidget
     wb = WorkbookWidget()

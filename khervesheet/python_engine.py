@@ -494,9 +494,45 @@ PY_YELLOW = "#ffd43b"    # Python logo yellow
 PY_TINT = QColor(55, 118, 171, 12)
 
 
-def paint_py_badge(painter, rect):
+def fmt_loop_period(secs):
+    """Compact label for a loop interval, e.g. 5 -> '5s', 90 -> '2m'."""
+    secs = int(round(secs))
+    if secs < 60:
+        return f"{secs}s"
+    if secs < 3600:
+        return f"{secs // 60}m"
+    return f"{secs // 3600}h"
+
+
+def _draw_refresh(painter, cx, cy, rad, color):
+    """Draw a small circular-arrow (refresh) glyph centred at (cx, cy)."""
+    import math
+    from PyQt5.QtCore import QRectF, QPointF
+    from PyQt5.QtGui import QPen, QPolygonF
+    painter.save()
+    painter.setBrush(Qt.NoBrush)
+    painter.setPen(QPen(color, max(1.0, rad * 0.35), Qt.SolidLine,
+                        Qt.RoundCap))
+    rr = QRectF(cx - rad, cy - rad, 2 * rad, 2 * rad)
+    painter.drawArc(rr, int(105 * 16), int(-300 * 16))     # ~300° arc
+    # Arrowhead at the open (start) end, ~105°.
+    a = math.radians(105)
+    ex, ey = cx + rad * math.cos(a), cy - rad * math.sin(a)
+    h = rad * 0.7
+    painter.setPen(Qt.NoPen)
+    painter.setBrush(color)
+    painter.drawPolygon(QPolygonF([
+        QPointF(ex + h, ey - h * 0.2),
+        QPointF(ex - h * 0.2, ey - h),
+        QPointF(ex - h * 0.3, ey + h * 0.3),
+    ]))
+    painter.restore()
+
+
+def paint_py_badge(painter, rect, loop_secs=None):
     """Paint a rounded, two-tone (Python blue over yellow), raised "PY"
-    badge into *rect* with the given QPainter."""
+    badge into *rect*.  When *loop_secs* is set, the badge shows a refresh
+    glyph and the period (e.g. "5s") instead of the logo eyes."""
     from PyQt5.QtCore import QRectF, QPointF
     from PyQt5.QtGui import QPainter, QPainterPath, QPen
     painter.save()
@@ -515,16 +551,17 @@ def paint_py_badge(painter, rect):
     painter.fillRect(QRectF(r.left(), r.top() + half, r.width(),
                             r.height() - half),
                      QColor(PY_YELLOW))                     # bottom = yellow
-    # Two tiny white "eyes" echoing the Python logo: one on the blue
-    # (top-left), one on the yellow (bottom-right), diagonally arranged.
-    dot = max(1.0, r.width() * 0.12)
-    dx = r.width() * 0.17
-    dy = r.height() * 0.17
-    painter.setPen(Qt.NoPen)
-    painter.setBrush(QColor("#ffffff"))
-    painter.drawEllipse(QPointF(r.center().x() - dx, r.top() + dy), dot, dot)
-    painter.drawEllipse(QPointF(r.center().x() + dx, r.bottom() - dy),
-                        dot, dot)
+    if loop_secs is None:
+        # Two tiny white "eyes" echoing the Python logo (blue top-left,
+        # yellow bottom-right), diagonally arranged.
+        dot = max(1.0, r.width() * 0.12)
+        dx = r.width() * 0.17
+        dy = r.height() * 0.17
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor("#ffffff"))
+        painter.drawEllipse(QPointF(r.center().x()-dx, r.top()+dy), dot, dot)
+        painter.drawEllipse(QPointF(r.center().x()+dx, r.bottom()-dy),
+                            dot, dot)
     painter.setClipping(False)
     # Raised bevel: light highlight inset, darker outer edge.
     painter.setBrush(Qt.NoBrush)
@@ -532,25 +569,55 @@ def paint_py_badge(painter, rect):
     painter.drawRoundedRect(r.adjusted(0.6, 0.6, -0.6, -0.6), radius, radius)
     painter.setPen(QPen(QColor(0, 0, 0, 80), 1.0))
     painter.drawRoundedRect(r, radius, radius)
-    # "PY" text — white with a soft shadow so it reads on both colours.
+
     f = QFont(painter.font())
     f.setBold(True)
-    f.setPointSizeF(max(6.5, min(9.5, r.width() * 0.42)))
-    painter.setFont(f)
-    painter.setPen(QColor(0, 0, 0, 110))
-    painter.drawText(QRectF(r).translated(0.6, 0.9), Qt.AlignCenter, "PY")
-    painter.setPen(QColor("#ffffff"))
-    painter.drawText(r, Qt.AlignCenter, "PY")
+    if loop_secs is None:
+        f.setPointSizeF(max(6.5, min(9.5, r.width() * 0.42)))
+        painter.setFont(f)
+        painter.setPen(QColor(0, 0, 0, 110))
+        painter.drawText(QRectF(r).translated(0.6, 0.9), Qt.AlignCenter, "PY")
+        painter.setPen(QColor("#ffffff"))
+        painter.drawText(r, Qt.AlignCenter, "PY")
+    else:
+        # Looping: "PY" (upper) + refresh glyph + period (lower).
+        top = QRectF(r.left(), r.top(), r.width(), r.height() * 0.52)
+        bot = QRectF(r.left(), r.top() + r.height() * 0.50,
+                     r.width(), r.height() * 0.50)
+        f.setPointSizeF(max(6.0, min(8.5, r.width() * 0.38)))
+        painter.setFont(f)
+        painter.setPen(QColor("#ffffff"))
+        painter.drawText(top, Qt.AlignCenter, "PY")
+        _draw_refresh(painter, bot.center().x() - r.width() * 0.22,
+                      bot.center().y(), max(2.0, r.width() * 0.14),
+                      QColor("#ffffff"))
+        fp = QFont(f)
+        fp.setPointSizeF(max(5.5, min(7.5, r.width() * 0.30)))
+        painter.setFont(fp)
+        painter.setPen(QColor(0, 0, 0, 160))
+        painter.drawText(bot.translated(r.width()*0.10, 0),
+                         Qt.AlignCenter, fmt_loop_period(loop_secs))
     painter.restore()
 
 
 class PyBadge(QWidget):
-    """Widget that paints the Python "PY" badge (used on the formula bar)."""
+    """Widget that paints the Python "PY" badge (used on the formula bar).
+
+    Set ``loop_secs`` (then call update) to show the loop indicator."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.loop_secs = None
+
+    def set_loop(self, secs):
+        if secs != self.loop_secs:
+            self.loop_secs = secs
+            self.update()
 
     def paintEvent(self, event):
         from PyQt5.QtGui import QPainter
         p = QPainter(self)
-        paint_py_badge(p, self.rect())
+        paint_py_badge(p, self.rect(), self.loop_secs)
         p.end()
 
 
