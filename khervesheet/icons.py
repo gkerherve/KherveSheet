@@ -136,19 +136,28 @@ def themed_icon(qta_name: str, std_fallback=None,
     return QIcon()
 
 
-def make_app_icon() -> QIcon:
-    pm = QPixmap(32, 32)
+def _draw_app_pixmap(size: int = 32) -> QPixmap:
+    """Render the green "KS" monogram at *size* pixels (crisp at any res)."""
+    pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing, True)
     p.setBrush(QColor(34, 139, 34))
     p.setPen(Qt.NoPen)
-    p.drawRoundedRect(0, 0, 32, 32, 6, 6)
+    radius = max(1, size * 6 // 32)
+    p.drawRoundedRect(0, 0, size, size, radius, radius)
     p.setPen(Qt.white)
-    p.setFont(QFont("Segoe UI", 13, QFont.Bold))
+    p.setFont(QFont("Segoe UI", max(6, size * 13 // 32), QFont.Bold))
     p.drawText(pm.rect(), Qt.AlignCenter, "KS")
     p.end()
-    return QIcon(pm)
+    return pm
+
+
+def make_app_icon() -> QIcon:
+    icon = QIcon()
+    for sz in (16, 24, 32, 48, 64, 128, 256):
+        icon.addPixmap(_draw_app_pixmap(sz))
+    return icon
 
 
 def init_app_icon() -> QIcon:
