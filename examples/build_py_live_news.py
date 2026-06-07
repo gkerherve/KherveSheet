@@ -78,8 +78,8 @@ ks_set("C9", [lk for _, lk, _ in items])
 
 # News board: one row per headline = thumbnail (left) + title (right).
 m = max(1, len(items))
-fig = plt.figure(figsize=(8.6, 1.25 * m + 0.4))
-gs = fig.add_gridspec(m, 2, width_ratios=[1, 3], hspace=0.45, wspace=0.04)
+fig = plt.figure(figsize=(11.5, 1.7 * m + 0.6))
+gs = fig.add_gridspec(m, 2, width_ratios=[1, 3], hspace=0.4, wspace=0.04)
 for i, (title, link, img) in enumerate(items):
     ai = fig.add_subplot(gs[i, 0]); ai.axis("off")
     arr = _img(img)
@@ -89,9 +89,9 @@ for i, (title, link, img) in enumerate(items):
         ai.add_patch(plt.Rectangle((0, 0), 1, 1, color="#dfe3e8"))
         ai.set_xlim(0, 1); ai.set_ylim(0, 1)
         ai.text(0.5, 0.5, "no image", ha="center", va="center",
-                fontsize=7, color="#888")
+                fontsize=9, color="#888")
     at = fig.add_subplot(gs[i, 1]); at.axis("off")
-    at.text(0.0, 0.5, textwrap.fill(title, 66), va="center", fontsize=9)
+    at.text(0.0, 0.5, textwrap.fill(title, 60), va="center", fontsize=12)
 domain = feed.split("//")[-1].split("/")[0]
 fig.suptitle(f"Live news — {domain}"
              + ("" if live else "   [offline sample]"),

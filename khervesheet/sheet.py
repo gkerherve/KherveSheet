@@ -3050,7 +3050,9 @@ class SheetWidget(QWidget):
             self._py_figures = {}
         buf = BytesIO()
         try:
-            figure.savefig(buf, format="png", dpi=100, bbox_inches="tight")
+            # Render at a higher DPI so the embedded plot stays sharp even
+            # when enlarged by dragging.
+            figure.savefig(buf, format="png", dpi=140, bbox_inches="tight")
         except Exception:
             return
         pm = QPixmap()
@@ -3066,13 +3068,7 @@ class SheetWidget(QWidget):
             plt.close(figure)
         except Exception:
             pass
-        x = (self.table.columnViewportPosition(col)
-             + self.table.columnWidth(col) + 4)
-        y = self.table.rowViewportPosition(row)
-        img.move(max(0, x), max(0, y))
-        img.show()
-        self._images.append(img)
-        self._py_figures[(row, col)] = img
+        self._place_py_embed(img, pm, row, col)
 
     def _embed_py_image(self, pixmap, row, col):
         """Embed a picture (QPixmap) produced by a =PY cell near the cell."""
@@ -3080,6 +3076,16 @@ class SheetWidget(QWidget):
         if pixmap is None or pixmap.isNull():
             return
         img = EmbeddedImage(pixmap, self.table.viewport())
+        self._place_py_embed(img, pixmap, row, col)
+
+    def _place_py_embed(self, img, pixmap, row, col):
+        """Position a =PY plot/image overlay and size it to the rendered
+        picture (capped) so it shows at a usable size by default — the
+        user can still drag the handles to resize it further."""
+        tw = min(pixmap.width(), 1100)
+        th = min(pixmap.height(), 850)
+        if tw > 0 and th > 0:
+            img.resize(tw + 4, th + 4)
         x = (self.table.columnViewportPosition(col)
              + self.table.columnWidth(col) + 4)
         y = self.table.rowViewportPosition(row)
