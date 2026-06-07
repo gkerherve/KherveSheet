@@ -889,58 +889,10 @@ def _multi_sheet_demo():
 
 # ── Live Data templates (=PY cells with network access) ──────────
 
-def _live_weather():
-    h = ["", ""]
-    rows = [
-        ["City", "London, UK"],
-        ["Latitude", "51.51"],
-        ["Longitude", "-0.13"],
-        ["", ""],
-        ["Temperature (°C)", "=PY\n"
-         "import urllib.request, json\n"
-         "lat, lon = ks('B2'), ks('B3')\n"
-         "url = f'https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current_weather=true'\n"
-         "data = json.loads(urllib.request.urlopen(url).read())\n"
-         "cw = data['current_weather']\n"
-         "cw['temperature']"],
-        ["Wind Speed (km/h)", "=PY\ncw['windspeed']"],
-        ["Wind Direction (°)", "=PY\ncw['winddirection']"],
-        ["Weather Code", "=PY\ncw['weathercode']"],
-        ["Last Updated", "=PY\ncw.get('time', '')"],
-        ["", ""],
-        ["Forecast Plot", "=PY\n"
-         "import urllib.request, json\n"
-         "import matplotlib.pyplot as plt\n"
-         "import numpy as np\n"
-         "lat, lon = ks('B2'), ks('B3')\n"
-         "url = (f'https://api.open-meteo.com/v1/forecast'\n"
-         "       f'?latitude={lat}&longitude={lon}'\n"
-         "       f'&hourly=temperature_2m,relative_humidity_2m'\n"
-         "       f'&forecast_days=3')\n"
-         "data = json.loads(urllib.request.urlopen(url).read())\n"
-         "temps = data['hourly']['temperature_2m']\n"
-         "humidity = data['hourly']['relative_humidity_2m']\n"
-         "hours = np.arange(len(temps))\n"
-         "fig, ax1 = plt.subplots(figsize=(8, 4))\n"
-         "ax1.plot(hours, temps, 'o-', color='#E07B39', markersize=2, label='Temperature')\n"
-         "ax1.set_xlabel('Hours from now')\n"
-         "ax1.set_ylabel('Temperature (°C)', color='#E07B39')\n"
-         "ax1.tick_params(axis='y', labelcolor='#E07B39')\n"
-         "ax2 = ax1.twinx()\n"
-         "ax2.fill_between(hours, humidity, alpha=0.2, color='#4472C4')\n"
-         "ax2.set_ylabel('Humidity (%)', color='#4472C4')\n"
-         "ax2.tick_params(axis='y', labelcolor='#4472C4')\n"
-         "city = ks('B1')\n"
-         "ax1.set_title(f'{city} — 3-Day Forecast', fontweight='bold')\n"
-         "ax1.grid(True, alpha=0.3)\n"
-         "fig.tight_layout()\n"
-         "fig"],
-    ]
-    return [("Weather", h, rows)]
-
-
 def _live_news():
     h = ["", ""]
+    # Row 0 = header (row 1 in A1). Data rows start at row 1 (row 2 in A1).
+    # So B2 = "BBC News", B3 = URL.  The =PY cell must use B3.
     rows = [
         ["Feed", "BBC News"],
         ["URL", "https://feeds.bbci.co.uk/news/rss.xml"],
@@ -948,64 +900,21 @@ def _live_news():
         ["Headlines", "=PY\n"
          "import urllib.request\n"
          "from xml.etree import ElementTree as ET\n"
-         "url = ks('B2')\n"
+         "url = ks('B3')\n"
          "data = urllib.request.urlopen(url).read()\n"
          "root = ET.fromstring(data)\n"
-         "items = root.findall('.//item')[:12]\n"
-         "headlines = []\n"
+         "items = root.findall('.//item')[:15]\n"
+         "lines = []\n"
          "for it in items:\n"
          "    title = it.find('title').text or ''\n"
          "    pub = it.find('pubDate')\n"
          "    time_str = ''\n"
          "    if pub is not None and pub.text and ',' in pub.text:\n"
          "        time_str = pub.text.split(',')[-1].strip()[:17]\n"
-         "    headlines.append(f'{time_str}  {title}')\n"
-         "'\\n'.join(headlines)"],
+         "    lines.append(f'{time_str}  {title}')\n"
+         "lines"],
     ]
     return [("News", h, rows)]
-
-
-def _live_exchange_rates():
-    h = ["", ""]
-    rows = [
-        ["Base Currency", "USD"],
-        ["", ""],
-        ["Currency", "Rate"],
-        ["EUR", "=PY\n"
-         "import urllib.request, json\n"
-         "base = ks('B1')\n"
-         "url = f'https://open.er-api.com/v6/latest/{base}'\n"
-         "data = json.loads(urllib.request.urlopen(url).read())\n"
-         "rates = data['rates']\n"
-         "rates.get('EUR', 'N/A')"],
-        ["GBP", "=PY\nrates.get('GBP', 'N/A')"],
-        ["JPY", "=PY\nrates.get('JPY', 'N/A')"],
-        ["CHF", "=PY\nrates.get('CHF', 'N/A')"],
-        ["CAD", "=PY\nrates.get('CAD', 'N/A')"],
-        ["AUD", "=PY\nrates.get('AUD', 'N/A')"],
-        ["CNY", "=PY\nrates.get('CNY', 'N/A')"],
-        ["TRY", "=PY\nrates.get('TRY', 'N/A')"],
-        ["", ""],
-        ["Last Updated", "=PY\ndata.get('time_last_update_utc', '')"],
-        ["", ""],
-        ["Chart", "=PY\n"
-         "import matplotlib.pyplot as plt\n"
-         "labels = ['EUR','GBP','JPY','CHF','CAD','AUD','CNY','TRY']\n"
-         "vals = [rates.get(c, 0) for c in labels]\n"
-         "fig, ax = plt.subplots(figsize=(7, 4))\n"
-         "colors = ['#4472C4','#E07B39','#A5A5A5','#FFC000',\n"
-         "          '#5B9BD5','#70AD47','#ED7D31','#BF4B4B']\n"
-         "ax.barh(labels, vals, color=colors)\n"
-         "base = ks('B1')\n"
-         "ax.set_xlabel(f'Value per 1 {base}')\n"
-         "ax.set_title(f'Exchange Rates ({base})', fontweight='bold')\n"
-         "ax.invert_yaxis()\n"
-         "for i, v in enumerate(vals):\n"
-         "    ax.text(v, i, f'  {v:.4f}', va='center', fontsize=8)\n"
-         "fig.tight_layout()\n"
-         "fig"],
-    ]
-    return [("Rates", h, rows)]
 
 
 # ── Registry ─────────────────────────────────────────────────────
@@ -1062,7 +971,5 @@ EXAMPLES = [
     ("World Population",            "Reference",    _world_population),
     ("Multi-Sheet Demo",            "Reference",    _multi_sheet_demo),
     ("Sine / Cos Plot Data",        "Reference",    _sine_cosine),
-    ("Live Weather",                "Live Data",    _live_weather),
     ("Live News Headlines",         "Live Data",    _live_news),
-    ("Live Exchange Rates",         "Live Data",    _live_exchange_rates),
 ]
