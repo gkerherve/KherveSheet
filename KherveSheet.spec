@@ -36,6 +36,7 @@ _collect = [
     "openpyxl",                             # Excel import/export
     "spellchecker",                         # bundled dictionary data
     "anthropic", "openai", "mistralai", "ollama",   # optional AI providers
+    "certifi",                             # SSL certs for =PY HTTPS fetches
 ]
 for _pkg in _collect:
     try:
