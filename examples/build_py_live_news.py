@@ -21,6 +21,7 @@ PY_BODY = r'''# Live news headlines with images from an RSS feed (no API key).
 # Each headline is shown with its thumbnail; the titles/links are also
 # written to the table. Falls back to sample headlines when offline.
 import urllib.request, xml.etree.ElementTree as ET, textwrap
+import datetime as dt
 import numpy as np, matplotlib.pyplot as plt
 from PyQt5.QtGui import QImage
 
@@ -68,7 +69,9 @@ except Exception:
     live = False
     items = [(f"Sample headline {i + 1}", "", None) for i in range(n)]
 
+updated = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")   # fetch time
 ks_set("B5", "live" if live else "offline (sample)")
+ks_set("B6", updated)                                      # last updated
 ks_set("A9", [str(i + 1) for i in range(len(items))])     # # | Headline | Link
 ks_set("B9", [t for t, _, _ in items])
 ks_set("C9", [lk for _, lk, _ in items])
@@ -93,7 +96,9 @@ domain = feed.split("//")[-1].split("/")[0]
 fig.suptitle(f"Live news — {domain}"
              + ("" if live else "   [offline sample]"),
              fontsize=12, fontweight="bold")
-fig.subplots_adjust(top=0.94, left=0.01, right=0.99, bottom=0.02)
+fig.text(0.5, 0.965, f"Updated {updated}", ha="center",
+         fontsize=8, color="#666")
+fig.subplots_adjust(top=0.92, left=0.01, right=0.99, bottom=0.02)
 plt.gcf()'''
 
 
@@ -104,13 +109,14 @@ def build():
                   "Live headlines with images from an RSS feed")
 
     inputs = [("Feed URL", "https://feeds.bbci.co.uk/news/rss.xml"),
-              ("Headlines", 5), ("Data status", "")]
+              ("Headlines", 5), ("Data status", ""), ("Last updated", "")]
     for i, (label, v) in enumerate(inputs):
         r = 2 + i
         s.set(r, 0, label); s.set(r, 1, v)
         s.fmt(r, 0, bold=True)
         s.fmt(r, 1, bg=PALETTE["warn"], align="left")
-    s.fmt(4, 1, bg=PALETTE["good"], align="center")
+    s.fmt(4, 1, bg=PALETTE["good"], align="center")   # status
+    s.fmt(5, 1, bg=PALETTE["good"], align="center")   # last updated
 
     s.set(7, 0, "#"); s.set(7, 1, "Headline"); s.set(7, 2, "Link")
     for c in (0, 1, 2):
