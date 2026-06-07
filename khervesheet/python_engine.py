@@ -573,6 +573,9 @@ PY_TINT = QColor(55, 118, 171, 12)
 
 def fmt_loop_period(secs):
     """Compact label for a loop interval, e.g. 5 -> '5s', 90 -> '2m'."""
+    secs = float(secs)
+    if secs < 1:
+        return f"{secs:g}s"
     secs = int(round(secs))
     if secs < 60:
         return f"{secs}s"

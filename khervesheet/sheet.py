@@ -2359,7 +2359,7 @@ class SheetWidget(QWidget):
         """Set (or clear, when *secs* is falsy) the auto-refresh interval
         for a =PY cell, then (re)start or stop the loop timer."""
         if secs:
-            self._py_loops[(row, col)] = int(secs)
+            self._py_loops[(row, col)] = float(secs)
             import time
             self._py_loop_last[(row, col)] = time.monotonic()
             self._start_py_loops()
@@ -2376,13 +2376,18 @@ class SheetWidget(QWidget):
             self._formula_bar._py_badge.set_loop(self._py_loops.get((row, col)))
 
     def _start_py_loops(self):
-        """Start the 1 Hz timer that re-runs due =PY loop cells."""
+        """Start the timer that re-runs due =PY loop cells.  The tick rate
+        tracks the shortest loop period so sub-second loops (0.1 s, 0.5 s)
+        fire on time, clamped to [50 ms, 1000 ms]."""
         if self._py_loop_timer is None:
             self._py_loop_timer = QTimer(self)
-            self._py_loop_timer.setInterval(1000)
             self._py_loop_timer.timeout.connect(self._py_loop_tick)
-        if self._py_loops and not self._py_loop_timer.isActive():
-            self._py_loop_timer.start()
+        if self._py_loops:
+            shortest = min(self._py_loops.values())
+            interval = int(max(50, min(1000, shortest * 1000)))
+            self._py_loop_timer.setInterval(interval)
+            if not self._py_loop_timer.isActive():
+                self._py_loop_timer.start()
 
     def _stop_py_loops(self):
         if self._py_loop_timer is not None:
@@ -2390,10 +2395,10 @@ class SheetWidget(QWidget):
 
     def _py_loop_custom(self, row, col):
         """Prompt for a custom loop interval (seconds) for a =PY cell."""
-        cur = self._py_loops.get((row, col), 10)
-        secs, ok = QInputDialog.getInt(
+        cur = float(self._py_loops.get((row, col), 10))
+        secs, ok = QInputDialog.getDouble(
             self, "Python loop", "Re-run this cell every (seconds):",
-            cur, 1, 86400, 1)
+            cur, 0.1, 86400, 1)
         if ok:
             self._set_py_loop(row, col, secs)
 
@@ -4202,7 +4207,8 @@ class SheetWidget(QWidget):
             r0, c0 = cidx.row(), cidx.column()
             current = self._py_loops.get((r0, c0), 0)
             lm = menu.addMenu("Python loop (auto-refresh)")
-            for label, sec in (("Off", 0), ("1 second", 1),
+            for label, sec in (("Off", 0), ("0.1 second", 0.1),
+                               ("0.5 second", 0.5), ("1 second", 1),
                                ("5 seconds", 5),
                                ("10 seconds", 10), ("30 seconds", 30),
                                ("1 minute", 60), ("5 minutes", 300),
