@@ -25,7 +25,7 @@ DEFAULT_PIE_CONFIG = {
     "start_angle": 90,
     "direction": "counter-clockwise",
     "explode_pct": 0.0,
-    "label_mode": "percent",     # percent | value | label | label+percent | none
+    "label_mode": "label+percent",  # percent | value | label | label+percent | none
     "decimal_places": 1,
     "shadow": False,
     "doughnut_width": 0.4,       # only used for Doughnut type
