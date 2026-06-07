@@ -631,6 +631,9 @@ class MainWindow(QMainWindow):
             "Box":         icons.plot_icon_box,
             "Heatmap":     icons.plot_icon_heatmap,
             "3D Surface":  icons.plot_icon_3d_surface,
+            "Pie":         icons.plot_icon_pie,
+            "Doughnut":    icons.plot_icon_doughnut,
+            "3D Pie":      icons.plot_icon_3d_pie,
         }
         self._plot_btn = QToolButton()
         self._plot_btn.setToolTip("Insert Chart")
@@ -1711,6 +1714,10 @@ class MainWindow(QMainWindow):
                         if d.get('bar_config'):
                             cg.attrs['bar_config'] = json.dumps(
                                 d['bar_config'])
+                        # Pie chart config.
+                        if d.get('pie_config'):
+                            cg.attrs['pie_config'] = json.dumps(
+                                d['pie_config'])
                         # Trendlines.
                         if d.get('trendlines'):
                             cg.attrs['trendlines'] = json.dumps(
@@ -2176,6 +2183,12 @@ class MainWindow(QMainWindow):
                             bc_json = bc_json.decode('utf-8')
                         if bc_json:
                             cd["bar_config"] = json.loads(bc_json)
+                        # Pie chart config.
+                        pc_json = cg.attrs.get('pie_config', '')
+                        if isinstance(pc_json, bytes):
+                            pc_json = pc_json.decode('utf-8')
+                        if pc_json:
+                            cd["pie_config"] = json.loads(pc_json)
                         # Trendlines.
                         tl_json = cg.attrs.get('trendlines', '')
                         if isinstance(tl_json, bytes):
@@ -2469,6 +2482,7 @@ class MainWindow(QMainWindow):
             _g._chart_clipboard = {
                 "series": cb_series,
                 "bar_config": dict(sel._bar_config),
+                "pie_config": dict(sel._pie_config),
             }
             sel._close_chart()
             s._selected_chart = None
@@ -2509,6 +2523,7 @@ class MainWindow(QMainWindow):
             _g._chart_clipboard = {
                 "series": cb_series,
                 "bar_config": dict(sel._bar_config),
+                "pie_config": dict(sel._pie_config),
             }
             _sh._shape_clipboard = None
             self._status_msg("Chart copied", 2000)
@@ -2551,6 +2566,11 @@ class MainWindow(QMainWindow):
             if bc and first_chart:
                 first_chart._bar_config.update(bc)
                 first_chart._redraw_bars()
+            # Restore pie config and redraw.
+            pc = cb.get("pie_config")
+            if pc and first_chart:
+                first_chart._pie_config.update(pc)
+                first_chart._redraw_pie()
             _g._chart_clipboard = None
             self._status_msg("Chart pasted", 2000)
             return
@@ -3615,6 +3635,56 @@ class MainWindow(QMainWindow):
             chart.move(40 + offset, 40 + offset)
             sheet._charts.append(chart)
             sheet.data_changed.connect(chart._on_data_changed)
+            self._status_msg(f"Created {plot_type} chart", 3000)
+            return
+
+        # ── Pie / Doughnut / 3D Pie ─────────────────────────────
+        from .pie_options import PIE_TYPES
+        if plot_type in PIE_TYPES:
+            row_start, row_end = s.topRow(), s.bottomRow()
+            # Find a numeric column (values) and an optional text
+            # column (labels).  If two columns are selected, the
+            # first text-heavy column is labels and the other is
+            # values.  Single column → values only.
+            val_col = None
+            lbl_col = None
+            for c in cols:
+                num = sheet.numeric_column(c)
+                sl = num[row_start:row_end + 1]
+                nan_frac = np.isnan(sl).sum() / max(len(sl), 1)
+                if nan_frac > 0.5:
+                    if lbl_col is None:
+                        lbl_col = c
+                else:
+                    if val_col is None:
+                        val_col = c
+            if val_col is None:
+                QMessageBox.information(
+                    self, "No Data",
+                    "Select at least one numeric column for Pie chart.")
+                return
+            values = sheet.numeric_column(val_col)[row_start:row_end + 1]
+            values = values[~np.isnan(values)]
+            if len(values) == 0:
+                QMessageBox.information(
+                    self, "No Data",
+                    "Selected column contains no numeric data.")
+                return
+            labels = None
+            if lbl_col is not None:
+                strs = sheet.string_column(lbl_col)
+                labels = strs[row_start:row_start + len(values)]
+            else:
+                labels = [f"Slice {i+1}" for i in range(len(values))]
+            x_dummy = np.arange(len(values), dtype=float)
+            viewport = sheet.table.viewport()
+            chart = EmbeddedChart(
+                x_dummy, values, "Data", plot_type, sheet, viewport)
+            chart._pie_config["labels"] = labels
+            chart._redraw_pie()
+            offset = len(sheet._charts) * 30
+            chart.move(40 + offset, 40 + offset)
+            sheet._charts.append(chart)
             self._status_msg(f"Created {plot_type} chart", 3000)
             return
 

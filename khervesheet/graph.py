@@ -463,6 +463,8 @@ class EmbeddedChart(QWidget):
         # Bar chart config (grouping mode, orientation, gap).
         from .bar_options import DEFAULT_BAR_CONFIG
         self._bar_config = dict(DEFAULT_BAR_CONFIG)
+        # Pie chart config (angles, labels, explode, etc.).
+        self._pie_config = {}
         # Source column indices for live data updates.
         self._x_col = x_col      # None means row-index X
         self._y_cols = []         # populated by add_series
@@ -673,6 +675,15 @@ class EmbeddedChart(QWidget):
                 leg.set_draggable(True)
         self._canvas.draw_idle()
 
+    def _redraw_pie(self):
+        """Redraw the pie/doughnut chart from stored config."""
+        from .pie_options import redraw_pie, PIE_TYPES
+        if not self._series:
+            return
+        if self._series[0].get("plot_type") not in PIE_TYPES:
+            return
+        redraw_pie(self)
+
     @staticmethod
     def _plot_one(ax, x, y, label, plot_type):
         """Plot a single series and return the artist."""
@@ -711,6 +722,15 @@ class EmbeddedChart(QWidget):
             im = ax.imshow(data, aspect='auto', origin='lower',
                            cmap='viridis')
             return im
+        elif plot_type in ("Pie", "Doughnut", "3D Pie"):
+            # Pie charts are drawn by pie_options.plot_pie;
+            # _plot_one just returns a placeholder — the real draw
+            # happens in _redraw_pie or from_dict.
+            from .pie_options import plot_pie
+            result = plot_pie(ax, y, None, {}, plot_type)
+            if result is not None:
+                return result[0]  # list of Wedge patches
+            return None
         elif plot_type == "3D Surface":
             # 3D surface expects y to be a 2D array (Z matrix).
             # x is ignored here; X/Y are generated from shape.
@@ -953,6 +973,24 @@ class EmbeddedChart(QWidget):
         from .bar_options import DEFAULT_BAR_CONFIG
         if self._bar_config != DEFAULT_BAR_CONFIG:
             d["bar_config"] = dict(self._bar_config)
+        # Pie chart config.
+        if self._pie_config:
+            # Filter out non-serialisable values (like RGBA tuples).
+            pc = {}
+            for k, v in self._pie_config.items():
+                if k == "colors":
+                    from matplotlib.colors import to_hex
+                    try:
+                        pc["colors"] = [
+                            to_hex(c) if not isinstance(c, str) else c
+                            for c in v]
+                    except Exception:
+                        pass
+                elif isinstance(v, (str, int, float, bool, type(None),
+                                    list)):
+                    pc[k] = v
+            if pc:
+                d["pie_config"] = pc
         gp = getattr(self, '_general_props', None)
         if gp:
             d["general_props"] = gp
@@ -1385,6 +1423,10 @@ class EmbeddedChart(QWidget):
         bc = d.get("bar_config")
         if bc:
             chart._bar_config.update(bc)
+        # Restore pie chart config.
+        pc = d.get("pie_config")
+        if pc:
+            chart._pie_config.update(pc)
         # Restore visual properties, fill, and visibility per series.
         from matplotlib.collections import PathCollection
         for i, sd in enumerate(series):
@@ -1472,6 +1514,8 @@ class EmbeddedChart(QWidget):
                     sd.get("fill_alpha", 0.3))
         # Redraw bars with restored config (grouped/stacked offsets).
         chart._redraw_bars()
+        # Redraw pie with restored config.
+        chart._redraw_pie()
         # Header mode: resync labels from header cells before the legend
         # is built so it reflects the (possibly edited) column headers.
         chart._header_row = bool(d.get("header_row", False))
@@ -3204,6 +3248,7 @@ class PlotDetailsDialog(QDialog):
         self._build_symbol_tab()
         self._build_fill_tab()
         self._build_bar_tab()
+        self._build_pie_tab()
 
         # Per-series range edits: {row: (x_range_str, y_range_str)}
         self._range_edits = {}
@@ -3391,7 +3436,7 @@ class PlotDetailsDialog(QDialog):
 
     _PLOT_TYPES = [
         "Line", "Scatter", "Line+Symbol", "Bar", "Step", "Stem",
-        "Histogram",
+        "Histogram", "Pie", "Doughnut", "3D Pie",
     ]
 
     def _build_line_tab(self):
@@ -3475,7 +3520,13 @@ class PlotDetailsDialog(QDialog):
         """Bar options tab — delegates to bar_options.BarOptionsTab."""
         from .bar_options import BarOptionsTab
         self._bar_tab = BarOptionsTab(self._chart, self)
-        self._tabs.addTab(self._bar_tab, "Bar")
+        self._bar_tab_idx = self._tabs.addTab(self._bar_tab, "Bar")
+
+    def _build_pie_tab(self):
+        """Pie options tab — delegates to pie_options.PieOptionsTab."""
+        from .pie_options import PieOptionsTab
+        self._pie_tab = PieOptionsTab(self._chart, self)
+        self._pie_tab_idx = self._tabs.addTab(self._pie_tab, "Pie")
 
     def _save_current_range(self):
         """Save range edit values for the previously selected series."""
@@ -3637,9 +3688,20 @@ class PlotDetailsDialog(QDialog):
         if fa is not None:
             self.fill_alpha.setValue(fa)
 
-        # Bar tab — populate from series data.
+        # Bar tab — populate from series data and enable/disable.
+        pt = s.get("plot_type", "Line")
         if hasattr(self, '_bar_tab'):
             self._bar_tab.read_from_series(s)
+            self._tabs.setTabEnabled(self._bar_tab_idx, pt == "Bar")
+
+        # Pie tab — populate from chart config and enable/disable.
+        from .pie_options import PIE_TYPES
+        if hasattr(self, '_pie_tab'):
+            is_pie = pt in PIE_TYPES
+            self._tabs.setTabEnabled(self._pie_tab_idx, is_pie)
+            if is_pie:
+                self._pie_tab.read_from_config(
+                    getattr(self._chart, '_pie_config', {}))
 
     @staticmethod
     def _parse_range(range_str):
@@ -3771,10 +3833,21 @@ class PlotDetailsDialog(QDialog):
 
             # Bar options — save per-series bar props and chart config,
             # then redraw all bars with the updated layout.
-            if hasattr(self, '_bar_tab'):
+            if hasattr(self, '_bar_tab') and s.get("plot_type") == "Bar":
                 self._bar_tab.write_to_series(s)
                 chart._bar_config = self._bar_tab.write_chart_config()
                 chart._redraw_bars()
+
+            # Pie options — save config and redraw.
+            from .pie_options import PIE_TYPES
+            if (hasattr(self, '_pie_tab')
+                    and s.get("plot_type") in PIE_TYPES):
+                cfg = self._pie_tab.write_to_config()
+                # Preserve labels from original config.
+                cfg["labels"] = chart._pie_config.get("labels")
+                cfg["colors"] = chart._pie_config.get("colors")
+                chart._pie_config.update(cfg)
+                chart._redraw_pie()
 
             # Refresh legend if one exists.
             if ax.get_legend() is not None:

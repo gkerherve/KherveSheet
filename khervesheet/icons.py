@@ -914,6 +914,84 @@ def plot_icon_bar(size: int = 22) -> QIcon:
     return QIcon(pm)
 
 
+def plot_icon_pie(size: int = 22) -> QIcon:
+    """Pie-chart icon: circle divided into three coloured wedges."""
+    import math
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    s = float(size)
+    cx, cy = s / 2, s / 2
+    r = s / 2 - 2.0
+    rect = QRectF(cx - r, cy - r, 2 * r, 2 * r)
+    angles = [0, 120, 250, 360]  # three slices
+    cols = SERIES_PALETTE[:3]
+    p.setPen(QPen(Qt.white, 1.0))
+    for i in range(3):
+        p.setBrush(QColor(cols[i]))
+        span = angles[i + 1] - angles[i]
+        p.drawPie(rect, int(angles[i] * 16), int(span * 16))
+    p.end()
+    return QIcon(pm)
+
+
+def plot_icon_doughnut(size: int = 22) -> QIcon:
+    """Doughnut-chart icon: ring with three coloured arcs."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    s = float(size)
+    cx, cy = s / 2, s / 2
+    r_out = s / 2 - 2.0
+    r_in = r_out * 0.52
+    rect_out = QRectF(cx - r_out, cy - r_out, 2 * r_out, 2 * r_out)
+    angles = [0, 120, 250, 360]
+    cols = SERIES_PALETTE[:3]
+    p.setPen(QPen(Qt.white, 1.0))
+    for i in range(3):
+        p.setBrush(QColor(cols[i]))
+        span = angles[i + 1] - angles[i]
+        p.drawPie(rect_out, int(angles[i] * 16), int(span * 16))
+    # Punch out the centre to make a ring.
+    p.setPen(Qt.NoPen)
+    p.setBrush(Qt.white)
+    p.setCompositionMode(QPainter.CompositionMode_Clear)
+    p.drawEllipse(QRectF(cx - r_in, cy - r_in, 2 * r_in, 2 * r_in))
+    p.end()
+    return QIcon(pm)
+
+
+def plot_icon_3d_pie(size: int = 22) -> QIcon:
+    """3-D Pie icon: slightly squashed pie with a depth strip."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    s = float(size)
+    cx, cy = s / 2, s / 2 - 1.0
+    rx = s / 2 - 2.0
+    ry = rx * 0.65  # vertical squash for 3-D look
+    depth = 3.0
+    # Draw depth strip (bottom ellipse shifted down).
+    rect_bot = QRectF(cx - rx, cy - ry + depth, 2 * rx, 2 * ry)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor("#a0a0a0"))
+    p.drawEllipse(rect_bot)
+    # Top pie.
+    rect_top = QRectF(cx - rx, cy - ry, 2 * rx, 2 * ry)
+    angles = [0, 120, 250, 360]
+    cols = SERIES_PALETTE[:3]
+    p.setPen(QPen(Qt.white, 1.0))
+    for i in range(3):
+        p.setBrush(QColor(cols[i]))
+        span = angles[i + 1] - angles[i]
+        p.drawPie(rect_top, int(angles[i] * 16), int(span * 16))
+    p.end()
+    return QIcon(pm)
+
+
 def twin_axis_icon(side: str, size: int = 28,
                    accent: str = "") -> QIcon:
     """Icon for the Twin X / Twin Y toolbar buttons.

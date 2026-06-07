@@ -3983,6 +3983,7 @@ class SheetWidget(QWidget):
     PLOT_TYPES = [
         "Line", "Scatter", "Line+Symbol", "Bar", "Step",
         "Stem", "Histogram", "Box", "Heatmap", "3D Surface",
+        "Pie", "Doughnut", "3D Pie",
     ]
 
     def _add_plot_submenu(self, menu, cols=None):
