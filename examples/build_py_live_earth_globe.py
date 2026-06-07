@@ -19,14 +19,17 @@ from ksheet_author import Workbook, PALETTE  # noqa: E402
 
 PY_BODY = r'''# 3D Earth globe with real-time day/night terminator.
 # The orange terminator line marks where sunrise/sunset is happening.
-# Press Ctrl+Enter to refresh with the current UTC time.
+# Press Ctrl+Enter to refresh, or right-click -> Python loop -> 1 second
+# to make the globe spin: each run reads the rotation angle in B4, draws
+# the globe at that longitude, then advances B4 by the step in B5.
 import numpy as np, matplotlib.pyplot as plt, math
 from datetime import datetime, timezone
 
 now = datetime.now(timezone.utc)
 view_lat = float(ks("B3"))
-view_lon = float(ks("B4"))
-follow   = str(ks("B5")).strip().lower() in ("yes", "true", "1")
+view_lon = float(ks("B4"))            # current rotation (longitude, deg)
+step     = float(ks("B5"))            # degrees to spin per refresh
+follow   = str(ks("B6")).strip().lower() in ("yes", "true", "1")
 
 # ── solar position ──────────────────────────────────────────────────
 doy  = now.timetuple().tm_yday
@@ -37,9 +40,9 @@ sub_lon = -(hr - 12) * 15        # subsolar longitude (noon @ 0° lon)
 if follow:
     view_lon = sub_lon
 
-ks_set("B6", now.strftime("%H:%M:%S UTC"))
-ks_set("B7", f"{decl:+.2f}\u00b0")
-ks_set("B8", f"({sub_lat:+.1f}\u00b0, {sub_lon:+.1f}\u00b0)")
+ks_set("B7", now.strftime("%H:%M:%S UTC"))
+ks_set("B8", f"{decl:+.2f}\u00b0")
+ks_set("B9", f"({sub_lat:+.1f}\u00b0, {sub_lon:+.1f}\u00b0)")
 
 slr = math.radians(sub_lat); sll = math.radians(sub_lon)
 sun = np.array([math.cos(slr)*math.cos(sll),
@@ -217,10 +220,18 @@ if mv:
 # ── title ──────────────────────────────────────────────────────────
 ax.set_title(
     f"Earth \u2014 {now.strftime('%Y-%m-%d  %H:%M:%S UTC')}\n"
-    f"Declination {decl:+.1f}\u00b0   \u2502   "
+    f"Rotation {view_lon:+.0f}\u00b0   \u2502   "
     f"Orange line = sunrise / sunset",
     color="white", fontsize=11, fontweight="bold", pad=12)
 fig.tight_layout()
+
+# \u2500\u2500 spin: advance the rotation cell for the next refresh \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+# Writing B4 (which this cell also reads) does NOT re-trigger this cell,
+# so on a 1 s loop the globe turns by `step` degrees each tick.
+if step and not follow:
+    nxt = (view_lon + step + 180.0) % 360.0 - 180.0
+    ks_set("B4", round(nxt, 2))
+
 plt.gcf()'''
 
 
@@ -231,7 +242,9 @@ def build():
                   "3D globe with real-time day/night terminator "
                   "(sunrise / sunset line)")
 
-    inputs = [("View latitude", 30), ("View longitude", 0),
+    inputs = [("View latitude", 20),
+              ("Rotation (lon °)", 0),
+              ("Rotation step (°)", 10),
               ("Follow Sun", "no"),
               ("UTC time", ""), ("Solar declination", ""),
               ("Subsolar point", "")]
@@ -240,8 +253,8 @@ def build():
         s.set(r, 0, label); s.set(r, 1, v)
         s.fmt(r, 0, bold=True)
         s.fmt(r, 1, bg=PALETTE["warn"], align="center")
-    # Auto-filled cells (B6–B8) get green.
-    for r in (5, 6, 7):
+    # Auto-filled cells (B7–B9) get green.
+    for r in (6, 7, 8):
         s.fmt(r, 1, bg=PALETTE["good"], align="center")
 
     s.set(1, 4, "Fetch \u25bc")
@@ -250,11 +263,12 @@ def build():
 
     s.note(0, 5,
            "Press Ctrl+Enter on the =PY cell (E3) to render the globe "
-           "with the current UTC time.  The orange terminator line shows "
-           "where sunrise and sunset are happening right now.  Change "
-           "View latitude / longitude (B3/B4) to rotate the globe.  "
-           "Set 'Follow Sun' (B5) to 'yes' to auto-centre on the "
-           "subsolar point.")
+           "with the current UTC time.  To make it spin, right-click the "
+           "cell -> Python loop -> 1 second: each run draws the globe at "
+           "the rotation angle in B4, then increments B4 by the step in "
+           "B5 (degrees per refresh).  Set B5 = 0 to stop spinning, or a "
+           "negative value to turn the other way.  Set 'Follow Sun' (B6) "
+           "to 'yes' to auto-centre on the subsolar point (spin pauses).")
     s.col_width(0, 120)
 
     out = os.path.join(os.path.dirname(__file__), "python", "Live Data",

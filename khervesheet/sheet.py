@@ -4202,7 +4202,8 @@ class SheetWidget(QWidget):
             r0, c0 = cidx.row(), cidx.column()
             current = self._py_loops.get((r0, c0), 0)
             lm = menu.addMenu("Python loop (auto-refresh)")
-            for label, sec in (("Off", 0), ("5 seconds", 5),
+            for label, sec in (("Off", 0), ("1 second", 1),
+                               ("5 seconds", 5),
                                ("10 seconds", 10), ("30 seconds", 30),
                                ("1 minute", 60), ("5 minutes", 300),
                                ("15 minutes", 900)):
