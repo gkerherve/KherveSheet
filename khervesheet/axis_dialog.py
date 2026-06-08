@@ -878,9 +878,19 @@ class AxisPropertiesDialog(QDialog):
                 lims = ax.get_zlim()
                 inverted = False
             else:
+                # 2-D heatmap: Z maps to the colour range (clim).
                 cur_scale = "linear"
                 lims = (0, 1)
                 inverted = False
+                chart = getattr(self, '_chart', None)
+                if chart is not None:
+                    for s in getattr(chart, '_series', []):
+                        art = s.get("artist")
+                        if art is not None and hasattr(art, 'get_clim'):
+                            clim = art.get_clim()
+                            if clim[0] is not None and clim[1] is not None:
+                                lims = clim
+                            break
         else:
             pri_key = "bottom" if is_x else "left"
             sec_key = "top" if is_x else "right"
@@ -909,8 +919,10 @@ class AxisPropertiesDialog(QDialog):
         self._on_auto_limits(True)
         self.invert_check.setChecked(bool(inverted))
 
-        # ── Primary title (Bottom / Left) ──────────────────────────
-        if is_x:
+        # ── Primary title (Bottom / Left / Front) ─────────────────
+        if is_z and hasattr(ax, 'get_zlabel'):
+            label_text = ax.get_zlabel()
+        elif is_x:
             label_text = ax.get_xlabel()
         else:
             label_text = ax.get_ylabel()

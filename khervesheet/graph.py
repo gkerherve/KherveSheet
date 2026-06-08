@@ -579,9 +579,10 @@ class EmbeddedChart(QWidget):
         if plot_type == "Bar":
             self._redraw_bars()
 
-        leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
-        if leg:
-            leg.set_draggable(True)
+        if plot_type not in ("Heatmap", "3D Surface"):
+            leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
+            if leg:
+                leg.set_draggable(True)
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
         self._canvas.draw_idle()
@@ -787,10 +788,15 @@ class EmbeddedChart(QWidget):
         # If changing to or from Bar, recalculate bar layout.
         if new_plot_type == "Bar" or old_type == "Bar":
             self._redraw_bars()
-        # Refresh legend.
-        leg = self._ax.legend(loc="best", framealpha=0.8, fontsize=8)
-        if leg:
-            leg.set_draggable(True)
+        # Refresh legend (skip for heatmap / 3-D surface).
+        if new_plot_type not in ("Heatmap", "3D Surface"):
+            leg = self._ax.legend(loc="best", framealpha=0.8, fontsize=8)
+            if leg:
+                leg.set_draggable(True)
+        else:
+            old_leg = self._ax.get_legend()
+            if old_leg is not None:
+                old_leg.remove()
         self._canvas.draw_idle()
 
     # ── Programmatic axis editing (used by the AI assistant) ──────────
@@ -4194,11 +4200,17 @@ class PlotDetailsDialog(QDialog):
                     self._surface3d_tab.write_to_config()
                 redraw_surface(chart, chart._surface3d_config)
 
-            # Refresh legend if one exists.
-            if ax.get_legend() is not None:
-                leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
-                if leg:
-                    leg.set_draggable(True)
+            # Refresh legend if one exists (skip for heatmap / 3-D surface).
+            pt = s.get("plot_type", "")
+            if pt not in ("Heatmap", "3D Surface"):
+                if ax.get_legend() is not None:
+                    leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
+                    if leg:
+                        leg.set_draggable(True)
+            else:
+                old_leg = ax.get_legend()
+                if old_leg is not None:
+                    old_leg.remove()
 
         # ── Header-row labelling ──────────────────────────────────
         chart._header_row = self.header_check.isChecked()

@@ -389,6 +389,11 @@ def redraw_heatmap(chart, cfg: dict):
     if cfg.get("colorbar", True):
         chart._heatmap_cbar = chart._figure.colorbar(im, ax=ax)
 
+    try:
+        chart._figure.tight_layout()
+    except Exception:
+        pass
+
     # Annotations
     if cfg.get("annotate", False):
         fmt = cfg.get("annot_fmt", ".2g")
@@ -443,6 +448,11 @@ def redraw_surface(chart, cfg: dict):
     if cfg.get("colorbar", True):
         chart._heatmap_cbar = chart._figure.colorbar(surf, ax=ax,
                                                        shrink=0.6)
+
+    try:
+        chart._figure.tight_layout()
+    except Exception:
+        pass
 
     chart._canvas.draw_idle()
 
