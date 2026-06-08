@@ -3958,7 +3958,10 @@ class PlotDetailsDialog(QDialog):
                         self.line_style.setCurrentIndex(i)
                         break
             if hasattr(artist, 'get_linewidth'):
-                self.line_width.setValue(artist.get_linewidth())
+                lw = artist.get_linewidth()
+                if hasattr(lw, '__len__'):
+                    lw = float(lw[0]) if len(lw) else 1.0
+                self.line_width.setValue(float(lw))
             if hasattr(artist, 'get_color'):
                 c = artist.get_color()
                 if isinstance(c, str):
