@@ -2955,12 +2955,12 @@ class EmbeddedChart(QWidget):
                 disp_dx = t.transform(new_xy)[0] - t.transform(bd["xy0"])[0]
                 disp_dy = t.transform(new_xy)[1] - t.transform(bd["xy0"])[1]
                 rect = self._ann_select_artists[0]
-                x0, y0 = rect.get_xy()
-                if not hasattr(bd, "_rect_origin"):
+                x0, y0 = rect.get_x(), rect.get_y()
+                if "_rect_x0" not in bd:
                     bd["_rect_x0"] = x0
                     bd["_rect_y0"] = y0
-                rect.set_xy((bd["_rect_x0"] + disp_dx,
-                             bd["_rect_y0"] + disp_dy))
+                rect.set_x(bd["_rect_x0"] + disp_dx)
+                rect.set_y(bd["_rect_y0"] + disp_dy)
             self._canvas.draw_idle()
 
     def _on_ann_release(self, event):
