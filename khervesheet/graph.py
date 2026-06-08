@@ -3553,7 +3553,7 @@ class PlotDetailsDialog(QDialog):
     def __init__(self, chart, parent=None):
         super().__init__(parent or chart)
         self.setWindowTitle("Series Properties")
-        self.resize(640, 480)
+        self.resize(780, 480)
         self._chart = chart
 
         outer = QVBoxLayout(self)

@@ -130,7 +130,7 @@ class AxisPropertiesDialog(QDialog):
         self._ax = chart._ax
 
         self.setWindowTitle("Axis Properties")
-        self.resize(480, 560)
+        self.resize(620, 560)
 
         outer = QVBoxLayout(self)
 
