@@ -137,6 +137,15 @@ class ApiKeyDialog(QDialog):
                 "3. The server starts automatically on localhost:11434\n"
                 "4. Use the Refresh button (\u27f3) to see available models"
             ),
+            "local": (
+                "Connect to any OpenAI-compatible local server.\n"
+                "Works with LM Studio, llama.cpp, LocalAI, Ollama\n"
+                "(OpenAI mode), text-generation-webui, and others.\n\n"
+                "1. Start your local server\n"
+                "2. Enter the server URL below (e.g. http://localhost:1234/v1)\n"
+                "3. Click Refresh (\u27f3) to see available models\n"
+                "4. No API key is needed for most local servers"
+            ),
         }
         from PyQt5.QtWidgets import QGroupBox
         self._help_group = QGroupBox("How to get an API key")
@@ -193,12 +202,22 @@ class ApiKeyDialog(QDialog):
         self._key_edit.setPlaceholderText(placeholder)
         self._host_label.setVisible(spec["needs_host"])
         self._host_edit.setVisible(spec["needs_host"])
+        if spec["needs_host"]:
+            default_host = spec.get("default_host", self._DEFAULT_HOST)
+            self._host_edit.setPlaceholderText(default_host)
+            saved_host = s.value(
+                f"ai/{provider}_host",
+                s.value("ai/ollama_host", default_host))
+            self._host_edit.setText(saved_host)
+            host_label = ("Server URL:" if provider == "local"
+                          else "Ollama Host:")
+            self._host_label.setText(host_label)
         # Refresh button only for providers that support model listing.
         self._refresh_btn.setVisible(spec.get("refreshable", False))
         # Update help text for this provider.
         self._help_label.setText(
             self._help_texts.get(provider, ""))
-        title = ("How to set up Ollama" if provider == "ollama"
+        title = ("How to set up" if provider in ("ollama", "local")
                  else "How to get an API key")
         self._help_group.setTitle(title)
 
@@ -231,8 +250,13 @@ class ApiKeyDialog(QDialog):
         if self._PROVIDERS[provider]["needs_key"]:
             s.setValue(f"ai/key_{provider}", self._key_edit.text().strip())
         if self._PROVIDERS[provider]["needs_host"]:
-            host = self._host_edit.text().strip() or self._DEFAULT_HOST
-            s.setValue("ai/ollama_host", host)
+            spec = self._PROVIDERS[provider]
+            host = (self._host_edit.text().strip()
+                    or spec.get("default_host", self._DEFAULT_HOST))
+            s.setValue(f"ai/{provider}_host", host)
+            # Also save under the legacy key for Ollama compatibility.
+            if provider == "ollama":
+                s.setValue("ai/ollama_host", host)
         super().accept()
 
 

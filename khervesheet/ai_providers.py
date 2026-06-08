@@ -94,6 +94,19 @@ PROVIDERS: Dict[str, dict] = {
         "default_model": "llama3.1",
         "default_host": "http://localhost:11434",
     },
+    "local": {
+        "label": "Local AI (OpenAI-compatible)",
+        "module": "openai",
+        "pip": "openai",
+        "needs_key": False,
+        "needs_host": True,
+        "refreshable": True,
+        "models": [
+            "default",
+        ],
+        "default_model": "default",
+        "default_host": "http://localhost:1234/v1",
+    },
 }
 
 DEFAULT_HOST = "http://localhost:11434"
@@ -172,6 +185,19 @@ def fetch_models(provider_name: str, api_key: str = "",
             if mid:
                 names.append(mid)
         return sorted(names) or ["mistral-large-latest"]
+
+    if provider_name == "local":
+        import openai
+        base = host or PROVIDERS["local"]["default_host"]
+        client = openai.OpenAI(api_key="not-needed", base_url=base)
+        resp = client.models.list()
+        names = []
+        for m in resp.data:
+            mid = m.id if hasattr(m, "id") else (
+                m.get("id", "") if isinstance(m, dict) else "")
+            if mid:
+                names.append(mid)
+        return sorted(names) or ["default"]
 
     return PROVIDERS.get(provider_name, {}).get("models", [])
 
@@ -625,6 +651,65 @@ class OllamaProvider(_Provider):
         return s
 
 
+# ── Local (OpenAI-compatible) ──────────────────────────────────────
+
+class LocalProvider(_Provider):
+    """Any local server that exposes an OpenAI-compatible /v1 API.
+
+    Works with LM Studio, llama.cpp server, Ollama (OpenAI mode),
+    text-generation-webui, LocalAI, and similar tools.
+    """
+    name = "local"
+
+    def _make_client(self):
+        try:
+            import openai
+        except ImportError:
+            raise RuntimeError(
+                "The 'openai' package is not installed.\n"
+                "Install it with:  pip install openai")
+        self._sdk = openai
+        base = self.cfg.get("host") or PROVIDERS["local"]["default_host"]
+        return openai.OpenAI(
+            api_key=self.cfg.get("api_key") or "not-needed",
+            base_url=base)
+
+    def _call(self, system, tools, history):
+        kw = dict(
+            model=self.cfg["model"],
+            messages=_openai_messages(system, history),
+            max_tokens=_MAX_TOKENS,
+        )
+        # Only pass tools if the server advertises tool support;
+        # many local models don't, so avoid crashing.
+        oai_tools = _openai_tools(tools)
+        if oai_tools:
+            kw["tools"] = oai_tools
+        resp = self._client.chat.completions.create(**kw)
+        msg = resp.choices[0].message
+        text = msg.content or ""
+        tool_calls: List[dict] = []
+        for i, tc in enumerate(msg.tool_calls or []):
+            fn = tc.function
+            args = fn.arguments
+            if isinstance(args, str):
+                args = json.loads(args or "{}")
+            tool_calls.append({
+                "id": tc.id or f"call_{i}",
+                "name": fn.name,
+                "input": args,
+            })
+        return text, tool_calls
+
+    def humanize(self, exc):
+        s = str(exc)
+        if "Connection" in s or "refused" in s or "ConnectError" in s:
+            host = self.cfg.get("host") or PROVIDERS["local"]["default_host"]
+            return (f"Cannot reach local AI server at {host}.\n"
+                    "Make sure your local server is running.")
+        return s
+
+
 # ── Factory ────────────────────────────────────────────────────────
 
 _REGISTRY = {
@@ -632,6 +717,7 @@ _REGISTRY = {
     "openai": OpenAIProvider,
     "mistral": MistralProvider,
     "ollama": OllamaProvider,
+    "local": LocalProvider,
 }
 
 

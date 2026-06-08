@@ -943,7 +943,9 @@ class AiBackend(QObject):
             f"ai/model_{provider}", spec["default_model"])
         api_key = settings.value(f"ai/key_{provider}", "")
         host = settings.value(
-            "ai/ollama_host", spec.get("default_host", DEFAULT_HOST))
+            f"ai/{provider}_host",
+            settings.value("ai/ollama_host",
+                           spec.get("default_host", DEFAULT_HOST)))
         if spec["needs_key"] and not api_key:
             self.error.emit(
                 f"No API key configured for {spec['label']}. "
