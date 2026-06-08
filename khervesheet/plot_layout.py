@@ -389,7 +389,68 @@ def render_chart(fig, ax, d):
         except Exception:
             pass
 
+    # Annotations (text / arrow / line).
+    for ad in d.get("annotations", []):
+        try:
+            _render_annotation(ax, ad)
+        except Exception:
+            pass
+
     return shim
+
+
+def _render_annotation(ax, ad):
+    """Replay a single serialized annotation dict onto *ax*."""
+    atype = ad.get("type")
+    if atype == "text":
+        fs = ad.get("fontsize", 10)
+        fw = ad.get("fontweight", "normal")
+        fst = ad.get("fontstyle", "normal")
+        tc = ad.get("color", "black")
+        rot = ad.get("rotation", 0)
+        bs = ad.get("bbox_style", "round")
+        bfc = ad.get("bbox_fc", "wheat")
+        ba = ad.get("bbox_alpha", 0.8)
+        ax.annotate(
+            ad["text"], xy=tuple(ad["xy"]),
+            xytext=tuple(ad["xy"]),
+            fontsize=fs, fontweight=fw, fontstyle=fst,
+            color=tc, rotation=rot,
+            ha='center', va='center',
+            bbox=dict(boxstyle=f'{bs},pad=0.3', fc=bfc, alpha=ba))
+    elif atype == "arrow":
+        ac = ad.get("arrow_color", "black")
+        alw = ad.get("arrow_lw", 1.5)
+        als = ad.get("arrow_ls", "-")
+        astyle = ad.get("arrow_style", "->")
+        text = ad.get("text", "")
+        ax.annotate(
+            text, xy=tuple(ad["xy"]),
+            xytext=tuple(ad.get("xytext", ad["xy"])),
+            fontsize=9,
+            arrowprops=dict(arrowstyle=astyle, color=ac,
+                            lw=alw, linestyle=als),
+            bbox=dict(boxstyle='round,pad=0.2', fc='white',
+                      alpha=0.7)
+            if text.strip() else None)
+    elif atype == "line":
+        if "xy" in ad and "xytext" in ad:
+            ac = ad.get("arrow_color", "black")
+            alw = ad.get("arrow_lw", 1.5)
+            als = ad.get("arrow_ls", "-")
+            ax.annotate(
+                "", xy=tuple(ad["xy"]),
+                xytext=tuple(ad["xytext"]),
+                arrowprops=dict(arrowstyle='-', color=ac,
+                                lw=alw, linestyle=als))
+        else:
+            # Legacy axhline/axvline.
+            dirn = ad.get("direction", "horizontal")
+            val = ad.get("value", 0)
+            if dirn == "horizontal":
+                ax.axhline(val, color='red', ls='--', lw=1.2)
+            else:
+                ax.axvline(val, color='red', ls='--', lw=1.2)
 
 
 class _BaseLayoutTab(QWidget):

@@ -1753,6 +1753,10 @@ class MainWindow(QMainWindow):
                         if d.get('trendlines'):
                             cg.attrs['trendlines'] = json.dumps(
                                 d['trendlines'])
+                        # Annotations.
+                        if d.get('annotations'):
+                            cg.attrs['annotations'] = json.dumps(
+                                d['annotations'])
                         for ki, s in enumerate(d['series']):
                             srg = cg.create_group(f"series_{ki}")
                             srg.create_dataset("x", data=s['x'])
@@ -2238,6 +2242,12 @@ class MainWindow(QMainWindow):
                             tl_json = tl_json.decode('utf-8')
                         if tl_json:
                             cd["trendlines"] = json.loads(tl_json)
+                        # Annotations.
+                        an_json = cg.attrs.get('annotations', '')
+                        if isinstance(an_json, bytes):
+                            an_json = an_json.decode('utf-8')
+                        if an_json:
+                            cd["annotations"] = json.loads(an_json)
                         deferred_charts.append(cd)
                     if deferred_charts:
                         sheet._deferred_charts = deferred_charts
