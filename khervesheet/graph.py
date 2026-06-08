@@ -55,6 +55,18 @@ _HANDLE = 12  # matches layout margin for handle hit-testing
 _chart_clipboard = None
 
 
+# ── Arrow-style name lookup ────────────────────────────────────────
+def _arrowstyle_name(arrow_patch):
+    """Return the string name (e.g. '->') for an arrow patch's style."""
+    from matplotlib.patches import ArrowStyle
+    style_obj = arrow_patch.get_arrowstyle()
+    # Walk the ArrowStyle registry to match by class.
+    for name, cls in ArrowStyle._style_list.items():
+        if isinstance(style_obj, cls):
+            return name
+    return "->"
+
+
 # ── Time string parsing ────────────────────────────────────────────
 import re as _re
 
@@ -1088,11 +1100,7 @@ class EmbeddedChart(QWidget):
                         ad["arrow_color"] = to_hex(ap.get_edgecolor()[:3])
                         ad["arrow_lw"] = float(ap.get_linewidth())
                         ad["arrow_ls"] = ap.get_linestyle()
-                        try:
-                            ad["arrow_style"] = str(
-                                ap.get_arrowstyle()).split("(")[0]
-                        except Exception:
-                            ad["arrow_style"] = "->"
+                        ad["arrow_style"] = _arrowstyle_name(ap)
                 elif a["type"] == "line":
                     artist = a["artist"]
                     # New-style: finite line segment (Annotation object).
@@ -1686,6 +1694,9 @@ class EmbeddedChart(QWidget):
                 alw = ad.get("arrow_lw", 1.5)
                 als = ad.get("arrow_ls", "-")
                 astyle = ad.get("arrow_style", "->")
+                # Sanitize corrupted arrow_style from older saves.
+                if astyle.startswith("<"):
+                    astyle = "->"
                 ann = ax.annotate(
                     ad.get("text", ""), xy=tuple(ad["xy"]),
                     xytext=tuple(ad.get("xytext", ad["xy"])),
