@@ -369,6 +369,14 @@ def redraw_heatmap(chart, cfg: dict):
     # Remove old annotations
     _remove_annotations(chart)
 
+    # Restore original axes position so colorbar doesn't shrink it
+    # progressively on each redraw.
+    orig = getattr(chart, '_heatmap_orig_pos', None)
+    if orig is not None:
+        ax.set_position(orig)
+    else:
+        chart._heatmap_orig_pos = ax.get_position().frozen()
+
     cmap = cfg.get("cmap", "viridis")
     kw = {
         "aspect": cfg.get("aspect", "auto"),
@@ -388,11 +396,6 @@ def redraw_heatmap(chart, cfg: dict):
     # Colorbar
     if cfg.get("colorbar", True):
         chart._heatmap_cbar = chart._figure.colorbar(im, ax=ax)
-
-    try:
-        chart._figure.tight_layout()
-    except Exception:
-        pass
 
     # Annotations
     if cfg.get("annotate", False):
@@ -431,6 +434,13 @@ def redraw_surface(chart, cfg: dict):
 
     # Remove old colorbar
     _remove_colorbar(chart)
+
+    # Restore original axes position to prevent cumulative shrinking.
+    orig = getattr(chart, '_heatmap_orig_pos', None)
+    if orig is not None:
+        ax.set_position(orig)
+    else:
+        chart._heatmap_orig_pos = ax.get_position().frozen()
 
     cmap = cfg.get("cmap", "viridis")
     surf = ax.plot_surface(
