@@ -619,6 +619,32 @@ _PICK_STYLE = "QLineEdit { border: 2px solid #3a78b4; background: #eef4fb; }"
 _NORMAL_STYLE = ""
 
 
+class _SparkColorButton(QPushButton):
+    """Small colour-swatch button that opens a QColorDialog on click."""
+
+    def __init__(self, color="#4472c4", parent=None):
+        super().__init__(parent)
+        self._color = color
+        self.setFixedSize(28, 28)
+        self._update()
+        self.clicked.connect(self._pick)
+
+    def color(self):
+        return self._color
+
+    def _update(self):
+        self.setStyleSheet(
+            f"background:{self._color}; border:1px solid #888;")
+
+    def _pick(self):
+        from PyQt5.QtWidgets import QColorDialog
+        dlg = QColorDialog(QColor(self._color), self)
+        dlg.setStyleSheet("")
+        if dlg.exec_() == QColorDialog.Accepted:
+            self._color = dlg.selectedColor().name()
+            self._update()
+
+
 class _SparkPickLineEdit(QLineEdit):
     """QLineEdit that highlights when it is the active cell-pick target."""
 
@@ -662,8 +688,8 @@ class SparklineDialog(QDialog):
         self.type_combo.addItems(["Line", "Bar", "Win/Loss"])
         layout.addRow("Type:", self.type_combo)
 
-        self.color_edit = QLineEdit("#4472c4")
-        layout.addRow("Color:", self.color_edit)
+        self.color_btn = _SparkColorButton("#4472c4")
+        layout.addRow("Color:", self.color_btn)
 
         bb = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -707,7 +733,7 @@ class SparklineDialog(QDialog):
         spark = {
             "col": src_col, "r1": r1, "r2": r2,
             "type": self.spark_type,
-            "color": self.color_edit.text().strip() or "#4472c4",
+            "color": self.color_btn.color(),
         }
         row, col = self._target_row, self._target_col
         self._sheet._fmt_delegate._sparklines[(row, col)] = spark
@@ -865,8 +891,8 @@ def insert_sparklines_bulk(sheet):
     type_combo.addItems(["Line", "Bar", "Win/Loss"])
     layout.addRow("Type:", type_combo)
 
-    color_edit = QLineEdit("#4472c4")
-    layout.addRow("Color:", color_edit)
+    color_btn = _SparkColorButton("#4472c4")
+    layout.addRow("Color:", color_btn)
 
     info = QLabel(f"{right - left + 1} sparkline(s) will be created "
                   f"(columns "
@@ -885,7 +911,7 @@ def insert_sparklines_bulk(sheet):
     target_row = row_spin.value() - 1  # convert to 0-based
     spark_type = {"Line": "line", "Bar": "bar",
                   "Win/Loss": "winloss"}[type_combo.currentText()]
-    color = color_edit.text().strip() or "#4472c4"
+    color = color_btn.color()
 
     if not hasattr(sheet, '_cell_sparklines'):
         sheet._cell_sparklines = {}
