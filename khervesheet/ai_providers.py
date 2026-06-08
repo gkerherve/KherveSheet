@@ -660,6 +660,7 @@ class LocalProvider(_Provider):
     text-generation-webui, LocalAI, and similar tools.
     """
     name = "local"
+    _no_tools = False  # set True after first tools-related failure
 
     def _make_client(self):
         try:
@@ -670,9 +671,11 @@ class LocalProvider(_Provider):
                 "Install it with:  pip install openai")
         self._sdk = openai
         base = self.cfg.get("host") or PROVIDERS["local"]["default_host"]
+        self._no_tools = False
         return openai.OpenAI(
             api_key=self.cfg.get("api_key") or "not-needed",
-            base_url=base)
+            base_url=base,
+            timeout=120.0)
 
     def _call(self, system, tools, history):
         kw = dict(
@@ -680,12 +683,21 @@ class LocalProvider(_Provider):
             messages=_openai_messages(system, history),
             max_tokens=_MAX_TOKENS,
         )
-        # Only pass tools if the server advertises tool support;
-        # many local models don't, so avoid crashing.
+        # Try with tools first; if the server rejects them, retry
+        # without.  Many local models don't support function calling.
         oai_tools = _openai_tools(tools)
-        if oai_tools:
+        if oai_tools and not self._no_tools:
             kw["tools"] = oai_tools
-        resp = self._client.chat.completions.create(**kw)
+        try:
+            resp = self._client.chat.completions.create(**kw)
+        except Exception:
+            if "tools" in kw:
+                # Server doesn't support tools — retry without.
+                kw.pop("tools", None)
+                self._no_tools = True
+                resp = self._client.chat.completions.create(**kw)
+            else:
+                raise
         msg = resp.choices[0].message
         text = msg.content or ""
         tool_calls: List[dict] = []
