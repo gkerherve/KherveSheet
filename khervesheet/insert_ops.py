@@ -638,10 +638,10 @@ class _SparkColorButton(QPushButton):
 
     def _pick(self):
         from PyQt5.QtWidgets import QColorDialog
-        dlg = QColorDialog(QColor(self._color), self)
-        dlg.setStyleSheet("")
-        if dlg.exec_() == QColorDialog.Accepted:
-            self._color = dlg.selectedColor().name()
+        c = QColorDialog.getColor(
+            QColor(self._color), self, "Select Color")
+        if c.isValid():
+            self._color = c.name()
             self._update()
 
 

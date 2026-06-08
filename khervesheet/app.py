@@ -196,6 +196,8 @@ QToolBar QComboBox:hover, QToolBar QFontComboBox:hover {
     border: 1px solid palette(mid);
     border-radius: 4px;
 }
+/* Prevent themed QDialog background from bleeding into the colour picker. */
+QColorDialog { background: palette(window); }
 """
 
 # ── Light theme ──────────────────────────────────────────────────

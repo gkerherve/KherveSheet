@@ -273,13 +273,11 @@ class _ColorButton(QPushButton):
             f"background:{self._color}; border:1px solid #888;")
 
     def _pick(self):
-        dlg = QColorDialog(QColor(self._color), self)
-        dlg.setStyleSheet("")
-        if dlg.exec_() == QColorDialog.Accepted:
-            c = dlg.selectedColor().name()
-            self._color = c
+        c = QColorDialog.getColor(QColor(self._color), self, "Select Color")
+        if c.isValid():
+            self._color = c.name()
             self._update_icon()
-            self.color_changed.emit(c)
+            self.color_changed.emit(c.name())
 
 
 # ── Main dialog ─────────────────────────────────────────────────────
@@ -933,10 +931,9 @@ class FormatCellsDialog(QDialog):
 
     def _pick_fill_custom(self):
         initial = QColor(self._fill_color) if self._fill_color else QColor("#ffffff")
-        dlg = QColorDialog(initial, self)
-        dlg.setStyleSheet("")
-        if dlg.exec_() == QColorDialog.Accepted:
-            self._select_fill(dlg.selectedColor().name())
+        c = QColorDialog.getColor(initial, self, "Select Color")
+        if c.isValid():
+            self._select_fill(c.name())
 
     def _update_fill_preview(self):
         if self._fill_color:
