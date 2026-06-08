@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
 
     # ── UI setup ─────────────────────────────────────────────────────
     def _init_ui(self):
-        self.resize(1280, 800)
+        self.resize(1366, 800)
         # Centre the window on screen.
         screen = QApplication.primaryScreen()
         if screen:
