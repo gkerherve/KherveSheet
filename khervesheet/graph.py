@@ -1001,6 +1001,12 @@ class EmbeddedChart(QWidget):
                     pc[k] = v
             if pc:
                 d["pie_config"] = pc
+        hmc = getattr(self, '_heatmap_config', None)
+        if hmc:
+            d["heatmap_config"] = hmc
+        s3c = getattr(self, '_surface3d_config', None)
+        if s3c:
+            d["surface3d_config"] = s3c
         gp = getattr(self, '_general_props', None)
         if gp:
             d["general_props"] = gp
@@ -1473,6 +1479,25 @@ class EmbeddedChart(QWidget):
         pc = d.get("pie_config")
         if pc:
             chart._pie_config.update(pc)
+        # Restore heatmap / 3D surface config and redraw.
+        hmc = d.get("heatmap_config")
+        if hmc:
+            chart._heatmap_config = hmc
+            if series and series[0].get("plot_type") == "Heatmap":
+                from .heatmap_options import redraw_heatmap
+                try:
+                    redraw_heatmap(chart, hmc)
+                except Exception:
+                    pass
+        s3c = d.get("surface3d_config")
+        if s3c:
+            chart._surface3d_config = s3c
+            if series and series[0].get("plot_type") == "3D Surface":
+                from .heatmap_options import redraw_surface
+                try:
+                    redraw_surface(chart, s3c)
+                except Exception:
+                    pass
         # Restore visual properties, fill, and visibility per series.
         from matplotlib.collections import PathCollection
         for i, sd in enumerate(series):
@@ -3507,6 +3532,8 @@ class PlotDetailsDialog(QDialog):
         self._build_fill_tab()
         self._build_bar_tab()
         self._build_pie_tab()
+        self._build_heatmap_tab()
+        self._build_surface3d_tab()
 
         # Per-series range edits: {row: (x_range_str, y_range_str)}
         self._range_edits = {}
@@ -3695,6 +3722,7 @@ class PlotDetailsDialog(QDialog):
     _PLOT_TYPES = [
         "Line", "Scatter", "Line+Symbol", "Bar", "Step", "Stem",
         "Histogram", "Pie", "Doughnut", "3D Pie",
+        "Heatmap", "3D Surface",
     ]
 
     def _build_line_tab(self):
@@ -3786,6 +3814,20 @@ class PlotDetailsDialog(QDialog):
         self._pie_tab = PieOptionsTab(self._chart, self)
         self._pie_tab_idx = self._tabs.addTab(self._pie_tab, "Pie")
 
+    def _build_heatmap_tab(self):
+        """Heatmap options tab."""
+        from .heatmap_options import HeatmapOptionsTab
+        self._heatmap_tab = HeatmapOptionsTab(self._chart, self)
+        self._heatmap_tab_idx = self._tabs.addTab(
+            self._heatmap_tab, "Heatmap")
+
+    def _build_surface3d_tab(self):
+        """3D Surface options tab."""
+        from .heatmap_options import Surface3DOptionsTab
+        self._surface3d_tab = Surface3DOptionsTab(self._chart, self)
+        self._surface3d_tab_idx = self._tabs.addTab(
+            self._surface3d_tab, "3D Surface")
+
     def _save_current_range(self):
         """Save range edit values for the previously selected series."""
         prev = getattr(self, '_prev_series_row', -1)
@@ -3843,8 +3885,21 @@ class PlotDetailsDialog(QDialog):
             else:
                 self.y_range_edit.setText("")
 
-        n_pts = len(s.get("x", []))
-        self.data_info.setText(str(n_pts))
+        # Update data info — show matrix dims for heatmap/3D surface.
+        import numpy as np
+        y_data = s.get("y", [])
+        pt = s.get("plot_type", "Line")
+        if pt in ("Heatmap", "3D Surface"):
+            arr = np.atleast_2d(np.asarray(y_data))
+            rows, cols = arr.shape
+            self.data_info.setText(f"{rows} \u00d7 {cols} matrix")
+            # Show matrix dimensions as ranges if no saved edit.
+            if row not in self._range_edits:
+                self.x_range_edit.setText(f"1:{cols}  (columns)")
+                self.y_range_edit.setText(f"1:{rows}  (rows)")
+        else:
+            n_pts = len(s.get("x", []))
+            self.data_info.setText(str(n_pts))
 
         # Try to read line/scatter properties from the artist.
         from matplotlib.colors import to_hex
@@ -3960,6 +4015,22 @@ class PlotDetailsDialog(QDialog):
             if is_pie:
                 self._pie_tab.read_from_config(
                     getattr(self._chart, '_pie_config', {}))
+
+        # Heatmap tab — enable only for Heatmap.
+        if hasattr(self, '_heatmap_tab'):
+            self._tabs.setTabEnabled(
+                self._heatmap_tab_idx, pt == "Heatmap")
+            if pt == "Heatmap":
+                self._heatmap_tab.read_from_config(
+                    getattr(self._chart, '_heatmap_config', {}))
+
+        # 3D Surface tab — enable only for 3D Surface.
+        if hasattr(self, '_surface3d_tab'):
+            self._tabs.setTabEnabled(
+                self._surface3d_tab_idx, pt == "3D Surface")
+            if pt == "3D Surface":
+                self._surface3d_tab.read_from_config(
+                    getattr(self._chart, '_surface3d_config', {}))
 
     @staticmethod
     def _parse_range(range_str):
@@ -4106,6 +4177,22 @@ class PlotDetailsDialog(QDialog):
                 cfg["colors"] = chart._pie_config.get("colors")
                 chart._pie_config.update(cfg)
                 chart._redraw_pie()
+
+            # Heatmap options — save config and redraw.
+            if (hasattr(self, '_heatmap_tab')
+                    and s.get("plot_type") == "Heatmap"):
+                from .heatmap_options import redraw_heatmap
+                chart._heatmap_config = \
+                    self._heatmap_tab.write_to_config()
+                redraw_heatmap(chart, chart._heatmap_config)
+
+            # 3D Surface options — save config and redraw.
+            if (hasattr(self, '_surface3d_tab')
+                    and s.get("plot_type") == "3D Surface"):
+                from .heatmap_options import redraw_surface
+                chart._surface3d_config = \
+                    self._surface3d_tab.write_to_config()
+                redraw_surface(chart, chart._surface3d_config)
 
             # Refresh legend if one exists.
             if ax.get_legend() is not None:

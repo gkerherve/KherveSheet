@@ -134,10 +134,10 @@ class AxisPropertiesDialog(QDialog):
 
         outer = QVBoxLayout(self)
 
-        # ── Side notebook: Bottom (X) | Left (Y) ──────────────────
+        # ── Side notebook: Bottom (X) | Left (Y) | Front (Z) ────
         self._side_tabs = QTabWidget()
         self._side_tabs.setStyleSheet(_SIDE_TAB_STYLE)
-        for label in ("Bottom (X)", "Left (Y)"):
+        for label in ("Bottom (X)", "Left (Y)", "Front (Z)"):
             placeholder = QWidget()
             placeholder.setMaximumHeight(0)
             self._side_tabs.addTab(placeholder, label)
@@ -145,6 +145,11 @@ class AxisPropertiesDialog(QDialog):
             self._side_tabs.tabBar().sizeHint().height() + 4)
         self._side_tabs.currentChanged.connect(self._on_side_tab)
         outer.addWidget(self._side_tabs)
+        # Z tab is only enabled for 3D plots (Heatmap colour-bar axis,
+        # 3D Surface z-axis).
+        is_3d = any(s.get("plot_type") in ("Heatmap", "3D Surface")
+                     for s in chart._series)
+        self._side_tabs.setTabEnabled(2, is_3d)
 
         # ── Property sub-tabs ─────────────────────────────────────
         self._tabs = QTabWidget()
@@ -666,7 +671,7 @@ class AxisPropertiesDialog(QDialog):
 
     def _on_side_tab(self, index):
         """Called when the top-level side tab changes."""
-        direction = "x" if index == 0 else "y"
+        direction = ("x", "y", "z")[min(index, 2)]
         self._switch_dir(direction)
 
     def _switch_dir(self, direction):
@@ -677,7 +682,12 @@ class AxisPropertiesDialog(QDialog):
         self._current_dir = direction
 
         # Update secondary tab label.
-        sec_label = "Top Axis" if direction == "x" else "Right Axis"
+        if direction == "x":
+            sec_label = "Top Axis"
+        elif direction == "y":
+            sec_label = "Right Axis"
+        else:
+            sec_label = "Back Axis"
         self._tabs.setTabText(5, sec_label)
 
         if direction in self._dir_states:
@@ -850,18 +860,38 @@ class AxisPropertiesDialog(QDialog):
     def _refresh_from_axes(self, direction):
         """Read matplotlib axes and populate widgets for *direction*.
 
-        direction is "x" (Bottom + Top) or "y" (Left + Right).
+        direction is "x" (Bottom + Top), "y" (Left + Right), or "z"
+        (Front / Back on 3-D axes).
         """
         ax = self._ax
         is_x = (direction == "x")
-        pri_key = "bottom" if is_x else "left"      # primary spine
-        sec_key = "top" if is_x else "right"         # secondary spine
-        mpl_axis = ax.xaxis if is_x else ax.yaxis
+        is_z = (direction == "z")
+        if is_z:
+            # 3-D z-axis — fall back to sensible defaults if not 3D.
+            has_z = hasattr(ax, 'get_zlim')
+            pri_key = "left"
+            sec_key = "right"
+            mpl_axis = getattr(ax, 'zaxis', ax.yaxis)
+            if has_z:
+                cur_scale = ax.get_zscale() if hasattr(
+                    ax, 'get_zscale') else "linear"
+                lims = ax.get_zlim()
+                inverted = False
+            else:
+                cur_scale = "linear"
+                lims = (0, 1)
+                inverted = False
+        else:
+            pri_key = "bottom" if is_x else "left"
+            sec_key = "top" if is_x else "right"
+            mpl_axis = ax.xaxis if is_x else ax.yaxis
+            cur_scale = ax.get_xscale() if is_x else ax.get_yscale()
+            lims = ax.get_xlim() if is_x else ax.get_ylim()
+            inverted = (ax.xaxis_inverted() if is_x
+                        else ax.yaxis_inverted())
 
         # ── Scale ──────────────────────────────────────────────────
-        cur_scale = ax.get_xscale() if is_x else ax.get_yscale()
         self.scale_combo.setCurrentText(cur_scale)
-        lims = ax.get_xlim() if is_x else ax.get_ylim()
         self._setup_slider_range(lims[0], lims[1])
         self.limit_auto.setChecked(True)
         self.limit_min.blockSignals(True)
@@ -877,8 +907,6 @@ class AxisPropertiesDialog(QDialog):
         self.limit_min.blockSignals(False)
         self.limit_max.blockSignals(False)
         self._on_auto_limits(True)
-        inverted = (ax.xaxis_inverted() if is_x
-                    else ax.yaxis_inverted())
         self.invert_check.setChecked(bool(inverted))
 
         # ── Primary title (Bottom / Left) ──────────────────────────
@@ -1072,6 +1100,13 @@ class AxisPropertiesDialog(QDialog):
             return
         ax = self._ax
         is_x = (direction == "x")
+        is_z = (direction == "z")
+
+        if is_z:
+            # 3-D z-axis — only apply if axes supports it.
+            self._apply_dir_z(ax, st)
+            return
+
         pri_key = "bottom" if is_x else "left"
         sec_key = "top" if is_x else "right"
         mpl_axis = ax.xaxis if is_x else ax.yaxis
@@ -1262,11 +1297,71 @@ class AxisPropertiesDialog(QDialog):
 
         self._chart._canvas.draw_idle()
 
+    def _apply_dir_z(self, ax, st):
+        """Apply Z-axis state on a 3-D axes."""
+        if not hasattr(ax, 'set_zlabel'):
+            return  # not a 3-D axes
+
+        # Scale (matplotlib 3D only supports linear)
+        try:
+            if hasattr(ax, 'set_zscale'):
+                ax.set_zscale(st.get("scale", "linear"))
+        except Exception:
+            pass
+
+        # Limits
+        if not st.get("limit_auto", True):
+            ax.set_zlim(st["limit_min"], st["limit_max"])
+
+        # Title
+        text = st.get("title_text", "") if st.get(
+            "title_show", True) else ""
+        weight = "bold" if st.get("title_bold") else "normal"
+        style = "italic" if st.get("title_italic") else "normal"
+        font_family = st.get("title_font", "Default")
+        if font_family == "Default":
+            font_family = "sans-serif"
+        try:
+            rotation = int(st.get("title_rotation", 0))
+        except (ValueError, TypeError):
+            rotation = 0
+        ax.set_zlabel(text,
+                      fontsize=st.get("title_size", 10),
+                      color=st.get("title_color", "black"),
+                      fontweight=weight, fontstyle=style,
+                      fontfamily=font_family, rotation=rotation)
+
+        # Tick labels
+        if hasattr(ax, 'zaxis'):
+            ax.zaxis.set_tick_params(
+                labelsize=st.get("tl_size", 10),
+                labelcolor=st.get("tl_color", "black"),
+                labelrotation=st.get("tl_rotation", 0))
+            if not st.get("tl_show", True):
+                ax.zaxis.set_ticklabels([])
+
+        # Grid
+        if hasattr(ax, 'zaxis'):
+            ax.zaxis.grid(st.get("grid_major_show", True))
+
+        self._chart._canvas.draw_idle()
+
     # ── Static re-apply (for restoring saved state) ───────────────
 
     @classmethod
     def _apply_dir_static(cls, chart, direction, st):
         """Apply saved axis state *st* to *chart* without a dialog."""
+        if direction == "z":
+            # 3-D z-axis — limited static apply.
+            ax = chart._ax
+            if hasattr(ax, 'set_zlabel'):
+                text = st.get("title_text", "") if st.get(
+                    "title_show", True) else ""
+                ax.set_zlabel(text,
+                              fontsize=st.get("title_size", 10))
+                if not st.get("limit_auto", True):
+                    ax.set_zlim(st["limit_min"], st["limit_max"])
+            return
         ax = chart._ax
         is_x = (direction == "x")
         pri_key = "bottom" if is_x else "left"
