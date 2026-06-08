@@ -387,7 +387,7 @@ class _TypingIndicator(QLabel):
 
     def start(self):
         self._dots = 0
-        self.setText("Claude is thinking")
+        self.setText("Thinking")
         self.show()
         self._timer.start()
 
@@ -397,7 +397,7 @@ class _TypingIndicator(QLabel):
 
     def _tick(self):
         self._dots = (self._dots + 1) % 4
-        self.setText("Claude is thinking" + "." * self._dots)
+        self.setText("Thinking" + "." * self._dots)
 
 
 # ── Send-on-enter text edit ───────────────────────────────────────
@@ -649,7 +649,7 @@ class AiChatDock(QDockWidget):
                              "paste a screenshot or image (Ctrl+V) for me to "
                              "look at.\n"
                              "Set your provider (Anthropic, OpenAI, Mistral, "
-                             "or Ollama) and API key via the gear icon.",
+                             "Ollama, or Local AI) and API key via the gear icon.",
                              font_pt=self._font_pt)
         self._msg_layout.addWidget(welcome)
         self._update_title()

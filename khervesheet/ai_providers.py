@@ -102,10 +102,13 @@ PROVIDERS: Dict[str, dict] = {
         "needs_host": True,
         "refreshable": True,
         "models": [
-            "default",
+            "mistral:latest",
+            "llama3.1:latest",
+            "qwen2.5:latest",
+            "phi3:latest",
         ],
-        "default_model": "default",
-        "default_host": "http://localhost:1234/v1",
+        "default_model": "mistral:latest",
+        "default_host": "http://localhost:11434/v1",
     },
 }
 
