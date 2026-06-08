@@ -2913,6 +2913,7 @@ class EmbeddedChart(QWidget):
         if idx < 0 or idx >= len(self._annotations):
             return
         artist = self._annotations[idx]["artist"]
+        t = self._ax.transData      # data → display pixel transform
 
         # Endpoint drag.
         h = self._ann_dragging_handle
@@ -2922,7 +2923,8 @@ class EmbeddedChart(QWidget):
                 artist.xy = pt
             else:
                 artist.set_position(pt)
-            h["artist"].center = pt
+            # Handle circles live in display coords.
+            h["artist"].center = t.transform(pt)
             self._canvas.draw_idle()
             return
 
@@ -2935,12 +2937,10 @@ class EmbeddedChart(QWidget):
             new_xyt = (bd["xytext0"][0] + dx, bd["xytext0"][1] + dy)
             artist.xy = new_xy
             artist.set_position(new_xyt)
-            # Move handle circles too.
+            # Handle circles live in display coords.
             for hh in self._ann_handles:
-                if hh["role"] == "xy":
-                    hh["artist"].center = new_xy
-                else:
-                    hh["artist"].center = new_xyt
+                data_pt = new_xy if hh["role"] == "xy" else new_xyt
+                hh["artist"].center = t.transform(data_pt)
             self._canvas.draw_idle()
 
     def _on_ann_release(self, event):

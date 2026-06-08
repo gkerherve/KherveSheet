@@ -57,6 +57,9 @@ _HANDLE_RADIUS_PX = 7           # endpoint circle radius in pixels
 def draw_text_selection(ann, ax, canvas):
     """Draw a dashed blue rectangle around a text annotation.
 
+    The rectangle is drawn in **display (pixel) coordinates** so it
+    matches the text tightly regardless of axis scale ratios.
+
     Returns a list of matplotlib artists to remove on deselect.
     """
     renderer = canvas.get_renderer()
@@ -64,16 +67,16 @@ def draw_text_selection(ann, ax, canvas):
         bbox = ann.get_window_extent(renderer)
     except Exception:
         return []
-    inv = ax.transData.inverted()
-    (x0, y0), (x1, y1) = inv.transform(
-        [[bbox.x0, bbox.y0], [bbox.x1, bbox.y1]])
-    pad = (x1 - x0) * 0.08
+    pad = 4  # pixels
     rect = mpatches.FancyBboxPatch(
-        (x0 - pad, y0 - pad), (x1 - x0) + 2 * pad, (y1 - y0) + 2 * pad,
-        boxstyle="round,pad=0.02",
+        (bbox.x0 - pad, bbox.y0 - pad),
+        bbox.width + 2 * pad, bbox.height + 2 * pad,
+        boxstyle="round,pad=2",
         linewidth=1.5, edgecolor=_SELECT_COLOR,
         facecolor="none", linestyle="--",
-        zorder=999, transform=ax.transData)
+        zorder=999,
+        transform=None,          # None = raw display coords
+        clip_on=False)
     ax.add_patch(rect)
     return [rect]
 
@@ -81,29 +84,27 @@ def draw_text_selection(ann, ax, canvas):
 def draw_endpoint_handles(ann, ax, canvas):
     """Draw filled circles at the two endpoints of a line/arrow annotation.
 
+    Circles are drawn via a **pixel-offset transform** anchored to each
+    data-coordinate point, so they always appear round on screen.
+
     Returns (artists, handle_data) where handle_data is a list of
     dicts with ``artist`` and ``role`` ('xy' or 'xytext') for
     hit-testing and dragging.
     """
     artists = []
     handles = []
-    # Compute a data-coord radius that equals _HANDLE_RADIUS_PX on screen.
-    try:
-        p0 = ax.transData.transform((0, 0))
-        p1 = p0 + np.array([_HANDLE_RADIUS_PX, 0])
-        r_data = abs(ax.transData.inverted().transform(p1)[0] -
-                     ax.transData.inverted().transform(p0)[0])
-    except Exception:
-        # Fallback: fraction of the axis range.
-        xl, xr = ax.get_xlim()
-        r_data = (xr - xl) * 0.012
+    r = _HANDLE_RADIUS_PX           # radius in display pixels
 
     for role in ("xy", "xytext"):
         pt = tuple(ann.xy if role == "xy" else ann.get_position())
+        # Draw in display (pixel) coords so circles are always round.
+        disp = ax.transData.transform(pt)
         circ = mpatches.Circle(
-            pt, radius=r_data, linewidth=2,
+            disp, radius=r, linewidth=2,
             edgecolor=_SELECT_COLOR, facecolor=_SELECT_COLOR,
-            alpha=0.65, zorder=999, transform=ax.transData)
+            alpha=0.65, zorder=999,
+            transform=None,       # raw display coords
+            clip_on=False)
         ax.add_patch(circ)
         artists.append(circ)
         handles.append({"artist": circ, "role": role})
@@ -209,9 +210,10 @@ def hit_test_handle(event, handles, ax):
         return None
     for h in handles:
         try:
-            d = _dist_point_px(event.x, event.y, ax,
-                               np.asarray(h["artist"].center))
-            if d <= _HIT_TOL_PX + 3:
+            # Handle circles are in display coords already.
+            cx, cy = h["artist"].center
+            d = np.hypot(event.x - cx, event.y - cy)
+            if d <= _HANDLE_RADIUS_PX + 4:
                 return h
         except Exception:
             pass
