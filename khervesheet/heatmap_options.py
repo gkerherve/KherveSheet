@@ -447,12 +447,8 @@ def redraw_surface(chart, cfg: dict):
 
     if cfg.get("colorbar", True):
         chart._heatmap_cbar = chart._figure.colorbar(surf, ax=ax,
-                                                       shrink=0.6)
-
-    try:
-        chart._figure.tight_layout()
-    except Exception:
-        pass
+                                                       shrink=0.6,
+                                                       pad=0.1)
 
     chart._canvas.draw_idle()
 
