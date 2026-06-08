@@ -2791,15 +2791,14 @@ class EmbeddedChart(QWidget):
                                    self._ax, self._canvas)
         if idx >= 0:
             if idx == self._selected_ann_idx:
-                # Already selected — start body drag for arrows/lines.
+                # Already selected — start body drag.
                 a = self._annotations[idx]
-                if a["type"] in ("arrow", "line"):
-                    artist = a["artist"]
-                    self._ann_body_drag = {
-                        "x0": event.xdata, "y0": event.ydata,
-                        "xy0": tuple(artist.xy),
-                        "xytext0": tuple(artist.get_position()),
-                    }
+                artist = a["artist"]
+                self._ann_body_drag = {
+                    "x0": event.xdata, "y0": event.ydata,
+                    "xy0": tuple(artist.xy),
+                    "xytext0": tuple(artist.get_position()),
+                }
                 return
             self._select_annotation(idx)
         else:
@@ -2816,21 +2815,20 @@ class EmbeddedChart(QWidget):
         self._selected_ann_idx = idx
         a = self._annotations[idx]
         atype = a["type"]
+        # Disable matplotlib's built-in draggable — we handle all
+        # dragging ourselves so selection visuals stay in sync.
+        try:
+            a["artist"].draggable(False)
+        except Exception:
+            pass
         if atype == "text":
             arts = draw_text_selection(a["artist"], self._ax, self._canvas)
             self._ann_select_artists = arts
-            # Keep draggable — user can still move text by dragging.
         elif atype in ("arrow", "line"):
             arts, handles = draw_endpoint_handles(
                 a["artist"], self._ax, self._canvas)
             self._ann_select_artists = arts
             self._ann_handles = handles
-            # Disable matplotlib's built-in draggable — we handle body
-            # and endpoint dragging ourselves for arrows/lines.
-            try:
-                a["artist"].draggable(False)
-            except Exception:
-                pass
         self.setFocus()
         self._canvas.draw_idle()
 
@@ -2844,14 +2842,13 @@ class EmbeddedChart(QWidget):
         self._ann_handles = []
         self._ann_dragging_handle = None
         self._ann_body_drag = None
-        # Re-enable draggable for arrows/lines (text never lost it).
+        # Re-enable draggable.
         if self._selected_ann_idx < len(self._annotations):
             a = self._annotations[self._selected_ann_idx]
-            if a["type"] in ("arrow", "line"):
-                try:
-                    a["artist"].draggable(True)
-                except Exception:
-                    pass
+            try:
+                a["artist"].draggable(True)
+            except Exception:
+                pass
         self._selected_ann_idx = -1
         self._canvas.draw_idle()
 
@@ -2939,7 +2936,7 @@ class EmbeddedChart(QWidget):
             self._canvas.draw_idle()
             return
 
-        # Body drag (move whole arrow/line).
+        # Body drag (move whole annotation).
         bd = self._ann_body_drag
         if bd is not None:
             dx = event.xdata - bd["x0"]
@@ -2948,10 +2945,22 @@ class EmbeddedChart(QWidget):
             new_xyt = (bd["xytext0"][0] + dx, bd["xytext0"][1] + dy)
             artist.xy = new_xy
             artist.set_position(new_xyt)
-            # Handle circles live in display coords.
+            # Move endpoint handle circles (arrows/lines).
             for hh in self._ann_handles:
                 data_pt = new_xy if hh["role"] == "xy" else new_xyt
                 hh["artist"].center = t.transform(data_pt)
+            # Move text selection rectangle (display coords).
+            atype = self._annotations[idx]["type"]
+            if atype == "text" and self._ann_select_artists:
+                disp_dx = t.transform(new_xy)[0] - t.transform(bd["xy0"])[0]
+                disp_dy = t.transform(new_xy)[1] - t.transform(bd["xy0"])[1]
+                rect = self._ann_select_artists[0]
+                x0, y0 = rect.get_xy()
+                if not hasattr(bd, "_rect_origin"):
+                    bd["_rect_x0"] = x0
+                    bd["_rect_y0"] = y0
+                rect.set_xy((bd["_rect_x0"] + disp_dx,
+                             bd["_rect_y0"] + disp_dy))
             self._canvas.draw_idle()
 
     def _on_ann_release(self, event):
