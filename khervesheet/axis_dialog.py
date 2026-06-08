@@ -1310,51 +1310,63 @@ class AxisPropertiesDialog(QDialog):
         self._chart._canvas.draw_idle()
 
     def _apply_dir_z(self, ax, st):
-        """Apply Z-axis state on a 3-D axes."""
-        if not hasattr(ax, 'set_zlabel'):
-            return  # not a 3-D axes
+        """Apply Z-axis state on a 3-D axes or heatmap colour range."""
+        is_3d = hasattr(ax, 'set_zlabel')
 
-        # Scale (matplotlib 3D only supports linear)
-        try:
-            if hasattr(ax, 'set_zscale'):
-                ax.set_zscale(st.get("scale", "linear"))
-        except Exception:
-            pass
+        if is_3d:
+            # ── True 3-D axes ─────────────────────────────────────
+            try:
+                if hasattr(ax, 'set_zscale'):
+                    ax.set_zscale(st.get("scale", "linear"))
+            except Exception:
+                pass
 
-        # Limits
-        if not st.get("limit_auto", True):
-            ax.set_zlim(st["limit_min"], st["limit_max"])
+            if not st.get("limit_auto", True):
+                ax.set_zlim(st["limit_min"], st["limit_max"])
 
-        # Title
-        text = st.get("title_text", "") if st.get(
-            "title_show", True) else ""
-        weight = "bold" if st.get("title_bold") else "normal"
-        style = "italic" if st.get("title_italic") else "normal"
-        font_family = st.get("title_font", "Default")
-        if font_family == "Default":
-            font_family = "sans-serif"
-        try:
-            rotation = int(st.get("title_rotation", 0))
-        except (ValueError, TypeError):
-            rotation = 0
-        ax.set_zlabel(text,
-                      fontsize=st.get("title_size", 10),
-                      color=st.get("title_color", "black"),
-                      fontweight=weight, fontstyle=style,
-                      fontfamily=font_family, rotation=rotation)
+            text = st.get("title_text", "") if st.get(
+                "title_show", True) else ""
+            weight = "bold" if st.get("title_bold") else "normal"
+            style = "italic" if st.get("title_italic") else "normal"
+            font_family = st.get("title_font", "Default")
+            if font_family == "Default":
+                font_family = "sans-serif"
+            try:
+                rotation = int(st.get("title_rotation", 0))
+            except (ValueError, TypeError):
+                rotation = 0
+            ax.set_zlabel(text,
+                          fontsize=st.get("title_size", 10),
+                          color=st.get("title_color", "black"),
+                          fontweight=weight, fontstyle=style,
+                          fontfamily=font_family, rotation=rotation)
 
-        # Tick labels
-        if hasattr(ax, 'zaxis'):
-            ax.zaxis.set_tick_params(
-                labelsize=st.get("tl_size", 10),
-                labelcolor=st.get("tl_color", "black"),
-                labelrotation=st.get("tl_rotation", 0))
-            if not st.get("tl_show", True):
-                ax.zaxis.set_ticklabels([])
-
-        # Grid
-        if hasattr(ax, 'zaxis'):
-            ax.zaxis.grid(st.get("grid_major_show", True))
+            if hasattr(ax, 'zaxis'):
+                ax.zaxis.set_tick_params(
+                    labelsize=st.get("tl_size", 10),
+                    labelcolor=st.get("tl_color", "black"),
+                    labelrotation=st.get("tl_rotation", 0))
+                if not st.get("tl_show", True):
+                    ax.zaxis.set_ticklabels([])
+                ax.zaxis.grid(st.get("grid_major_show", True))
+        else:
+            # ── 2-D heatmap: Z controls colour limits (clim) ──────
+            if not st.get("limit_auto", True):
+                vmin = st.get("limit_min", 0)
+                vmax = st.get("limit_max", 1)
+                for s in getattr(self._chart, '_series', []):
+                    art = s.get("artist")
+                    if art is not None and hasattr(art, 'set_clim'):
+                        art.set_clim(vmin, vmax)
+                        break
+                # Update the colorbar if present.
+                cbar = getattr(self._chart, '_heatmap_cbar', None)
+                if cbar is not None:
+                    try:
+                        cbar.update_normal(
+                            self._chart._series[0]["artist"])
+                    except Exception:
+                        pass
 
         self._chart._canvas.draw_idle()
 
@@ -1364,15 +1376,32 @@ class AxisPropertiesDialog(QDialog):
     def _apply_dir_static(cls, chart, direction, st):
         """Apply saved axis state *st* to *chart* without a dialog."""
         if direction == "z":
-            # 3-D z-axis — limited static apply.
             ax = chart._ax
             if hasattr(ax, 'set_zlabel'):
+                # True 3-D axes.
                 text = st.get("title_text", "") if st.get(
                     "title_show", True) else ""
                 ax.set_zlabel(text,
                               fontsize=st.get("title_size", 10))
                 if not st.get("limit_auto", True):
                     ax.set_zlim(st["limit_min"], st["limit_max"])
+            else:
+                # 2-D heatmap: Z controls colour limits (clim).
+                if not st.get("limit_auto", True):
+                    vmin = st.get("limit_min", 0)
+                    vmax = st.get("limit_max", 1)
+                    for s in getattr(chart, '_series', []):
+                        art = s.get("artist")
+                        if art is not None and hasattr(art, 'set_clim'):
+                            art.set_clim(vmin, vmax)
+                            break
+                    cbar = getattr(chart, '_heatmap_cbar', None)
+                    if cbar is not None:
+                        try:
+                            cbar.update_normal(
+                                chart._series[0]["artist"])
+                        except Exception:
+                            pass
             return
         ax = chart._ax
         is_x = (direction == "x")
