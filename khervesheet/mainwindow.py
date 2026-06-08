@@ -1718,6 +1718,14 @@ class MainWindow(QMainWindow):
                         if d.get('pie_config'):
                             cg.attrs['pie_config'] = json.dumps(
                                 d['pie_config'])
+                        # Heatmap config.
+                        if d.get('heatmap_config'):
+                            cg.attrs['heatmap_config'] = json.dumps(
+                                d['heatmap_config'])
+                        # 3D Surface config.
+                        if d.get('surface3d_config'):
+                            cg.attrs['surface3d_config'] = json.dumps(
+                                d['surface3d_config'])
                         # Trendlines.
                         if d.get('trendlines'):
                             cg.attrs['trendlines'] = json.dumps(
@@ -2189,6 +2197,18 @@ class MainWindow(QMainWindow):
                             pc_json = pc_json.decode('utf-8')
                         if pc_json:
                             cd["pie_config"] = json.loads(pc_json)
+                        # Heatmap config.
+                        hmc_json = cg.attrs.get('heatmap_config', '')
+                        if isinstance(hmc_json, bytes):
+                            hmc_json = hmc_json.decode('utf-8')
+                        if hmc_json:
+                            cd["heatmap_config"] = json.loads(hmc_json)
+                        # 3D Surface config.
+                        s3c_json = cg.attrs.get('surface3d_config', '')
+                        if isinstance(s3c_json, bytes):
+                            s3c_json = s3c_json.decode('utf-8')
+                        if s3c_json:
+                            cd["surface3d_config"] = json.loads(s3c_json)
                         # Trendlines.
                         tl_json = cg.attrs.get('trendlines', '')
                         if isinstance(tl_json, bytes):
@@ -2483,6 +2503,8 @@ class MainWindow(QMainWindow):
                 "series": cb_series,
                 "bar_config": dict(sel._bar_config),
                 "pie_config": dict(sel._pie_config),
+                "heatmap_config": dict(getattr(sel, '_heatmap_config', {})),
+                "surface3d_config": dict(getattr(sel, '_surface3d_config', {})),
             }
             sel._close_chart()
             s._selected_chart = None
@@ -2524,6 +2546,8 @@ class MainWindow(QMainWindow):
                 "series": cb_series,
                 "bar_config": dict(sel._bar_config),
                 "pie_config": dict(sel._pie_config),
+                "heatmap_config": dict(getattr(sel, '_heatmap_config', {})),
+                "surface3d_config": dict(getattr(sel, '_surface3d_config', {})),
             }
             _sh._shape_clipboard = None
             self._status_msg("Chart copied", 2000)
@@ -2571,6 +2595,28 @@ class MainWindow(QMainWindow):
             if pc and first_chart:
                 first_chart._pie_config.update(pc)
                 first_chart._redraw_pie()
+            # Restore heatmap config and redraw.
+            hmc = cb.get("heatmap_config")
+            if hmc and first_chart:
+                first_chart._heatmap_config = dict(hmc)
+                if first_chart._series and \
+                        first_chart._series[0].get("plot_type") == "Heatmap":
+                    from .heatmap_options import redraw_heatmap
+                    try:
+                        redraw_heatmap(first_chart, hmc)
+                    except Exception:
+                        pass
+            # Restore 3D surface config and redraw.
+            s3c = cb.get("surface3d_config")
+            if s3c and first_chart:
+                first_chart._surface3d_config = dict(s3c)
+                if first_chart._series and \
+                        first_chart._series[0].get("plot_type") == "3D Surface":
+                    from .heatmap_options import redraw_surface
+                    try:
+                        redraw_surface(first_chart, s3c)
+                    except Exception:
+                        pass
             _g._chart_clipboard = None
             self._status_msg("Chart pasted", 2000)
             return
