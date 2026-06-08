@@ -308,10 +308,26 @@ class AxisPropertiesDialog(QDialog):
         if self.limit_auto.isChecked():
             return
         ax = self._ax
-        is_x = (self._current_dir == "x")
         lo = self.limit_min.value()
         hi = self.limit_max.value()
-        if is_x:
+        if self._current_dir == "z":
+            # 3-D axes: set zlim; 2-D heatmap: set colour limits.
+            if hasattr(ax, 'set_zlim'):
+                ax.set_zlim(lo, hi)
+            else:
+                for s in getattr(self._chart, '_series', []):
+                    art = s.get("artist")
+                    if art is not None and hasattr(art, 'set_clim'):
+                        art.set_clim(lo, hi)
+                        break
+                cbar = getattr(self._chart, '_heatmap_cbar', None)
+                if cbar is not None:
+                    try:
+                        cbar.update_normal(
+                            self._chart._series[0]["artist"])
+                    except Exception:
+                        pass
+        elif self._current_dir == "x":
             ax.set_xlim(lo, hi)
         else:
             ax.set_ylim(lo, hi)
