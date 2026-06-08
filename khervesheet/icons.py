@@ -2047,3 +2047,42 @@ def link_icon(size: int = 20) -> QIcon:
         p.drawRoundedRect(QRectF(s * 0.48, s * 0.32, s * 0.42, s * 0.36),
                           s * 0.18, s * 0.18)
     return _fmt_icon(size, _draw)
+
+
+def sparkline_icon(size: int = 22) -> QIcon:
+    """Three tiny sparkline lines side by side."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing, True)
+    s = float(size)
+    pad = 2.0
+    color = QColor(active_icon_color())
+    accent = QColor(LINE_PLOT_ACCENT)
+    # Three vertical lanes, each with a mini polyline
+    lanes = 3
+    lane_w = (s - 2 * pad) / lanes
+    profiles = [
+        [0.3, 0.7, 0.4, 0.9, 0.5],
+        [0.8, 0.5, 0.6, 0.2, 0.7],
+        [0.4, 0.6, 0.8, 0.3, 0.6],
+    ]
+    colors = [accent, QColor("#e74c3c"), QColor("#27ae60")]
+    for lane_i, (prof, col) in enumerate(zip(profiles, colors)):
+        lx = pad + lane_i * lane_w
+        p.setPen(QPen(col, 1.4, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+        pts = []
+        n = len(prof)
+        for j, frac in enumerate(prof):
+            x = lx + (j / (n - 1)) * (lane_w - 1)
+            y = pad + (1.0 - frac) * (s - 2 * pad)
+            pts.append(QPointF(x, y))
+        for a, b in zip(pts, pts[1:]):
+            p.drawLine(a, b)
+    # Thin separator lines
+    p.setPen(QPen(color, 0.5, Qt.DotLine))
+    for i in range(1, lanes):
+        x = pad + i * lane_w
+        p.drawLine(QPointF(x, pad), QPointF(x, s - pad))
+    p.end()
+    return QIcon(pm)

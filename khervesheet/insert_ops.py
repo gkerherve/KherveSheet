@@ -19,7 +19,7 @@ from PyQt5.QtWidgets import (
     QLineEdit, QGridLayout, QWidget, QTableWidgetItem,
     QComboBox, QTextEdit, QDialogButtonBox, QFormLayout,
     QInputDialog, QMessageBox, QApplication, QWidgetAction,
-    QScrollArea, QToolTip,
+    QScrollArea, QToolTip, QSpinBox,
 )
 
 
@@ -822,6 +822,94 @@ def remove_sparklines(sheet):
     if not removed:
         QMessageBox.information(sheet, "Remove Sparkline",
                                 "No sparklines in the selected cells.")
+
+
+def insert_sparklines_bulk(sheet):
+    """Bulk sparkline insertion: one sparkline per column of the selection.
+
+    The user selects a data range (multiple columns, multiple rows), clicks
+    the toolbar button, picks a target row in a dialog, and one sparkline is
+    created per column — each reading values from that column's rows.
+    """
+    sel = sheet.table.selectedRanges()
+    if not sel:
+        QMessageBox.information(
+            sheet, "Insert Sparklines",
+            "Select a range with one or more columns first.")
+        return
+
+    rng = sel[0]
+    top = rng.topRow()
+    bottom = rng.bottomRow()
+    left = rng.leftColumn()
+    right = rng.rightColumn()
+
+    if top == bottom:
+        QMessageBox.information(
+            sheet, "Insert Sparklines",
+            "Select at least two rows of data for sparklines.")
+        return
+
+    dlg = QDialog(sheet)
+    dlg.setWindowTitle("Insert Sparklines")
+    layout = QFormLayout(dlg)
+
+    row_spin = QSpinBox()
+    row_spin.setMinimum(1)
+    row_spin.setMaximum(sheet.table.rowCount())
+    # Default: row just above the selection (1-based display)
+    row_spin.setValue(max(1, top))
+    layout.addRow("Target row:", row_spin)
+
+    type_combo = QComboBox()
+    type_combo.addItems(["Line", "Bar", "Win/Loss"])
+    layout.addRow("Type:", type_combo)
+
+    color_edit = QLineEdit("#4472c4")
+    layout.addRow("Color:", color_edit)
+
+    info = QLabel(f"{right - left + 1} sparkline(s) will be created "
+                  f"(columns "
+                  f"{_idx_to_col_letter(left)}\u2013"
+                  f"{_idx_to_col_letter(right)}).")
+    layout.addRow(info)
+
+    bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+    bb.accepted.connect(dlg.accept)
+    bb.rejected.connect(dlg.reject)
+    layout.addRow(bb)
+
+    if dlg.exec_() != QDialog.Accepted:
+        return
+
+    target_row = row_spin.value() - 1  # convert to 0-based
+    spark_type = {"Line": "line", "Bar": "bar",
+                  "Win/Loss": "winloss"}[type_combo.currentText()]
+    color = color_edit.text().strip() or "#4472c4"
+
+    if not hasattr(sheet, '_cell_sparklines'):
+        sheet._cell_sparklines = {}
+
+    for col in range(left, right + 1):
+        spark = {
+            "col": col, "r1": top, "r2": bottom,
+            "type": spark_type,
+            "color": color,
+        }
+        sheet._fmt_delegate._sparklines[(target_row, col)] = spark
+        sheet._cell_sparklines[(target_row, col)] = spark
+        idx = sheet.table.model().index(target_row, col)
+        sheet.table.update(idx)
+
+
+def _idx_to_col_letter(idx):
+    """Convert 0-based column index to letter(s): 0→A, 25→Z, 26→AA."""
+    result = ""
+    n = idx + 1
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        result = chr(65 + rem) + result
+    return result
 
 
 # ── Persistence helpers ─────────────────────────────────────────────

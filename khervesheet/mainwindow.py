@@ -252,8 +252,15 @@ class MainWindow(QMainWindow):
         equation_menu.setIcon(icons.equation_icon(24))
         insert_menu.addMenu(equation_menu)
 
-        # Sparkline.
-        insert_menu.addAction("Sparkline\u2026", self._insert_sparkline)
+        # Sparklines.
+        spark_sub = insert_menu.addMenu(icons.sparkline_icon(24),
+                                        "Sparkline")
+        spark_sub.addAction("Sparklines from Selection\u2026",
+                            self._insert_sparklines_bulk)
+        spark_sub.addAction("Single Sparkline\u2026",
+                            self._insert_sparkline)
+        spark_sub.addSeparator()
+        spark_sub.addAction("Remove Sparklines", self._remove_sparkline)
         insert_menu.addSeparator()
 
         # Function submenu (mirrors Formulas menu).
@@ -674,6 +681,22 @@ class MainWindow(QMainWindow):
         self._shapes_btn.setPopupMode(QToolButton.InstantPopup)
         self._shapes_btn.setMenu(self._make_shape_gallery())
         plot_bar.addWidget(self._shapes_btn)
+
+        # ── Sparkline button ─────────────────────────────────────
+        self._sparkline_btn = QToolButton()
+        self._sparkline_btn.setIcon(icons.sparkline_icon(_ICO))
+        self._sparkline_btn.setToolTip("Insert Sparklines")
+        self._sparkline_btn.setPopupMode(QToolButton.MenuButtonPopup)
+        self._sparkline_btn.clicked.connect(self._insert_sparklines_bulk)
+        spark_menu = QMenu(self._sparkline_btn)
+        spark_menu.addAction("Sparklines from Selection\u2026",
+                             self._insert_sparklines_bulk)
+        spark_menu.addAction("Single Sparkline\u2026",
+                             self._insert_sparkline)
+        spark_menu.addSeparator()
+        spark_menu.addAction("Remove Sparklines", self._remove_sparkline)
+        self._sparkline_btn.setMenu(spark_menu)
+        plot_bar.addWidget(self._sparkline_btn)
 
         # ── Equation button ──────────────────────────────────────
         self._equation_btn = QToolButton()
@@ -3205,6 +3228,7 @@ class MainWindow(QMainWindow):
         self._align_left_act.setIcon(icons.align_left_icon(s))
         self._align_center_act.setIcon(icons.align_center_icon(s))
         self._align_right_act.setIcon(icons.align_right_icon(s))
+        self._sparkline_btn.setIcon(icons.sparkline_icon(s))
 
     # ── Version control ─────────────────────────────────────────────
     def _vc_repo_dir(self):
@@ -3869,6 +3893,13 @@ class MainWindow(QMainWindow):
             return
         from .insert_ops import insert_sparkline
         insert_sparkline(sheet)
+
+    def _insert_sparklines_bulk(self):
+        sheet = self._active_sheet()
+        if not sheet:
+            return
+        from .insert_ops import insert_sparklines_bulk
+        insert_sparklines_bulk(sheet)
 
     def _remove_sparkline(self):
         sheet = self._active_sheet()
