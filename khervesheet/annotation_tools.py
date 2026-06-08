@@ -49,7 +49,7 @@ _BOX_STYLES = [
 ]
 
 _SELECT_COLOR = "#1a73e8"       # blue highlight
-_HANDLE_RADIUS_PX = 5           # endpoint circle radius in pixels
+_HANDLE_RADIUS_PX = 7           # endpoint circle radius in pixels
 
 
 # ── Selection visuals ─────────────────────────────────────────────────
@@ -79,37 +79,34 @@ def draw_text_selection(ann, ax, canvas):
 
 
 def draw_endpoint_handles(ann, ax, canvas):
-    """Draw small circles at the two endpoints of a line/arrow annotation.
+    """Draw filled circles at the two endpoints of a line/arrow annotation.
 
     Returns (artists, handle_data) where handle_data is a list of
-    dicts with ``center_data``, ``artist``, and ``role`` ('xy' or
-    'xytext') for hit-testing and dragging.
+    dicts with ``artist`` and ``role`` ('xy' or 'xytext') for
+    hit-testing and dragging.
     """
     artists = []
     handles = []
+    # Compute a data-coord radius that equals _HANDLE_RADIUS_PX on screen.
+    try:
+        p0 = ax.transData.transform((0, 0))
+        p1 = p0 + np.array([_HANDLE_RADIUS_PX, 0])
+        r_data = abs(ax.transData.inverted().transform(p1)[0] -
+                     ax.transData.inverted().transform(p0)[0])
+    except Exception:
+        # Fallback: fraction of the axis range.
+        xl, xr = ax.get_xlim()
+        r_data = (xr - xl) * 0.012
+
     for role in ("xy", "xytext"):
-        if role == "xy":
-            pt = ann.xy
-        else:
-            pt = ann.get_position()
+        pt = tuple(ann.xy if role == "xy" else ann.get_position())
         circ = mpatches.Circle(
-            pt, radius=0, linewidth=1.5,
-            edgecolor=_SELECT_COLOR, facecolor="white",
-            zorder=999, transform=ax.transData)
-        # Set radius in pixels via a fixed-size trick: we'll set it in
-        # data coords after measuring pixel scale.
-        try:
-            t = ax.transData
-            p0 = t.transform(pt)
-            p1 = np.array(p0) + [_HANDLE_RADIUS_PX, 0]
-            r_data = abs(ax.transData.inverted().transform(p1)[0] -
-                         ax.transData.inverted().transform(p0)[0])
-            circ.set_radius(r_data)
-        except Exception:
-            circ.set_radius(0.02)
+            pt, radius=r_data, linewidth=2,
+            edgecolor=_SELECT_COLOR, facecolor=_SELECT_COLOR,
+            alpha=0.65, zorder=999, transform=ax.transData)
         ax.add_patch(circ)
         artists.append(circ)
-        handles.append({"center_data": pt, "artist": circ, "role": role})
+        handles.append({"artist": circ, "role": role})
     return artists, handles
 
 

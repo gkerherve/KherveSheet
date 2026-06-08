@@ -485,6 +485,7 @@ class EmbeddedChart(QWidget):
         self._ann_select_artists = []     # visual selection markers
         self._ann_handles = []            # endpoint handle dicts
         self._ann_dragging_handle = None  # handle being dragged
+        self._ann_body_drag = None        # body-drag origin for arrows/lines
 
         self.setMinimumSize(240, 180)
         self.resize(480, 320)
@@ -2768,15 +2769,27 @@ class EmbeddedChart(QWidget):
         """Select or deselect an annotation on single left-click."""
         from .annotation_tools import (hit_test_annotations,
                                         hit_test_handle)
-        # If handles are showing, check if user is starting a drag.
+        # If an arrow/line is selected, check for endpoint handle drag.
         if self._ann_handles and self._selected_ann_idx >= 0:
             h = hit_test_handle(event, self._ann_handles, self._ax)
             if h is not None:
                 self._ann_dragging_handle = h
-                return  # don't deselect — start endpoint drag
+                return  # start endpoint drag
+        # Check if clicking on an annotation.
         idx = hit_test_annotations(event, self._annotations,
                                    self._ax, self._canvas)
         if idx >= 0:
+            if idx == self._selected_ann_idx:
+                # Already selected — start body drag for arrows/lines.
+                a = self._annotations[idx]
+                if a["type"] in ("arrow", "line"):
+                    artist = a["artist"]
+                    self._ann_body_drag = {
+                        "x0": event.xdata, "y0": event.ydata,
+                        "xy0": tuple(artist.xy),
+                        "xytext0": tuple(artist.get_position()),
+                    }
+                return
             self._select_annotation(idx)
         else:
             self._deselect_annotation()
@@ -2795,16 +2808,18 @@ class EmbeddedChart(QWidget):
         if atype == "text":
             arts = draw_text_selection(a["artist"], self._ax, self._canvas)
             self._ann_select_artists = arts
+            # Keep draggable — user can still move text by dragging.
         elif atype in ("arrow", "line"):
             arts, handles = draw_endpoint_handles(
                 a["artist"], self._ax, self._canvas)
             self._ann_select_artists = arts
             self._ann_handles = handles
-        # Disable draggable while selected (we manage interaction).
-        try:
-            a["artist"].draggable(False)
-        except Exception:
-            pass
+            # Disable matplotlib's built-in draggable — we handle body
+            # and endpoint dragging ourselves for arrows/lines.
+            try:
+                a["artist"].draggable(False)
+            except Exception:
+                pass
         self.setFocus()
         self._canvas.draw_idle()
 
@@ -2817,13 +2832,15 @@ class EmbeddedChart(QWidget):
         self._ann_select_artists = []
         self._ann_handles = []
         self._ann_dragging_handle = None
-        # Re-enable draggable.
+        self._ann_body_drag = None
+        # Re-enable draggable for arrows/lines (text never lost it).
         if self._selected_ann_idx < len(self._annotations):
             a = self._annotations[self._selected_ann_idx]
-            try:
-                a["artist"].draggable(True)
-            except Exception:
-                pass
+            if a["type"] in ("arrow", "line"):
+                try:
+                    a["artist"].draggable(True)
+                except Exception:
+                    pass
         self._selected_ann_idx = -1
         self._canvas.draw_idle()
 
@@ -2889,26 +2906,47 @@ class EmbeddedChart(QWidget):
         super().keyPressEvent(event)
 
     def _on_ann_motion(self, event):
-        """Drag an annotation endpoint handle."""
-        h = self._ann_dragging_handle
-        if h is None or event.inaxes is not self._ax:
+        """Drag an annotation endpoint or body."""
+        if event.inaxes is not self._ax or event.xdata is None:
             return
         idx = self._selected_ann_idx
         if idx < 0 or idx >= len(self._annotations):
             return
         artist = self._annotations[idx]["artist"]
-        pt = (event.xdata, event.ydata)
-        if h["role"] == "xy":
-            artist.xy = pt
-        else:
-            artist.set_position(pt)
-        # Move the handle circle.
-        h["artist"].center = pt
-        self._canvas.draw_idle()
+
+        # Endpoint drag.
+        h = self._ann_dragging_handle
+        if h is not None:
+            pt = (event.xdata, event.ydata)
+            if h["role"] == "xy":
+                artist.xy = pt
+            else:
+                artist.set_position(pt)
+            h["artist"].center = pt
+            self._canvas.draw_idle()
+            return
+
+        # Body drag (move whole arrow/line).
+        bd = self._ann_body_drag
+        if bd is not None:
+            dx = event.xdata - bd["x0"]
+            dy = event.ydata - bd["y0"]
+            new_xy = (bd["xy0"][0] + dx, bd["xy0"][1] + dy)
+            new_xyt = (bd["xytext0"][0] + dx, bd["xytext0"][1] + dy)
+            artist.xy = new_xy
+            artist.set_position(new_xyt)
+            # Move handle circles too.
+            for hh in self._ann_handles:
+                if hh["role"] == "xy":
+                    hh["artist"].center = new_xy
+                else:
+                    hh["artist"].center = new_xyt
+            self._canvas.draw_idle()
 
     def _on_ann_release(self, event):
-        """Finish endpoint drag."""
+        """Finish endpoint or body drag."""
         self._ann_dragging_handle = None
+        self._ann_body_drag = None
 
     # ── Double-click opens axis properties ─────────────────────────
     def mouseDoubleClickEvent(self, event):
