@@ -3757,6 +3757,67 @@ class SheetWidget(QWidget):
                     w = float(p) * (ya > z) + (1 - float(p)) * (ya <= z)
                 return z.tolist()
 
+            # ── Engineering / base conversion ────────────────────
+            def _DEC2HEX(n, places=None):
+                v = int(float(n))
+                s = format(v if v >= 0 else v + 2**40, 'X')
+                if places is not None:
+                    s = s.zfill(int(places))
+                return s
+
+            def _DEC2BIN(n, places=None):
+                v = int(float(n))
+                s = format(v if v >= 0 else v + 2**10, 'b')
+                if places is not None:
+                    s = s.zfill(int(places))
+                return s
+
+            def _DEC2OCT(n, places=None):
+                v = int(float(n))
+                s = format(v if v >= 0 else v + 2**30, 'o')
+                if places is not None:
+                    s = s.zfill(int(places))
+                return s
+
+            def _HEX2DEC(n):
+                return int(str(n), 16)
+
+            def _HEX2BIN(n, places=None):
+                return _DEC2BIN(_HEX2DEC(n), places)
+
+            def _HEX2OCT(n, places=None):
+                return _DEC2OCT(_HEX2DEC(n), places)
+
+            def _BIN2DEC(n):
+                return int(str(int(float(n))), 2)
+
+            def _BIN2HEX(n, places=None):
+                return _DEC2HEX(_BIN2DEC(n), places)
+
+            def _BIN2OCT(n, places=None):
+                return _DEC2OCT(_BIN2DEC(n), places)
+
+            def _OCT2DEC(n):
+                return int(str(int(float(n))), 8)
+
+            def _OCT2BIN(n, places=None):
+                return _DEC2BIN(_OCT2DEC(n), places)
+
+            def _OCT2HEX(n, places=None):
+                return _DEC2HEX(_OCT2DEC(n), places)
+
+            def _DELTA(a, b=0):
+                return 1 if float(a) == float(b) else 0
+
+            def _GESTEP(n, step=0):
+                return 1 if float(n) >= float(step) else 0
+
+            def _ERF(x):
+                return math.erf(float(x))
+
+            def _ERFC(x):
+                return math.erfc(float(x))
+
             ns = {"__builtins__": {}, "math": math, "np": np,
                   "abs": abs, "round": round, "int": int, "float": float,
                   "sum": _SUM, "min": _MINF, "max": _MAXF, "len": len,
@@ -3814,6 +3875,17 @@ class SheetWidget(QWidget):
                   "COUNTBLANK": _COUNTBLANK,
                   "COUNTIF": _COUNTIF, "COUNTIFS": _COUNTIFS,
                   "SUMIF": _SUMIF,
+                  # Engineering / base conversion
+                  "DEC2HEX": _DEC2HEX, "DEC2BIN": _DEC2BIN,
+                  "DEC2OCT": _DEC2OCT,
+                  "HEX2DEC": _HEX2DEC, "HEX2BIN": _HEX2BIN,
+                  "HEX2OCT": _HEX2OCT,
+                  "BIN2DEC": _BIN2DEC, "BIN2HEX": _BIN2HEX,
+                  "BIN2OCT": _BIN2OCT,
+                  "OCT2DEC": _OCT2DEC, "OCT2BIN": _OCT2BIN,
+                  "OCT2HEX": _OCT2HEX,
+                  "DELTA": _DELTA, "GESTEP": _GESTEP,
+                  "ERF": _ERF, "ERFC": _ERFC,
                   # Math extras
                   "MOD": _MOD, "POWER": _POWER,
                   "QUOTIENT": _QUOTIENT, "SIGN": _SIGN,
@@ -3891,6 +3963,12 @@ class SheetWidget(QWidget):
         "isnontext", "islogical", "iseven", "isodd", "isref",
         "type", "error_type",
         "countblank", "countif", "countifs", "sumif",
+        # Engineering
+        "dec2hex", "dec2bin", "dec2oct",
+        "hex2dec", "hex2bin", "hex2oct",
+        "bin2dec", "bin2hex", "bin2oct",
+        "oct2dec", "oct2bin", "oct2hex",
+        "delta", "gestep", "erf", "erfc",
         # Data Analysis (underscore forms after dot rewrite).
         "deriv", "deriv2", "deriv_smooth",
         "trapz", "cumtrapz", "simps",
