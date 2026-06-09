@@ -685,6 +685,27 @@ collections, and any other stdlib module.
 (urllib.request, requests if installed) for quick API calls such as \
 fetching weather, stock prices, or other web data. Avoid infinite \
 loops, sleep, or very long-running downloads that would freeze the UI.
+  * ANIMATION / LIVE UPDATES: =PY cells support a loop/auto-refresh \
+mechanism. To create animations or live dashboards:
+    1. Use a counter cell (e.g. A1) to track the current frame number.
+    2. In the =PY cell, read the counter with ks("A1"), compute the \
+frame, draw the plot, then increment the counter with \
+ks_set("A1", frame + 1).
+    3. The cell's auto-refresh timer will re-execute the cell \
+periodically, creating smooth animation.
+    Example pattern for animation:
+      frame = int(ks("A1") or 0)
+      # ... compute positions at this frame ...
+      fig, ax = plt.subplots()
+      ax.plot(...)
+      ks_set("A1", frame + 1)
+      fig
+    This is ideal for bouncing balls, pendulums, particles, orbits, \
+wave propagation, and any time-stepping simulation. Do NOT use \
+FuncAnimation — use this frame-counter pattern instead.
+  * When building an animation with this pattern, always initialise \
+the counter cell first (e.g. write 0 to A1) before creating the =PY \
+cell, so the first read doesn't return an empty string.
   * After writing a =PY cell, ALWAYS check its result is not #PYERR. \
 If it is, read the error with read_cells and fix the code.
   * Keep code short and readable. Add a comment at the top explaining \

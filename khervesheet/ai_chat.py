@@ -530,13 +530,19 @@ class _ChatInput(QPlainTextEdit):
 _EXAMPLE_PROMPTS = [
     ("Bouncing Ball with Gravity",
      "Write a =PY program in D5 that animates a bouncing ball with "
-     "realistic gravity. The ball should bounce off the floor and walls, "
-     "losing energy on each bounce. Show it as a live matplotlib animation."),
+     "realistic gravity. Use a frame counter in A1 (initialise it to 0) "
+     "and the auto-refresh loop pattern: read the frame with ks('A1'), "
+     "compute the ball position at that frame, draw the plot, then "
+     "increment with ks_set('A1', frame+1). The ball should bounce off "
+     "the floor and walls, losing energy on each bounce."),
 
     ("Damped Harmonic Oscillator",
-     "Write a =PY program in D5 that simulates a damped harmonic "
-     "oscillator. Solve the ODE m*x'' + c*x' + k*x = 0 with scipy and "
-     "plot displacement vs time, overlaying the exponential decay envelope."),
+     "Write a =PY program in D5 that animates a damped harmonic "
+     "oscillator using the frame-counter loop pattern (counter in A1). "
+     "Solve the ODE m*x'' + c*x' + k*x = 0 with scipy. Each frame "
+     "draws the spring-mass system at the current time step with a "
+     "trailing displacement-vs-time plot, showing the exponential decay "
+     "envelope."),
 
     ("Monte Carlo Pi Estimation",
      "Write a =PY program in D5 that estimates pi using a Monte Carlo "
@@ -563,9 +569,11 @@ _EXAMPLE_PROMPTS = [
      "phenomenon appears."),
 
     ("Double Pendulum Chaos",
-     "Write a =PY program in D5 that simulates a double pendulum using "
-     "scipy.integrate.solve_ivp. Plot the trajectory of the lower bob "
-     "in the x-y plane and colour it by time to reveal chaotic motion."),
+     "Write a =PY program in D5 that animates a double pendulum using "
+     "scipy.integrate.solve_ivp and the frame-counter loop pattern "
+     "(counter in A1). Each frame should advance the simulation and draw "
+     "the pendulum arms, bobs, and a fading trail of the lower bob. "
+     "Colour the trail by time to reveal chaotic motion."),
 
     ("Radioactive Decay Chain",
      "Write a =PY program in D5 that simulates a three-stage radioactive "
