@@ -124,6 +124,7 @@
   <li><a href="#editing">Editing Cells</a></li>
   <li><a href="#formatting">Formatting</a></li>
   <li><a href="#formulas">Formulas &amp; Functions</a></li>
+  <li><a href="#python-cells">Python-in-Cell (=PY)</a></li>
   <li><a href="#charts">Charts &amp; Plotting</a></li>
   <li><a href="#trendlines">Trendlines &amp; Curve Fitting</a></li>
   <li><a href="#peak-fitting">Peak Fitting</a></li>
@@ -131,6 +132,7 @@
   <li><a href="#solver">Solver</a></li>
   <li><a href="#insert">Insert Menu</a></li>
   <li><a href="#data">Data Operations</a></li>
+  <li><a href="#ai-chat">AI Chat</a></li>
   <li><a href="#view">View &amp; Themes</a></li>
   <li><a href="#version-control">Version Control</a></li>
   <li><a href="#examples">Examples &amp; Templates</a></li>
@@ -148,10 +150,12 @@
 <ul>
   <li>Python 3.12 or 3.13</li>
   <li>PyQt5, matplotlib, numpy (core)</li>
-  <li>openpyxl (optional &mdash; Excel import/export)</li>
+  <li>openpyxl (optional &mdash; Excel import/export with formatting, charts, images)</li>
   <li>h5py (optional &mdash; native <code>.ksheet</code> format)</li>
-  <li>scipy (optional &mdash; Solver, trendlines, peak fitting)</li>
+  <li>scipy (optional &mdash; Solver, trendlines, peak fitting, science tools)</li>
   <li>lmfit (optional &mdash; advanced peak fitting models)</li>
+  <li>anthropic / openai / mistralai (optional &mdash; AI Chat sidebar)</li>
+  <li>pygit2 (optional &mdash; version control)</li>
 </ul>
 
 <h3>Launching</h3>
@@ -170,20 +174,20 @@
 <p>Shows the application name, current file, and version string (e.g. <code>KherveSheet v0.1.42+abc1234</code>).</p>
 
 <h3>Menu Bar</h3>
-<p>Eleven menus: <b>File</b>, <b>Edit</b>, <b>View</b>, <b>Insert</b>, <b>Format</b>, <b>Formulas</b>, <b>Data</b>, <b>Science</b>, <b>Tools</b>, <b>Examples</b>, <b>Help</b>.</p>
+<p>Standard menu layout: <b>File</b>, <b>Edit</b>, <b>View</b>, <b>Insert</b>, <b>Format</b>, <b>Formulas</b>, <b>Data</b>, <b>Science</b>, <b>Tools</b>, <b>Examples</b>, <b>Help</b>.</p>
 
 <h3>Toolbars</h3>
 <ul>
   <li><b>Standard toolbar</b> &mdash; New, Open, Save, Print, Undo, Redo, Solver, Curve Fitting, Science tools.</li>
   <li><b>Font toolbar</b> &mdash; Font family, font size, Bold, Italic, Underline, alignment (Left/Centre/Right), fill colour, font colour, borders, merge cells.</li>
-  <li><b>Plot/Insert toolbar</b> &mdash; Chart type dropdown, table design, image, shapes, equation, symbol, and insert controls (checkbox, dropdown, emoji, comment, note).</li>
+  <li><b>Plot/Insert toolbar</b> &mdash; Chart type dropdown, table design, image, shapes, equation, symbol, sparkline, and insert controls (checkbox, dropdown, emoji, comment, note).</li>
 </ul>
 
 <h3>Formula Bar</h3>
-<p>Located below the toolbars: shows the active cell reference on the left and the cell contents/formula on the right. Click the cell reference to navigate to a specific cell.</p>
+<p>Located below the toolbars: shows the active cell reference on the left and the cell contents/formula on the right. Click the cell reference to navigate to a specific cell. The formula bar is resizable &mdash; drag its bottom edge to expand for editing long formulas. Python cells (<code>=PY</code>) display a green background with a <b>PY</b> badge.</p>
 
 <h3>Grid</h3>
-<p>Columns labelled A, B, C, &hellip; Z, AA, AB, &hellip; and rows numbered from 1. Click a cell to select it; drag to select a range. Column and row headers can be resized by dragging their borders.</p>
+<p>Columns labelled A, B, C, &hellip; Z, AA, AB, &hellip; and rows numbered from 1. Click a cell to select it; drag to select a range. Column and row headers can be resized by dragging their borders. The selection is shown with an Excel-style blue border rather than an opaque fill, keeping cell formatting visible.</p>
 
 <h3>Sheet Tabs</h3>
 <p>At the bottom: Sheet1, Sheet2, Sheet3, etc. Double-click a tab to rename it. Right-click for options. Use the <b>+</b> button or <b>Insert &gt; Sheet</b> to add new sheets.</p>
@@ -206,9 +210,11 @@
 <tr><td>Import &gt; Text/CSV</td><td></td><td>Import data from a text or CSV file</td></tr>
 <tr><td>Import &gt; Excel</td><td></td><td>Import data from an Excel workbook</td></tr>
 <tr><td>Export &gt; CSV</td><td></td><td>Export the active sheet as CSV</td></tr>
-<tr><td>Export &gt; Excel</td><td></td><td>Export the workbook as an Excel file</td></tr>
-<tr><td>Print</td><td><kbd>Ctrl+P</kbd></td><td>Print with preview and page setup</td></tr>
-<tr><td>Recent Files</td><td></td><td>Quick access to recently opened files</td></tr>
+<tr><td>Export &gt; Excel</td><td></td><td>Rich Excel export with formatting, charts, equations, and images</td></tr>
+<tr><td>Print</td><td><kbd>Ctrl+P</kbd></td><td>Print with WYSIWYG preview and page setup</td></tr>
+<tr><td>Recent Files</td><td></td><td>Quick access to recently opened files (reorders on open)</td></tr>
+<tr><td>Open File Location</td><td></td><td>Open the folder containing the current file</td></tr>
+<tr><td>Preferences</td><td></td><td>Application-wide settings (theme, default formats, etc.)</td></tr>
 <tr><td>Exit</td><td><kbd>Ctrl+Q</kbd></td><td>Close the application</td></tr>
 </table>
 </section>
@@ -233,6 +239,13 @@
   <li>Click a column header to select the entire column; click a row header to select the entire row.</li>
 </ul>
 
+<h3>Navigation</h3>
+<ul>
+  <li><kbd>Ctrl+Arrow</kbd> &mdash; Jump to the next data boundary (edge of a filled region or first non-empty cell).</li>
+  <li><kbd>Shift+Arrow</kbd> &mdash; Extend or contract the selection by one cell.</li>
+  <li><kbd>Ctrl+Shift+Arrow</kbd> &mdash; Extend the selection to the next data boundary.</li>
+</ul>
+
 <h3>Clipboard</h3>
 <table>
 <tr><th>Action</th><th>Shortcut</th><th>Description</th></tr>
@@ -244,16 +257,17 @@
 </table>
 
 <h3>Fill Handle</h3>
-<p>Select one or more cells, then drag the small cross at the bottom-right corner of the selection to auto-fill adjacent cells. The fill handle supports number sequences, dates, and pattern continuation.</p>
+<p>Select one or more cells, then drag the small cross at the bottom-right corner of the selection to auto-fill adjacent cells. The fill handle works in all four directions (up, down, left, right) and supports number sequences, dates, and pattern continuation. Numbers are propagated with 2 decimal places.</p>
 
 <h3>Undo / Redo</h3>
-<p>Every editing action is undoable. Press <kbd>Ctrl+Z</kbd> to undo and <kbd>Ctrl+Y</kbd> to redo. The undo history covers cell edits, formatting changes, row/column insertion and deletion, sorting, merging, and more.</p>
+<p>Every editing action is undoable. Press <kbd>Ctrl+Z</kbd> to undo and <kbd>Ctrl+Y</kbd> to redo. The undo history covers cell edits, formatting changes, row/column insertion and deletion, sorting, merging, dropdown/hyperlink/spell-check edits, and more. The undo stack is capped at 60 steps to manage memory.</p>
 
 <h3>Rows &amp; Columns</h3>
 <ul>
   <li><b>Insert &gt; Row Above / Row Below</b> &mdash; Insert a new row.</li>
   <li><b>Insert &gt; Column</b> &mdash; Insert a new column.</li>
-  <li>Right-click a row or column header for additional options.</li>
+  <li><b>Insert / Delete Cells</b> &mdash; Shift only the selected columns, not entire rows.</li>
+  <li>Right-click a row header for <b>Insert N Rows</b> and <b>Delete Row</b> options.</li>
   <li>Resize columns and rows by dragging the header borders, or use <b>Format &gt; Column Width / Row Height</b>.</li>
 </ul>
 
@@ -295,24 +309,25 @@
 <p>Colour palette grid, "No Fill" option, and custom colour picker.</p>
 
 <h3>Number Formats (Format Menu)</h3>
+<p>The default numeric display uses 2 decimal places. Change via Format &gt; Number Format or the Format Cells dialog.</p>
 <table>
 <tr><th>Format</th><th>Example</th></tr>
-<tr><td>General</td><td>123.456</td></tr>
+<tr><td>General</td><td>123.46</td></tr>
 <tr><td>0</td><td>123</td></tr>
 <tr><td>0.0</td><td>123.5</td></tr>
 <tr><td>0.00</td><td>123.46</td></tr>
 <tr><td>0.000</td><td>123.456</td></tr>
 <tr><td>0.0000</td><td>123.4560</td></tr>
-<tr><td>Scientific</td><td>1.2346e+02</td></tr>
+<tr><td>Scientific</td><td>1.2346e+02 (configurable precision)</td></tr>
 <tr><td>Percentage</td><td>12345.6%</td></tr>
-<tr><td>Currency</td><td>$123.46</td></tr>
-<tr><td>Date</td><td>2026-01-15</td></tr>
-<tr><td>Time</td><td>14:30:00</td></tr>
+<tr><td>Currency</td><td>$123.46 (multiple currency symbols)</td></tr>
+<tr><td>Date</td><td>2026-01-15 (multiple formats)</td></tr>
+<tr><td>Time</td><td>14:30:00 (multiple formats)</td></tr>
 <tr><td>Text</td><td>123.456 (as text)</td></tr>
 </table>
 
 <h3>Table Design</h3>
-<p>Use <b>Format &gt; Table Design</b> or the toolbar dropdown to apply pre-built table styles with alternating row colours and header formatting.</p>
+<p>Use <b>Format &gt; Table Design</b> or the toolbar dropdown to apply pre-built table styles. Choose from <b>99 styles</b> with alternating row colours, header formatting, and themed colour palettes.</p>
 </section>
 
 <!-- ════════════════════════════════════════════════════════════════════ -->
@@ -439,8 +454,58 @@
 </section>
 
 <!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="python-cells">
+<h2>7. Python-in-Cell (=PY)</h2>
+<p>Type <code>=PY(</code> in any cell to write Python code that runs inside the spreadsheet. Python cells are highlighted with a green tint and a <b>PY</b> badge.</p>
+
+<h3>Getting Started</h3>
+<ul>
+  <li>Type <code>=PY(</code> followed by your Python code and a closing <code>)</code>.</li>
+  <li>The last expression in the code block becomes the cell's value.</li>
+  <li>Multi-line code is supported &mdash; use the <b>pop-out editor</b> for longer scripts (click the expand button on the formula bar).</li>
+</ul>
+
+<h3>Pop-Out Python Editor</h3>
+<p>Click the pop-out button on the formula bar to open a full-size Python editor with:</p>
+<ul>
+  <li>Line numbers and syntax highlighting.</li>
+  <li>Autocomplete suggestions.</li>
+  <li>A <b>Pick Cell</b> button to insert cell references.</li>
+  <li>A toolbar with Run, Save, and formatting controls.</li>
+  <li>The editor stays open on Run so you can iterate quickly.</li>
+</ul>
+
+<h3>Accessing Spreadsheet Data</h3>
+<p>Use the <code>ks()</code> accessor to read data from the grid:</p>
+<ul>
+  <li><code>ks("A1")</code> &mdash; read a single cell value.</li>
+  <li><code>ks("A1:C10")</code> &mdash; read a range as a NumPy array.</li>
+  <li><code>ks_set("B5", value)</code> &mdash; write a value back to the grid.</li>
+  <li><code>ks_image(fig)</code> &mdash; embed a matplotlib figure as an image in the sheet.</li>
+</ul>
+
+<h3>Shared Namespace</h3>
+<p>All <code>=PY</code> cells share a single Python namespace. Functions and variables defined in one cell are available to others. You can also call Python functions defined in <code>=PY</code> cells from regular formulas.</p>
+
+<h3>Embedded Plots</h3>
+<p>Create a matplotlib figure in a <code>=PY</code> cell and it is automatically embedded in the sheet as a high-resolution image. Plots are rendered larger and sharper by default.</p>
+
+<h3>Auto-Refresh (Loop)</h3>
+<p>Enable per-cell auto-refresh to re-execute a Python cell at a set interval. This is useful for live-data dashboards &mdash; weather, stock tickers, news feeds, etc.</p>
+
+<h3>Network Access</h3>
+<p>Python cells can make HTTP requests (e.g. <code>requests.get()</code>, <code>urllib</code>) to fetch live data from APIs and web services.</p>
+
+<h3>Safety</h3>
+<p>An execution timeout prevents runaway cells from freezing the application. A watchdog detects and breaks infinite recursion before a native crash can occur.</p>
+
+<h3>Python Help</h3>
+<p>Open <b>Help &gt; Python Help</b> for a built-in reference with 100+ examples covering data processing, scientific computing, plotting, simulations, and live data.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
 <section id="charts">
-<h2>7. Charts &amp; Plotting</h2>
+<h2>8. Charts &amp; Plotting</h2>
 
 <h3>Creating a Chart</h3>
 <ol>
@@ -455,12 +520,15 @@
 <tr><td>Line</td><td>Connected data points with lines</td></tr>
 <tr><td>Scatter</td><td>Individual data points (XY plot)</td></tr>
 <tr><td>Line+Symbol</td><td>Lines with markers at each data point</td></tr>
-<tr><td>Bar</td><td>Vertical or horizontal bar chart</td></tr>
+<tr><td>Bar</td><td>Vertical bar chart &mdash; grouped, stacked, or per-series styling</td></tr>
+<tr><td>Pie</td><td>Pie chart with labels, percentages, and explode</td></tr>
+<tr><td>Doughnut</td><td>Ring-shaped pie chart with configurable hole size</td></tr>
+<tr><td>3D Pie</td><td>Tilted three-dimensional pie chart</td></tr>
 <tr><td>Step</td><td>Staircase-style plot</td></tr>
 <tr><td>Stem</td><td>Vertical stems with dots at data points</td></tr>
 <tr><td>Histogram</td><td>Automatic binning of data distribution</td></tr>
 <tr><td>Box</td><td>Box-and-whisker plot showing statistical distribution</td></tr>
-<tr><td>Heatmap</td><td>2D colour-mapped array</td></tr>
+<tr><td>Heatmap</td><td>2D colour-mapped array with Z-axis colour limits</td></tr>
 <tr><td>3D Surface</td><td>3D surface plot with automatic mesh generation</td></tr>
 </table>
 
@@ -471,8 +539,8 @@
   <li><b>Preset sizes</b>: right-click &gt; Size. Includes screen presets (Small, Medium, Large, HD) and journal publication sizes (Single Column, 1.5 Column, Full Width, Nature, ACS, Square).</li>
 </ul>
 
-<h3>Data Range Highlights</h3>
-<p>When a chart is selected, coloured overlays appear on the source data columns. Drag the overlay handles to change the data range, or drag the interior to move the range. Changes re-plot the chart automatically.</p>
+<h3>Interactive Data-Range Overlays</h3>
+<p>When a chart is selected, coloured overlays with solid borders and handles appear on the source data columns. Drag the interior to move the entire range, or drag the corner handles (top-right, bottom-right) to resize. Changes re-plot the chart automatically. The X range tracks the Y row range when no explicit X column is set.</p>
 
 <h3>Chart Context Menu (Right-Click)</h3>
 <table>
@@ -485,7 +553,7 @@
 <tr><td>Size</td><td>Preset dimension options</td></tr>
 <tr><td>Export Image</td><td>Save as PNG (300 dpi), PDF, or SVG</td></tr>
 <tr><td>Plot Templates</td><td>Save or apply styling templates</td></tr>
-<tr><td>General Properties</td><td>Figure-level styling (sketch effect, margins)</td></tr>
+<tr><td>General Properties</td><td>Figure width/height, tight layout, sketch effect (with amplitude, frequency, scale), margins</td></tr>
 <tr><td>Series Properties</td><td>Per-series visual customisation</td></tr>
 <tr><td>Axis Properties</td><td>Full axis configuration dialog</td></tr>
 <tr><td>Edit Legend</td><td>Legend text, position, and appearance</td></tr>
@@ -498,8 +566,13 @@
   <li><b>Line tab</b> &mdash; label, plot type, line style (Solid/Dashed/Dotted/Dash-dot/None), width, colour.</li>
   <li><b>Symbol tab</b> &mdash; marker shape (Circle, Square, Diamond, Triangle, Plus, Cross, Star, etc.), size, fill colour, edge colour.</li>
   <li><b>Fill tab</b> &mdash; fill mode (None, Fill to Zero, Fill to Series), target series, colour, opacity.</li>
+  <li><b>Heatmap tab</b> &mdash; colour map, interpolation, Z-axis limits (shown for Heatmap plots).</li>
+  <li><b>3D Surface tab</b> &mdash; colour map, wireframe style, elevation and azimuth angles (shown for 3D Surface plots).</li>
   <li>Toggle series visibility with checkboxes. Add or remove series.</li>
 </ul>
+
+<h3>Categorical X-Axis</h3>
+<p>When the X column contains text or date strings, the chart automatically switches to a categorical X-axis with rotated labels for long text. Time strings (e.g. <code>8:00</code>, <code>8pm</code>) are parsed as numeric values with proportional spacing. Categorical axis settings persist across sessions.</p>
 
 <h3>Axis Properties</h3>
 <p>Double-click a chart or use the context menu to open the Axis Properties dialog with six configuration tabs:</p>
@@ -509,24 +582,35 @@
   <li><b>Tick Labels</b> &mdash; show/hide, format (Auto, Decimal, Scientific, Standard Scientific, Engineering, Percentage, Plain), decimal places (0&ndash;12), prefix/suffix, colour, size, rotation.</li>
   <li><b>Line &amp; Ticks</b> &mdash; spine visibility/colour/width, major tick direction/length/width/colour/count, minor tick subdivisions.</li>
   <li><b>Grids</b> &mdash; major/minor grid visibility, colour, opacity, style (Solid/Dashed/Dotted/Dash-dot), width.</li>
-  <li><b>Secondary Axis</b> &mdash; independent spine, tick, label, and title configuration for the top/right axis.</li>
+  <li><b>Secondary Axis</b> &mdash; independent spine, tick, label, and title configuration for the top/right axis, with user-adjustable title offset.</li>
+  <li><b>Z Axis</b> &mdash; colour-limit controls for Heatmap charts (shown when applicable).</li>
 </ul>
 
 <h3>Annotations</h3>
-<p>Add draggable annotations via the context menu:</p>
+<p>Add draggable annotations via the context menu (<b>Annotations &gt; Add Text / Arrow / Line</b>):</p>
 <ul>
-  <li><b>Text</b> &mdash; draggable text label with a rounded box.</li>
-  <li><b>Arrow</b> &mdash; annotation arrow from point to point with optional text.</li>
-  <li><b>Line</b> &mdash; horizontal or vertical reference line, fully draggable.</li>
+  <li><b>Text</b> &mdash; draggable text label with a rounded box. Shows a dashed blue selection rectangle when clicked.</li>
+  <li><b>Arrow</b> &mdash; annotation arrow from point to point with optional text. Shows filled blue circles at endpoints when selected.</li>
+  <li><b>Line</b> &mdash; a finite line segment (like an arrow without arrowheads). Shows endpoint circles when selected.</li>
 </ul>
+<p>Click an annotation to select it. Drag the body to move, or drag an endpoint circle to reposition one end. Press <kbd>Delete</kbd> to remove the selected annotation, or right-click for a context menu with <b>Delete</b> and <b>Properties</b>.</p>
 
-<h3>Exporting Charts</h3>
+<h4>Text Properties</h4>
+<p>Edit the text content, font size, bold, italic, colour, rotation, and background box style.</p>
+
+<h4>Line / Arrow Properties</h4>
+<p>Edit line colour, width, line style (solid, dashed, dotted, dash-dot), and arrow style (multiple arrowhead shapes). Move endpoints by entering new coordinates.</p>
+
+<p>Annotations are saved with the chart in <code>.ksheet</code> files and rendered correctly in print layouts.</p>
+
+<h3>Exporting Charts and Images</h3>
 <p>Right-click a chart and choose <b>Export Image</b>:</p>
 <ul>
   <li><b>PNG</b> at 300 dpi (suitable for presentations and reports).</li>
   <li><b>PDF</b> (vector format for publication).</li>
   <li><b>SVG</b> (vector format for web and editing).</li>
 </ul>
+<p>Embedded images can also be exported as SVG or PDF via their right-click menu.</p>
 
 <h3>Plot Templates</h3>
 <p>Save a chart's visual styling (colours, fonts, axis settings) as a template via <b>Plot Templates &gt; Save as Plot Template</b>. Apply a saved template to any chart to reuse the styling with different data.</p>
@@ -534,7 +618,7 @@
 
 <!-- ════════════════════════════════════════════════════════════════════ -->
 <section id="trendlines">
-<h2>8. Trendlines &amp; Curve Fitting</h2>
+<h2>9. Trendlines &amp; Curve Fitting</h2>
 <p>Right-click a chart and select <b>Add Trendline</b> to open the Trendline dialog. Choose from 25+ models:</p>
 
 <h3>Available Models</h3>
@@ -565,7 +649,7 @@
 
 <!-- ════════════════════════════════════════════════════════════════════ -->
 <section id="peak-fitting">
-<h2>9. Peak Fitting</h2>
+<h2>10. Peak Fitting</h2>
 <p>Open via <b>Tools &gt; Curve Fitting</b> or the toolbar button. The advanced fitting dialog supports multi-peak decomposition using lmfit models &mdash; ideal for spectroscopy, XRD, and XPS data.</p>
 
 <h3>Peak Functions (40+)</h3>
@@ -614,7 +698,7 @@
 
 <!-- ════════════════════════════════════════════════════════════════════ -->
 <section id="science">
-<h2>10. Science Tools</h2>
+<h2>11. Science Tools</h2>
 <p>Access via the <b>Science</b> menu or the Science toolbar button. Each tool opens a dedicated dialog:</p>
 
 <h3>Primary Tools</h3>
@@ -632,22 +716,22 @@
 <h3>Advanced Tools</h3>
 <table>
 <tr><th>Tool</th><th>Description</th></tr>
-<tr><td>Baseline Subtraction</td><td>Remove baseline from spectroscopic data (polynomial, ALS)</td></tr>
-<tr><td>Crop</td><td>Crop data to a specified range</td></tr>
-<tr><td>Band-pass Filter</td><td>Apply band-pass filtering to signals</td></tr>
-<tr><td>Calibration</td><td>Calibrate data using reference points</td></tr>
+<tr><td>Baseline Subtraction</td><td>Remove baseline using 10 methods: Polynomial, ALS, SNIP, Rolling Ball, Median filter, LOWESS, Smoothing spline, Rubberband, Shirley, Tougaard</td></tr>
+<tr><td>Crop</td><td>Crop data to a specified X range</td></tr>
+<tr><td>Band-pass Filter</td><td>Butterworth filter with 4 modes: Band-pass, Low-pass, High-pass, Band-stop</td></tr>
+<tr><td>Calibration</td><td>Calibrate data with X shift/scale and Y offset/scale</td></tr>
 <tr><td>Resampling</td><td>Resample data to a different frequency or spacing</td></tr>
 <tr><td>Cross-Correlation</td><td>Calculate cross-correlation between datasets</td></tr>
 <tr><td>Signal-to-Noise</td><td>Analyse signal-to-noise ratio</td></tr>
-<tr><td>Envelope</td><td>Extract the envelope from a signal</td></tr>
-<tr><td>Kramers&ndash;Kronig</td><td>Apply Kramers&ndash;Kronig transformation</td></tr>
-<tr><td>Deconvolution</td><td>Perform signal deconvolution</td></tr>
+<tr><td>Envelope</td><td>Extract signal envelope: amplitude, instantaneous phase, instantaneous frequency, analytic signal (real/imag)</td></tr>
+<tr><td>Kramers&ndash;Kronig</td><td>Apply Kramers&ndash;Kronig transformation (Real&rarr;Imaginary or Imaginary&rarr;Real)</td></tr>
+<tr><td>Deconvolution</td><td>Signal deconvolution: Wiener or Richardson&ndash;Lucy methods</td></tr>
 </table>
 </section>
 
 <!-- ════════════════════════════════════════════════════════════════════ -->
 <section id="solver">
-<h2>11. Solver</h2>
+<h2>12. Solver</h2>
 <p>Open via <b>Tools &gt; Solver</b> or the Solver toolbar button. The Solver finds optimal values for variable cells to minimise, maximise, or reach a target value in an objective cell, subject to constraints.</p>
 
 <h3>Setting Up</h3>
@@ -672,7 +756,7 @@
 
 <!-- ════════════════════════════════════════════════════════════════════ -->
 <section id="insert">
-<h2>12. Insert Menu</h2>
+<h2>13. Insert Menu</h2>
 
 <h3>Charts</h3>
 <p>See <a href="#charts">Charts &amp; Plotting</a> for details on all 10 chart types.</p>
@@ -687,7 +771,7 @@
 <p><b>Insert &gt; Equation</b> embeds a LaTeX-rendered equation. Choose from presets or type custom LaTeX. Configure font size, text colour, background colour, and border. Equations can be moved and resized. All edits are undoable.</p>
 
 <h3>Sparklines</h3>
-<p><b>Insert &gt; Sparkline</b> embeds a miniature chart (line, bar, or win/loss) inside a cell to visualise trends inline with your data.</p>
+<p><b>Insert &gt; Sparkline</b> embeds a miniature chart (line, bar, or win/loss) inside a cell to visualise trends inline with your data. Use the <b>Sparkline</b> toolbar button for bulk insertion across multiple cells at once. Sparkline colours are configurable via a palette picker.</p>
 
 <h3>Symbols</h3>
 <p>The <b>Symbol</b> toolbar button opens a visual grid of mathematical and special symbols for insertion.</p>
@@ -711,7 +795,7 @@
 
 <!-- ════════════════════════════════════════════════════════════════════ -->
 <section id="data">
-<h2>13. Data Operations</h2>
+<h2>14. Data Operations</h2>
 
 <h3>Column Designations</h3>
 <p>Use <b>Data &gt; Set Column As</b> to designate columns as X or Y data for plotting. Designated columns are used as the default data source when creating charts.</p>
@@ -734,8 +818,41 @@
 </section>
 
 <!-- ════════════════════════════════════════════════════════════════════ -->
+<section id="ai-chat">
+<h2>15. AI Chat</h2>
+<p>Toggle the AI Chat sidebar from <b>View &gt; AI Chat Sidebar</b> or <b>Tools &gt; AI Chat</b>. The sidebar lets you ask an AI assistant to help with your spreadsheet.</p>
+
+<h3>Providers</h3>
+<p>Configure your AI provider via the settings button in the chat sidebar:</p>
+<table>
+<tr><th>Provider</th><th>Description</th></tr>
+<tr><td>Anthropic (Claude)</td><td>Cloud-based; requires an Anthropic API key</td></tr>
+<tr><td>OpenAI</td><td>Cloud-based; requires an OpenAI API key</td></tr>
+<tr><td>Mistral</td><td>Cloud-based; requires a Mistral API key</td></tr>
+<tr><td>Ollama</td><td>Local; connects to a running Ollama server</td></tr>
+<tr><td>Local AI</td><td>Any OpenAI-compatible local server</td></tr>
+</table>
+<p>Each provider shows specific API key help text. Use the <b>Refresh Models</b> button to update the available model list for Ollama, Mistral, and Local AI.</p>
+
+<h3>What the AI Can Do</h3>
+<p>The AI has access to tools that let it interact directly with your spreadsheet:</p>
+<ul>
+  <li><b>Read and write cells</b> &mdash; inspect data, fill in values, build formulas.</li>
+  <li><b>Insert charts</b> &mdash; create multi-series charts from your data.</li>
+  <li><b>Run Python</b> &mdash; execute Python code in <code>=PY</code> cells.</li>
+  <li><b>Apply table styles</b> &mdash; format ranges with built-in table designs.</li>
+  <li><b>Set column widths, merge cells, auto-fit columns</b>.</li>
+  <li><b>Save templates</b> &mdash; save the current workbook as a template.</li>
+  <li><b>Delete charts</b> &mdash; remove charts from the sheet.</li>
+</ul>
+
+<h3>Markdown Rendering</h3>
+<p>AI replies are rendered with Markdown formatting (headings, bold, code blocks, lists, etc.) for readability.</p>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════ -->
 <section id="view">
-<h2>14. View &amp; Themes</h2>
+<h2>16. View &amp; Themes</h2>
 
 <h3>View Modes</h3>
 <ul>
@@ -761,7 +878,8 @@
 
 <h4>Primary Themes</h4>
 <ul>
-  <li><b>Light</b> &mdash; Clean white/blue theme (default).</li>
+  <li><b>Emerald</b> &mdash; Green-tinted light theme (default).</li>
+  <li><b>Light</b> &mdash; Clean white/blue theme.</li>
   <li><b>Dark</b> &mdash; Dark grey with blue accents.</li>
   <li><b>Blue Dark</b> &mdash; Navy-tinted dark theme.</li>
   <li><b>Warm Light</b> &mdash; Beige/tan warm tones.</li>
@@ -774,12 +892,12 @@
 <p>Pine, Charcoal, Midnight, Dracula, Monokai, Nord, Solarized Dark, Gruvbox Dark, Forest, Ocean, Plum, Copper.</p>
 
 <h3>AI Chat Sidebar</h3>
-<p>Toggle the AI Chat sidebar from <b>View &gt; AI Chat Sidebar</b> or <b>Tools &gt; AI Chat</b>.</p>
+<p>See <a href="#ai-chat">AI Chat</a> for full details on the AI Chat sidebar.</p>
 </section>
 
 <!-- ════════════════════════════════════════════════════════════════════ -->
 <section id="version-control">
-<h2>15. Version Control</h2>
+<h2>17. Version Control</h2>
 <p>KherveSheet includes built-in Git-based version control for tracking changes to your workbooks. Access via <b>File &gt; Version Control</b>.</p>
 
 <h3>Automatic Versioning</h3>
@@ -815,14 +933,30 @@
 
 <!-- ════════════════════════════════════════════════════════════════════ -->
 <section id="examples">
-<h2>16. Examples &amp; Templates</h2>
+<h2>18. Examples &amp; Templates</h2>
 <p>The <b>Examples</b> menu provides ready-to-use content:</p>
 
 <h3>Worked Examples</h3>
-<p>Pre-built <code>.ksheet</code> files demonstrating KherveSheet features with real data and charts.</p>
+<p>Pre-built <code>.ksheet</code> files demonstrating KherveSheet features with real data and charts, including Springs, Screw Torque, and Pendulum examples.</p>
+
+<h3>Python Examples</h3>
+<p>40+ <code>=PY</code> science example workbooks covering:</p>
+<ul>
+  <li><b>Numerical Methods</b> &mdash; Root finding, ODE solvers, integration, interpolation.</li>
+  <li><b>Data Processing</b> &mdash; Filtering, smoothing, FFT, peak detection.</li>
+  <li><b>Materials Science</b> &mdash; XPS curve fitting, Si(111)-7x7 DAS imaging, characterisation techniques.</li>
+  <li><b>Simulations</b> &mdash; 12+ Monte Carlo simulations, bouncing particles, heat conduction, rotating Earth globe.</li>
+  <li><b>Finance</b> &mdash; Portfolio optimisation, option pricing.</li>
+  <li><b>Physics</b> &mdash; Mechanics, electromagnetism, quantum.</li>
+  <li><b>Live Data</b> &mdash; Weather dashboards, news feeds, exchange rates, stock tickers (using auto-refresh).</li>
+  <li><b>Solver Examples</b> &mdash; Optimisation and linear programming.</li>
+</ul>
 
 <h3>Exercises</h3>
 <p>Undergraduate exercises grouped by UK year of study, suitable for teaching and self-study.</p>
+
+<h3>Analysis Templates</h3>
+<p>10 scientific data-analysis workbooks plus data-manipulation templates for XPS, Raman, FTIR, and TGA workflows.</p>
 
 <h3>Templates</h3>
 <p>Both rich <code>.ksheet</code> templates (organised by category) and programmatically-generated template builders for common data layouts.</p>
@@ -830,19 +964,20 @@
 
 <!-- ════════════════════════════════════════════════════════════════════ -->
 <section id="printing">
-<h2>17. Printing</h2>
-<p>Press <kbd>Ctrl+P</kbd> or use <b>File &gt; Print</b> to open the print dialog. Features include:</p>
+<h2>19. Printing</h2>
+<p>Press <kbd>Ctrl+P</kbd> or use <b>File &gt; Print</b> to open the print dialog. Printing is WYSIWYG &mdash; what you see on screen (including charts, images, shapes, equations, and annotations) is what gets printed. Features include:</p>
 <ul>
   <li>Print preview</li>
   <li>Page setup (orientation, paper size, margins)</li>
   <li>Scaling options</li>
   <li>Print area selection</li>
+  <li>Embedded charts and annotations render in the print output</li>
 </ul>
 </section>
 
 <!-- ════════════════════════════════════════════════════════════════════ -->
 <section id="shortcuts">
-<h2>18. Keyboard Shortcuts</h2>
+<h2>20. Keyboard Shortcuts</h2>
 
 <h3>File</h3>
 <table>
@@ -866,6 +1001,15 @@
 <tr><td><kbd>Ctrl+V</kbd></td><td>Paste</td></tr>
 <tr><td><kbd>Ctrl+Shift+V</kbd></td><td>Paste Values Only</td></tr>
 <tr><td><kbd>Del</kbd></td><td>Clear cells</td></tr>
+</table>
+
+<h3>Navigation</h3>
+<table>
+<tr><th>Shortcut</th><th>Action</th></tr>
+<tr><td><kbd>Ctrl+Arrow</kbd></td><td>Jump to data boundary</td></tr>
+<tr><td><kbd>Shift+Arrow</kbd></td><td>Extend/contract selection by one cell</td></tr>
+<tr><td><kbd>Ctrl+Shift+Arrow</kbd></td><td>Extend selection to data boundary</td></tr>
+<tr><td><kbd>F2</kbd></td><td>Enter edit mode in current cell</td></tr>
 </table>
 
 <h3>Formatting</h3>
@@ -898,6 +1042,13 @@
 <tr><td><kbd>Ctrl+K</kbd></td><td>Insert Link</td></tr>
 <tr><td><kbd>Ctrl+Alt+M</kbd></td><td>Insert Comment</td></tr>
 <tr><td><kbd>Shift+F2</kbd></td><td>Insert Note</td></tr>
+</table>
+
+<h3>Charts</h3>
+<table>
+<tr><th>Shortcut</th><th>Action</th></tr>
+<tr><td><kbd>Del</kbd></td><td>Delete selected annotation (when chart focused)</td></tr>
+<tr><td><kbd>Escape</kbd></td><td>Deselect annotation</td></tr>
 </table>
 
 <h3>Tools</h3>
