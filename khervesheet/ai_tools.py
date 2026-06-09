@@ -133,7 +133,7 @@ class AiToolExecutor:
             "modify_chart": self.tool_modify_chart,
             "delete_charts": self.tool_delete_charts,
             "apply_table_style": self.tool_apply_table_style,
-            "save_as_template": self.tool_save_as_template,
+            # save_as_template disabled — not ready yet
             "set_column_width": self.tool_set_column_width,
             "merge_cells": self.tool_merge_cells,
             "auto_fit_columns": self.tool_auto_fit_columns,

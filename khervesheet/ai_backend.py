@@ -522,36 +522,7 @@ TOOLS = [
             "required": ["sheet_name", "range", "style_name"],
         },
     },
-    {
-        "name": "save_as_template",
-        "description": (
-            "Save the current workbook as a .ksheet template file in "
-            "the examples/templates/ directory. The user can then open "
-            "it from the Examples > Templates menu. Provide a category "
-            "(e.g. Finance, Science, Analysis, Business, Education, "
-            "Data Processing, Math, Planners, Daily Life, Reference) "
-            "and a name."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": (
-                        "Template name (becomes the filename), "
-                        "e.g. 'Lab Report'."
-                    ),
-                },
-                "category": {
-                    "type": "string",
-                    "description": (
-                        "Category folder, e.g. 'Science', 'Finance'."
-                    ),
-                },
-            },
-            "required": ["name", "category"],
-        },
-    },
+    # save_as_template removed — not ready yet
     {
         "name": "set_column_width",
         "description": (
@@ -656,17 +627,42 @@ Current workbook state:
 - Current selection: {sel_str}
 
 Guidelines:
+
+=== CRITICAL: NO TEMPLATE CREATION ===
+- Do NOT create templates, example workbooks, or build entire \
+spreadsheets from scratch. Template creation is disabled — it is \
+not ready yet and will crash the application.
+- If the user asks you to "create a template", "build a spreadsheet", \
+"make a worksheet", or similar, REFUSE politely and explain that \
+template creation is not yet supported. Suggest they create the \
+structure manually and then ask you to help with =PY formulas or \
+formatting.
+- Do NOT call write_cells to populate large blocks of data from \
+scratch. Do NOT call add_sheet to set up multi-sheet workbooks.
+
+=== WHAT YOU CAN DO ===
+Your two strengths are:
+1. **=PY CELLS** — writing Python programs in cells. This is your \
+primary skill. Prefer =PY for any computation the user asks about.
+2. **Improving appearance** — formatting existing data with \
+format_cells, apply_table_style, set_column_width, merge_cells, \
+auto_fit_columns, and modifying existing charts.
+
+=== GENERAL RULES ===
 - Do NOT redo work already completed earlier in this conversation. \
 Only make the specific change the user just asked for, and leave \
 existing data, formatting, and charts untouched unless asked.
-- If you are unsure of the current contents of a cell or range \
-(for example at the start of a new conversation), use read_cells to \
-check before writing — do not blindly recreate data.
-- Use set_formula for calculated cells (formulas start with =).
-- =PY CELLS — use set_python_cell for anything that is awkward or \
-impossible as a spreadsheet formula. =PY cells are powerful and \
-persistent: they run real Python and their code stays in the cell. \
-KEY RULES FOR =PY CELLS:
+- If you are unsure of the current contents of a cell or range, \
+use read_cells to check before writing.
+- Always read_cells first if you need to understand existing data \
+before modifying.
+- EFFICIENCY IS CRITICAL — minimise tool calls. Batch as much as \
+possible into each format_cells call.
+
+=== =PY CELLS (YOUR PRIMARY SKILL) ===
+Use set_python_cell for any computation the user needs. =PY cells \
+are powerful and persistent: they run real Python and their code \
+stays in the cell. KEY RULES:
   * All =PY cells in a workbook share ONE persistent namespace — a \
 function or variable defined in one cell is visible to later cells. \
 Use this to build helper libraries.
@@ -691,8 +687,8 @@ fetching weather, stock prices, or other web data. Avoid infinite \
 loops, sleep, or very long-running downloads that would freeze the UI.
   * After writing a =PY cell, ALWAYS check its result is not #PYERR. \
 If it is, read the error with read_cells and fix the code.
-  * For templates with =PY cells: keep code short and readable. Add a \
-comment at the top of the code explaining what it does.
+  * Keep code short and readable. Add a comment at the top explaining \
+what it does.
   * COMMON PATTERNS:
     - Computation: ks("A2") * ks("B2") + 100
     - Array processing: np.mean(ks("A2:A20"))
@@ -701,62 +697,42 @@ comment at the top of the code explaining what it does.
     - Plot: plt.plot(ks("A2:A20"), ks("B2:B20")); plt.title("My Plot"); plt.gcf()
     - DataFrame: pd.DataFrame(ks("A1:D20")).describe().values.tolist()
     - Helper function: def convert_c_to_f(c): return c * 9/5 + 32
-- Always read_cells first if you need to understand existing data \
-before modifying.
-- EFFICIENCY IS CRITICAL — minimise tool calls. Batch as much as \
-possible into each write_cells / format_cells call. Do NOT write one \
-cell at a time when you can write a whole block at once. Plan the full \
-template layout BEFORE making any tool calls.
-- TEMPLATES MUST BE POLISHED. When you build a template:
-  1. Put a bold, larger title in row 1 (e.g. A1, font_size ~14, bold).
-  2. Make a proper header row: bold white text (font_color "#FFFFFF") \
-on a coloured fill (bg_color e.g. "#4472C4"), centered, and ALWAYS \
-include units in the header text, e.g. "Retention Time (min)".
-  3. Fill 10-20 rows of realistic example data with write_cells. \
-Write ALL data in ONE write_cells call — pack every row into the \
-values array.
-  4. Add calculated columns using set_formula with CORRECT cell \
-references — every argument that should be a cell must be a real \
-reference (e.g. E2), never a literal.
-  5. Use apply_table_style to format the data range in one call \
-instead of many individual format_cells calls.
-  6. Create chart(s) with insert_chart, then use modify_chart to give \
-each a descriptive title and x_label/y_label (with units).
-  7. After formulas, read_cells ONCE to check for #ERROR — fix any \
-errors, then STOP. Do not keep reading and retrying in loops.
-- When a formula function is NOT available (e.g. PMT, EDATE, FV), \
+    - Web data: import urllib.request; json.loads(urllib.request.urlopen(url).read())
+  * When a formula function is NOT available (e.g. PMT, EDATE, FV), \
 use a =PY cell instead of retrying different formula syntaxes. Python \
 is always available and always works. Do NOT waste turns searching \
 for functions and retrying — if the first attempt fails, switch \
 to =PY immediately.
-- KherveSheet has 150+ formula functions. Use search_functions to \
-look them up ONCE when unsure, then get_function_details for syntax. \
-Do NOT search repeatedly for the same function.
-- To copy or understand an existing plot, use list_charts and \
-get_chart_details to see each series' style and X/Y columns, and \
-clone_chart to reproduce a chart (with identical style) on another sheet.
-- To change an existing chart's axes — reverse/invert an axis, switch \
-to a log scale, or rename the title/axis labels — use modify_chart. \
-Reversing the X axis is invert_x=true.
-- Available chart types: Line, Scatter, Line+Symbol, Bar, Step, Stem, \
-Histogram, Box, Heatmap, 3D Surface.
-- Use apply_table_style to quickly give a data range a polished look \
-(header colours, banded rows, borders) — much faster than formatting \
-cells one by one. Use it after writing headers and data.
-- When the user says "create a template", build it on the CURRENT sheet \
-(write data, format, add charts) — do NOT call save_as_template unless \
-the user explicitly asks to save it as a reusable template file.
-- Use merge_cells for title rows that span multiple columns (e.g. a \
-report title in A1:F1). Use set_column_width or auto_fit_columns to \
-ensure text is visible.
+
+=== APPEARANCE / FORMATTING ===
+- You CAN format existing data: apply colours, fonts, borders, \
+alignment, number formats, table styles, column widths, merges.
+- Use apply_table_style to quickly give a data range a polished look.
+- Use merge_cells for title rows spanning multiple columns.
+- Use set_column_width or auto_fit_columns to ensure text is visible.
 - format_cells accepts: bg_color (hex), bold, italic, underline, \
 font_family, font_size, font_color (hex), alignment \
 ("left"/"center"/"right"), number_format ("General"/"0.00"/ \
 "Scientific"/"Percentage"/"Currency"/"Date"/"Time"/"Text").
-- Cell references use A1 notation.  Ranges use A1:C5 format.
+- You CAN write a small number of cells (e.g. headers for a column \
+the user is adding, or a single formula) — just not large blocks of \
+data to build entire spreadsheets from scratch.
+
+=== FORMULAS & CHARTS ===
+- Use set_formula for calculated cells (formulas start with =). \
+But prefer =PY for anything non-trivial.
+- KherveSheet has 150+ formula functions. Use search_functions to \
+look them up ONCE when unsure, then get_function_details for syntax.
+- To copy or understand an existing plot, use list_charts and \
+get_chart_details, and clone_chart to reproduce it.
+- To change an existing chart's axes, use modify_chart.
+- Available chart types: Line, Scatter, Line+Symbol, Bar, Step, Stem, \
+Histogram, Box, Heatmap, 3D Surface.
+- You CAN insert a chart from existing data with insert_chart.
+- Cell references use A1 notation. Ranges use A1:C5 format.
 - Row numbers are 1-based, columns are letters (A, B, … Z, AA, AB, …).
 - All your changes are undoable (Ctrl+Z).
-- Be concise in your replies.  Focus on actions, not explanations."""
+- Be concise in your replies. Focus on actions, not explanations."""
 
 
 # ── Sliding-window conversation management ─────────────────────────
@@ -1074,8 +1050,7 @@ class AiBackend(QObject):
             return f"Deleted {n} chart{'s' if n != 1 else ''}"
         if name == "apply_table_style":
             return f"Applied style '{result.get('style', '?')}'"
-        if name == "save_as_template":
-            return f"Saved template '{inp.get('name', '?')}'"
+        # save_as_template disabled
         if name == "set_column_width":
             return f"Set column width to {inp.get('width', '?')}px"
         if name == "merge_cells":
