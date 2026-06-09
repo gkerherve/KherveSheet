@@ -2524,21 +2524,7 @@ class MainWindow(QMainWindow):
         sel = getattr(s, '_selected_chart', None)
         if sel:
             from . import graph as _g
-            cb_series = []
-            for sr in sel._series:
-                sd = {"x": sr["x"].tolist(), "y": sr["y"].tolist(),
-                      "label": sr["label"],
-                      "plot_type": sr["plot_type"]}
-                if sr.get("bar"):
-                    sd["bar"] = dict(sr["bar"])
-                cb_series.append(sd)
-            _g._chart_clipboard = {
-                "series": cb_series,
-                "bar_config": dict(sel._bar_config),
-                "pie_config": dict(sel._pie_config),
-                "heatmap_config": dict(getattr(sel, '_heatmap_config', {})),
-                "surface3d_config": dict(getattr(sel, '_surface3d_config', {})),
-            }
+            _g._chart_clipboard = sel.to_dict()
             sel._close_chart()
             s._selected_chart = None
         else:
@@ -2567,21 +2553,7 @@ class MainWindow(QMainWindow):
         sel = getattr(s, '_selected_chart', None)
         if sel:
             from . import graph as _g
-            cb_series = []
-            for sr in sel._series:
-                sd = {"x": sr["x"].tolist(), "y": sr["y"].tolist(),
-                      "label": sr["label"],
-                      "plot_type": sr["plot_type"]}
-                if sr.get("bar"):
-                    sd["bar"] = dict(sr["bar"])
-                cb_series.append(sd)
-            _g._chart_clipboard = {
-                "series": cb_series,
-                "bar_config": dict(sel._bar_config),
-                "pie_config": dict(sel._pie_config),
-                "heatmap_config": dict(getattr(sel, '_heatmap_config', {})),
-                "surface3d_config": dict(getattr(sel, '_surface3d_config', {})),
-            }
+            _g._chart_clipboard = sel.to_dict()
             _sh._shape_clipboard = None
             self._status_msg("Chart copied", 2000)
         else:
@@ -2598,58 +2570,19 @@ class MainWindow(QMainWindow):
         from . import graph as _g
         cb = getattr(_g, '_chart_clipboard', None)
         if cb:
-            import numpy as np
             from .graph import EmbeddedChart
             if not hasattr(s, '_charts'):
                 s._charts = []
             viewport = s.table.viewport()
-            first_chart = None
-            for i, sr in enumerate(cb["series"]):
-                x = np.array(sr["x"])
-                y = np.array(sr["y"])
-                if first_chart is None:
-                    offset = len(s._charts) * 30
-                    first_chart = EmbeddedChart(
-                        x, y, sr["label"], sr["plot_type"], s, viewport)
-                    first_chart.move(60 + offset, 60 + offset)
-                    s._charts.append(first_chart)
-                else:
-                    first_chart.add_series(x, y, sr["label"], sr["plot_type"])
-                # Restore per-series bar props.
-                if sr.get("bar") and i < len(first_chart._series):
-                    first_chart._series[i]["bar"] = dict(sr["bar"])
-            # Restore bar config and redraw.
-            bc = cb.get("bar_config")
-            if bc and first_chart:
-                first_chart._bar_config.update(bc)
-                first_chart._redraw_bars()
-            # Restore pie config and redraw.
-            pc = cb.get("pie_config")
-            if pc and first_chart:
-                first_chart._pie_config.update(pc)
-                first_chart._redraw_pie()
-            # Restore heatmap config and redraw.
-            hmc = cb.get("heatmap_config")
-            if hmc and first_chart:
-                first_chart._heatmap_config = dict(hmc)
-                if first_chart._series and \
-                        first_chart._series[0].get("plot_type") == "Heatmap":
-                    from .heatmap_options import redraw_heatmap
-                    try:
-                        redraw_heatmap(first_chart, hmc)
-                    except Exception:
-                        pass
-            # Restore 3D surface config and redraw.
-            s3c = cb.get("surface3d_config")
-            if s3c and first_chart:
-                first_chart._surface3d_config = dict(s3c)
-                if first_chart._series and \
-                        first_chart._series[0].get("plot_type") == "3D Surface":
-                    from .heatmap_options import redraw_surface
-                    try:
-                        redraw_surface(first_chart, s3c)
-                    except Exception:
-                        pass
+            try:
+                chart = EmbeddedChart.from_dict(cb, s, viewport)
+                # Offset slightly so pasted chart doesn't sit exactly on top.
+                chart.move(chart.x() + 20, chart.y() + 20)
+                chart.show()
+                chart.raise_()
+                s._charts.append(chart)
+            except Exception:
+                pass
             _g._chart_clipboard = None
             self._status_msg("Chart pasted", 2000)
             return
