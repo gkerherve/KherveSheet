@@ -3818,6 +3818,497 @@ class SheetWidget(QWidget):
             def _ERFC(x):
                 return math.erfc(float(x))
 
+            # ── Lookup & Reference ──────────────────────────────
+            def _RANGE2D(c1, r1, c2, r2):
+                return self._range_values_2d(c1, r1, c2, r2)
+
+            def _ROW(*args):
+                if args:
+                    return int(float(args[0]))
+                return 1
+
+            def _COLUMN_F(*args):
+                if args:
+                    return int(float(args[0]))
+                return 1
+
+            def _ROWS(*args):
+                v = _flatten(args)
+                return len(v) if v else 0
+
+            def _COLUMNS(*args):
+                return 1
+
+            def _CHOOSE(idx, *args):
+                i = int(float(idx))
+                if 1 <= i <= len(args):
+                    return args[i - 1]
+                return "#VALUE!"
+
+            def _ADDRESS(row, col, abs_type=1, a1=True, sheet=""):
+                r = int(float(row))
+                c = int(float(col))
+                result = ""
+                n = c
+                while n > 0:
+                    n, rem = divmod(n - 1, 26)
+                    result = chr(65 + rem) + result
+                if abs_type == 1:
+                    ref = f"${result}${r}"
+                elif abs_type == 2:
+                    ref = f"{result}${r}"
+                elif abs_type == 3:
+                    ref = f"${result}{r}"
+                else:
+                    ref = f"{result}{r}"
+                if sheet:
+                    ref = f"{sheet}!{ref}"
+                return ref
+
+            def _MATCH(lookup, array, match_type=1):
+                vals = _flatten([array])
+                mt = int(float(match_type))
+                if mt == 0:
+                    for i, v in enumerate(vals):
+                        try:
+                            if float(v) == float(lookup):
+                                return i + 1
+                        except (ValueError, TypeError):
+                            if str(v).lower() == str(lookup).lower():
+                                return i + 1
+                    return "#N/A"
+                elif mt == 1:
+                    last = "#N/A"
+                    for i, v in enumerate(vals):
+                        try:
+                            if float(v) <= float(lookup):
+                                last = i + 1
+                            else:
+                                break
+                        except (ValueError, TypeError):
+                            pass
+                    return last
+                else:
+                    last = "#N/A"
+                    for i, v in enumerate(vals):
+                        try:
+                            if float(v) >= float(lookup):
+                                last = i + 1
+                            else:
+                                break
+                        except (ValueError, TypeError):
+                            pass
+                    return last
+
+            def _INDEX(array, row_num, col_num=None):
+                vals = _flatten([array])
+                r = int(float(row_num))
+                if 1 <= r <= len(vals):
+                    return vals[r - 1]
+                return "#REF!"
+
+            def _SWITCH(expr, *args):
+                i = 0
+                while i < len(args) - 1:
+                    try:
+                        if float(expr) == float(args[i]):
+                            return args[i + 1]
+                    except (ValueError, TypeError):
+                        if str(expr) == str(args[i]):
+                            return args[i + 1]
+                    i += 2
+                if len(args) % 2 == 1:
+                    return args[-1]
+                return "#N/A"
+
+            def _VLOOKUP(lookup, rng, col_idx, approx=True):
+                ci = int(float(col_idx))
+                if isinstance(rng, list) and rng and isinstance(rng[0], list):
+                    table2d = rng
+                else:
+                    vals = _flatten([rng])
+                    table2d = [vals]
+                for row in table2d:
+                    if not row:
+                        continue
+                    first = row[0]
+                    matched = False
+                    try:
+                        matched = (float(first) == float(lookup))
+                    except (ValueError, TypeError):
+                        matched = (str(first).lower()
+                                   == str(lookup).lower())
+                    if matched:
+                        if 1 <= ci <= len(row):
+                            return row[ci - 1]
+                        return "#REF!"
+                if approx and not isinstance(approx, str):
+                    last_row = None
+                    for row in table2d:
+                        if not row:
+                            continue
+                        try:
+                            if float(row[0]) <= float(lookup):
+                                last_row = row
+                            else:
+                                break
+                        except (ValueError, TypeError):
+                            pass
+                    if last_row and 1 <= ci <= len(last_row):
+                        return last_row[ci - 1]
+                return "#N/A"
+
+            def _HLOOKUP(lookup, rng, row_idx, approx=True):
+                ri = int(float(row_idx))
+                if isinstance(rng, list) and rng and isinstance(rng[0], list):
+                    table2d = rng
+                else:
+                    vals = _flatten([rng])
+                    table2d = [vals]
+                ncols = max((len(r) for r in table2d), default=0)
+                for c in range(ncols):
+                    first = table2d[0][c] if c < len(table2d[0]) else None
+                    matched = False
+                    try:
+                        matched = (float(first) == float(lookup))
+                    except (ValueError, TypeError):
+                        matched = (str(first).lower()
+                                   == str(lookup).lower())
+                    if matched:
+                        if 1 <= ri <= len(table2d):
+                            val = (table2d[ri - 1][c]
+                                   if c < len(table2d[ri - 1]) else None)
+                            return val if val is not None else 0
+                        return "#REF!"
+                return "#N/A"
+
+            def _XLOOKUP(lookup, lookup_arr, return_arr,
+                         default="#N/A", match_mode=0, search_mode=1):
+                lvals = _flatten([lookup_arr])
+                rvals = _flatten([return_arr])
+                for i, v in enumerate(lvals):
+                    matched = False
+                    try:
+                        matched = (float(v) == float(lookup))
+                    except (ValueError, TypeError):
+                        matched = (str(v).lower()
+                                   == str(lookup).lower())
+                    if matched:
+                        return rvals[i] if i < len(rvals) else default
+                return default
+
+            def _LOOKUP(lookup, lookup_vec, result_vec=None):
+                lvals = _flatten([lookup_vec])
+                rvals = (_flatten([result_vec])
+                         if result_vec is not None else lvals)
+                last = "#N/A"
+                for i, v in enumerate(lvals):
+                    try:
+                        if float(v) <= float(lookup):
+                            last = rvals[i] if i < len(rvals) else "#N/A"
+                        else:
+                            break
+                    except (ValueError, TypeError):
+                        pass
+                return last
+
+            # ── Statistical ─────────────────────────────────────
+            def _MEDIAN(*args):
+                v = sorted(_nums(args))
+                n = len(v)
+                if n == 0:
+                    return 0
+                if n % 2 == 1:
+                    return v[n // 2]
+                return (v[n // 2 - 1] + v[n // 2]) / 2
+
+            def _VAR(*args):
+                v = _nums(args)
+                if len(v) < 2:
+                    return 0
+                mn = sum(v) / len(v)
+                return sum((x - mn) ** 2 for x in v) / (len(v) - 1)
+
+            def _VARP(*args):
+                v = _nums(args)
+                if len(v) < 1:
+                    return 0
+                mn = sum(v) / len(v)
+                return sum((x - mn) ** 2 for x in v) / len(v)
+
+            def _STDEVP(*args):
+                return _VARP(*args) ** 0.5
+
+            def _VARA(*args):
+                return _VAR(*args)
+
+            def _VARPA(*args):
+                return _VARP(*args)
+
+            def _STDEVA(*args):
+                return _VAR(*args) ** 0.5
+
+            def _STDEVPA(*args):
+                return _VARP(*args) ** 0.5
+
+            def _CORREL(x, y):
+                xv = _nums([x])
+                yv = _nums([y])
+                n = min(len(xv), len(yv))
+                if n < 2:
+                    return 0
+                xv, yv = xv[:n], yv[:n]
+                mx = sum(xv) / n
+                my = sum(yv) / n
+                num = sum((a - mx) * (b - my)
+                          for a, b in zip(xv, yv))
+                dx = (sum((a - mx) ** 2 for a in xv)) ** 0.5
+                dy = (sum((b - my) ** 2 for b in yv)) ** 0.5
+                return num / (dx * dy) if dx and dy else 0
+
+            def _SLOPE(y, x):
+                xv = _nums([x])
+                yv = _nums([y])
+                n = min(len(xv), len(yv))
+                if n < 2:
+                    return 0
+                xv, yv = xv[:n], yv[:n]
+                mx = sum(xv) / n
+                my = sum(yv) / n
+                num = sum((a - mx) * (b - my)
+                          for a, b in zip(xv, yv))
+                den = sum((a - mx) ** 2 for a in xv)
+                return num / den if den else 0
+
+            def _INTERCEPT(y, x):
+                xv = _nums([x])
+                yv = _nums([y])
+                n = min(len(xv), len(yv))
+                if n < 2:
+                    return 0
+                xv, yv = xv[:n], yv[:n]
+                mx = sum(xv) / n
+                my = sum(yv) / n
+                sl = _SLOPE(y, x)
+                return my - sl * mx
+
+            def _RSQ(y, x):
+                r = _CORREL(x, y)
+                return r ** 2
+
+            def _FORECAST(new_x, y, x):
+                sl = _SLOPE(y, x)
+                ic = _INTERCEPT(y, x)
+                return sl * float(new_x) + ic
+
+            def _LARGE(array, k):
+                v = sorted(_nums([array]), reverse=True)
+                ki = int(float(k))
+                if 1 <= ki <= len(v):
+                    return v[ki - 1]
+                return "#NUM!"
+
+            def _SMALL(array, k):
+                v = sorted(_nums([array]))
+                ki = int(float(k))
+                if 1 <= ki <= len(v):
+                    return v[ki - 1]
+                return "#NUM!"
+
+            def _RANK(number, ref, order=0):
+                n = float(number)
+                v = _nums([ref])
+                if int(float(order)) == 0:
+                    v_sorted = sorted(v, reverse=True)
+                else:
+                    v_sorted = sorted(v)
+                try:
+                    return v_sorted.index(n) + 1
+                except ValueError:
+                    return "#N/A"
+
+            def _PERCENTILE(array, k):
+                v = sorted(_nums([array]))
+                if not v:
+                    return 0
+                ki = float(k)
+                idx = ki * (len(v) - 1)
+                lo = int(idx)
+                hi = min(lo + 1, len(v) - 1)
+                frac = idx - lo
+                return v[lo] * (1 - frac) + v[hi] * frac
+
+            def _PERCENTRANK(array, x, significance=3):
+                v = sorted(_nums([array]))
+                xf = float(x)
+                if not v:
+                    return "#NUM!"
+                if xf < v[0] or xf > v[-1]:
+                    return "#NUM!"
+                for i, val in enumerate(v):
+                    if val == xf:
+                        return (round(i / (len(v) - 1),
+                                      int(significance))
+                                if len(v) > 1 else 0)
+                    if val > xf:
+                        frac = (xf - v[i - 1]) / (val - v[i - 1])
+                        rank = (i - 1 + frac) / (len(v) - 1)
+                        return round(rank, int(significance))
+                return 1.0
+
+            def _QUARTILE(array, quart):
+                q = int(float(quart))
+                return _PERCENTILE(array, q / 4.0)
+
+            def _MODE(*args):
+                v = _nums(args)
+                if not v:
+                    return "#N/A"
+                from collections import Counter
+                c = Counter(v)
+                return c.most_common(1)[0][0]
+
+            def _GEOMEAN(*args):
+                v = _nums(args)
+                if not v or any(x <= 0 for x in v):
+                    return "#NUM!"
+                product = 1.0
+                for x in v:
+                    product *= x
+                return product ** (1.0 / len(v))
+
+            def _HARMEAN(*args):
+                v = _nums(args)
+                if not v or any(x <= 0 for x in v):
+                    return "#NUM!"
+                return len(v) / sum(1.0 / x for x in v)
+
+            def _TRIMMEAN(array, percent):
+                v = sorted(_nums([array]))
+                p = float(percent)
+                n = len(v)
+                if not n:
+                    return 0
+                trim = int(n * p / 2)
+                trimmed = v[trim:n - trim] if trim > 0 else v
+                return (sum(trimmed) / len(trimmed)
+                        if trimmed else 0)
+
+            def _AVERAGEIF(rng, criteria, avg_rng=None):
+                vals = _flatten([rng])
+                avgs = (_flatten([avg_rng])
+                        if avg_rng is not None else vals)
+                total = 0.0
+                count = 0
+                for i, v in enumerate(vals):
+                    if _countif_match(v, criteria):
+                        try:
+                            total += (float(avgs[i])
+                                      if i < len(avgs) else 0)
+                            count += 1
+                        except (ValueError, TypeError):
+                            pass
+                return total / count if count else "#DIV/0!"
+
+            def _AVERAGEIFS(avg_rng, *args):
+                avgs = _flatten([avg_rng])
+                if len(args) < 2 or len(args) % 2 != 0:
+                    return "#VALUE!"
+                pairs = []
+                for i in range(0, len(args), 2):
+                    pairs.append((_flatten([args[i]]), args[i + 1]))
+                n = min(len(avgs),
+                        *(len(p[0]) for p in pairs))
+                total = 0.0
+                count = 0
+                for i in range(n):
+                    if all(_countif_match(p[0][i], p[1])
+                           for p in pairs):
+                        try:
+                            total += float(avgs[i])
+                            count += 1
+                        except (ValueError, TypeError):
+                            pass
+                return total / count if count else "#DIV/0!"
+
+            def _AVERAGEA(*args):
+                v = _flatten(args)
+                nums = []
+                for x in v:
+                    if x is True:
+                        nums.append(1)
+                    elif x is False or x == "":
+                        continue
+                    else:
+                        try:
+                            nums.append(float(x))
+                        except (ValueError, TypeError):
+                            nums.append(0)
+                return sum(nums) / len(nums) if nums else 0
+
+            def _MAXA(*args):
+                v = _flatten(args)
+                nums = []
+                for x in v:
+                    if x is True:
+                        nums.append(1)
+                    elif x is False:
+                        nums.append(0)
+                    elif x == "":
+                        continue
+                    else:
+                        try:
+                            nums.append(float(x))
+                        except (ValueError, TypeError):
+                            nums.append(0)
+                return max(nums) if nums else 0
+
+            def _MINA(*args):
+                v = _flatten(args)
+                nums = []
+                for x in v:
+                    if x is True:
+                        nums.append(1)
+                    elif x is False:
+                        nums.append(0)
+                    elif x == "":
+                        continue
+                    else:
+                        try:
+                            nums.append(float(x))
+                        except (ValueError, TypeError):
+                            nums.append(0)
+                return min(nums) if nums else 0
+
+            def _FREQUENCY(data, bins):
+                dv = sorted(_nums([data]))
+                bv = sorted(_nums([bins]))
+                result = [0] * (len(bv) + 1)
+                for d in dv:
+                    placed = False
+                    for i, b in enumerate(bv):
+                        if d <= b:
+                            result[i] += 1
+                            placed = True
+                            break
+                    if not placed:
+                        result[-1] += 1
+                return result
+
+            def _LINEST(y, x):
+                sl = _SLOPE(y, x)
+                ic = _INTERCEPT(y, x)
+                return [sl, ic]
+
+            def _TREND(y, x, new_x=None):
+                sl = _SLOPE(y, x)
+                ic = _INTERCEPT(y, x)
+                if new_x is not None:
+                    nv = _nums([new_x])
+                else:
+                    nv = _nums([x])
+                return [sl * v + ic for v in nv]
+
             ns = {"__builtins__": {}, "math": math, "np": np,
                   "abs": abs, "round": round, "int": int, "float": float,
                   "sum": _SUM, "min": _MINF, "max": _MAXF, "len": len,
@@ -3922,12 +4413,44 @@ class SheetWidget(QWidget):
                   "FIND_PEAKS_Y": _FIND_PEAKS_Y,
                   "BASELINE_POLY": _BASELINE_POLY,
                   "BASELINE_ALS": _BASELINE_ALS,
+                  # Lookup & Reference
+                  "ROW": _ROW, "COLUMN": _COLUMN_F,
+                  "ROWS": _ROWS, "COLUMNS": _COLUMNS,
+                  "CHOOSE": _CHOOSE, "ADDRESS": _ADDRESS,
+                  "MATCH": _MATCH, "INDEX": _INDEX,
+                  "SWITCH": _SWITCH,
+                  "VLOOKUP": _VLOOKUP, "HLOOKUP": _HLOOKUP,
+                  "XLOOKUP": _XLOOKUP, "LOOKUP": _LOOKUP,
+                  # Statistical
+                  "MEDIAN": _MEDIAN,
+                  "VAR": _VAR, "VARP": _VARP,
+                  "STDEVP": _STDEVP,
+                  "VARA": _VARA, "VARPA": _VARPA,
+                  "STDEVA": _STDEVA, "STDEVPA": _STDEVPA,
+                  "CORREL": _CORREL,
+                  "SLOPE": _SLOPE, "INTERCEPT": _INTERCEPT,
+                  "RSQ": _RSQ, "FORECAST": _FORECAST,
+                  "LARGE": _LARGE, "SMALL": _SMALL,
+                  "RANK": _RANK,
+                  "PERCENTILE": _PERCENTILE,
+                  "PERCENTRANK": _PERCENTRANK,
+                  "QUARTILE": _QUARTILE,
+                  "MODE": _MODE,
+                  "GEOMEAN": _GEOMEAN, "HARMEAN": _HARMEAN,
+                  "TRIMMEAN": _TRIMMEAN,
+                  "AVERAGEIF": _AVERAGEIF,
+                  "AVERAGEIFS": _AVERAGEIFS,
+                  "AVERAGEA": _AVERAGEA,
+                  "MAXA": _MAXA, "MINA": _MINA,
+                  "FREQUENCY": _FREQUENCY,
+                  "LINEST": _LINEST, "TREND": _TREND,
                   # Compiled-formula runtime helpers (read live values).
                   "_C": self._cell_val,
                   "_CR": self._cell_raw,
                   "_AGG": self._agg_range,
                   "_COL": self._agg_col,
                   "_RANGE": self._range_values,
+                  "_RANGE2D": self._range_values_2d,
                   "_XC": self._XC,
                   "_XRANGE": self._XRANGE,
                   }
@@ -3980,7 +4503,21 @@ class SheetWidget(QWidget):
         "ifft", "fft_power",
         "interp_linear", "interp_spline", "interp_akima", "resample",
         "find_peaks", "find_peaks_x", "find_peaks_y",
-        "baseline_poly", "baseline_als"})
+        "baseline_poly", "baseline_als",
+        # Lookup & Reference
+        "row", "column", "rows", "columns", "choose", "address",
+        "match", "index", "switch",
+        "vlookup", "hlookup", "xlookup", "lookup",
+        # Statistical
+        "median", "var", "varp", "stdevp",
+        "vara", "varpa", "stdeva", "stdevpa",
+        "correl", "slope", "intercept", "rsq", "forecast",
+        "large", "small", "rank",
+        "percentile", "percentrank", "quartile",
+        "mode", "geomean", "harmean", "trimmean",
+        "averageif", "averageifs", "averagea",
+        "maxa", "mina",
+        "frequency", "linest", "trend"})
 
     def _compile_formula(self, formula):
         """Parse a formula and compile it to a reusable code object.
@@ -4215,6 +4752,25 @@ class SheetWidget(QWidget):
                     except ValueError:
                         pass
         return vals
+
+    def _range_values_2d(self, c1, r1, c2, r2):
+        """Return a 2-D list (rows × cols) of cell values in a range."""
+        tbl = self.table
+        rows = []
+        for r in range(r1, r2 + 1):
+            row = []
+            for c in range(c1, c2 + 1):
+                it = tbl.item(r, c)
+                if it and it.text():
+                    txt = it.text()
+                    try:
+                        row.append(float(txt))
+                    except ValueError:
+                        row.append(txt)
+                else:
+                    row.append(None)
+            rows.append(row)
+        return rows
 
     def _agg_range(self, func, c1, r1, c2, r2):
         vals = []
