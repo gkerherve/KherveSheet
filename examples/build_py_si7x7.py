@@ -89,8 +89,14 @@ def build() -> str:
     wb = Workbook(min_rows=212, min_cols=205)
     s = wb.add_sheet("Si(111) 7x7")
 
-    s.title_block("Si(111)-(7x7) Reconstruction",
-                  "A =PY cell writes an STM-like intensity matrix to B10")
+    # Title on row 0 only (no subtitle merge — B2 holds the =PY cell).
+    s.set(0, 0, "Si(111)-(7x7) Reconstruction")
+    s.fmt(0, 0, bold=True, font_size=18, font_color=PALETTE["header"])
+    s.merge(0, 0, 1, 6)
+
+    # Label pointing at the =PY program in B2.
+    s.set(1, 0, "=PY  ->")
+    s.fmt(1, 0, bold=True, align="right")
 
     inputs = [
         ("Matrix size  N  (<= 200)", 200),
@@ -107,10 +113,10 @@ def build() -> str:
     s.col_width(0, 210)
     s.col_width(1, 90)
 
-    # The =PY program in A2 (row index 1, col 0).
-    s.formula(1, 0, PY_CODE)
+    # The =PY program in B2 (row index 1, col 1).
+    s.formula(1, 1, PY_CODE)
 
-    s.note(1, 0,
+    s.note(1, 1,
            "Press Ctrl+Enter on this cell to run it.\n"
            "It fills B10:GR209 with a 200x200 matrix and shows a preview.\n"
            "Then select that range and Insert > Heatmap to plot it.\n"
