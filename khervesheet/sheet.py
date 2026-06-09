@@ -6018,13 +6018,28 @@ class SheetWidget(QWidget):
         sel = self.table.selectedRanges()
         if not sel:
             return
-        s = sel[0]
+        # Compute the bounding box of ALL selected ranges so that Qt's
+        # range splitting (e.g. across row/column spans) doesn't silently
+        # truncate the copy to just the first fragment.
+        top = min(s.topRow() for s in sel)
+        bot = max(s.bottomRow() for s in sel)
+        left = min(s.leftColumn() for s in sel)
+        right = max(s.rightColumn() for s in sel)
+        # Build a set of selected cells for sparse selections (Ctrl+Click).
+        selected = set()
+        for s in sel:
+            for r in range(s.topRow(), s.bottomRow() + 1):
+                for c in range(s.leftColumn(), s.rightColumn() + 1):
+                    selected.add((r, c))
         rows = []
         meta = {}  # (dr, dc) -> metadata dict
-        for r in range(s.topRow(), s.bottomRow() + 1):
+        for r in range(top, bot + 1):
             row_data = []
-            for c in range(s.leftColumn(), s.rightColumn() + 1):
-                dr, dc = r - s.topRow(), c - s.leftColumn()
+            for c in range(left, right + 1):
+                dr, dc = r - top, c - left
+                if (r, c) not in selected:
+                    row_data.append("")
+                    continue
                 # Copy the formula if the cell has one, else display text.
                 formula = self._cell_formulas.get((r, c))
                 if formula:
@@ -6055,12 +6070,14 @@ class SheetWidget(QWidget):
         clip_text = "\n".join(rows)
         QApplication.clipboard().setText(clip_text)
         self._copied_meta = meta
-        self._copy_origin = (s.topRow(), s.leftColumn())
+        self._copy_origin = (top, left)
         # Share the metadata across sheets, tied to this clipboard text.
         global _CELL_CLIPBOARD
         _CELL_CLIPBOARD = {"text": clip_text, "meta": meta}
-        # Start marching ants around copied range.
-        self._start_marching_ants(s)
+        # Start marching ants around the full bounding box.
+        from PyQt5.QtWidgets import QTableWidgetSelectionRange
+        self._start_marching_ants(
+            QTableWidgetSelectionRange(top, left, bot, right))
 
     # ── Marching ants animation ──────────────────────────────────────
     def _start_marching_ants(self, sel_range):
