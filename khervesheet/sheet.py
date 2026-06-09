@@ -3852,6 +3852,7 @@ class SheetWidget(QWidget):
                   "BASELINE_ALS": _BASELINE_ALS,
                   # Compiled-formula runtime helpers (read live values).
                   "_C": self._cell_val,
+                  "_CR": self._cell_raw,
                   "_AGG": self._agg_range,
                   "_COL": self._agg_col,
                   "_RANGE": self._range_values,
@@ -3956,6 +3957,11 @@ class SheetWidget(QWidget):
         expr = self._compile_column_functions(expr)
         expr = re.sub(r'(\$?)([A-Za-z]{1,3})(\$?)(\d+)\b',
                       self._compile_cell_ref, expr)
+        # IS* functions need the raw cell value (string or number),
+        # not the numeric-coerced _C() result.
+        expr = re.sub(
+            r'\b(ISNUMBER|ISTEXT|ISNONTEXT|ISBLANK|ISLOGICAL)\(_C\(',
+            r'\1(_CR(', expr)
         for token, call in xref_subs.items():
             expr = expr.replace(token, call)
         expr = expr.replace("^", "**")
@@ -4085,6 +4091,17 @@ class SheetWidget(QWidget):
             except ValueError:
                 return 0.0
         return 0.0
+
+    def _cell_raw(self, r, c):
+        """Return the raw cell value: number if numeric, else string."""
+        it = self.table.item(r, c)
+        if it is None or not it.text():
+            return ""
+        t = it.text()
+        try:
+            return float(t)
+        except ValueError:
+            return t
 
     def _apply_agg(self, func, vals):
         if func == "sum":
