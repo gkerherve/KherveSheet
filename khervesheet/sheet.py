@@ -1479,6 +1479,7 @@ class SheetWidget(QWidget):
         self._py_figures: dict = {}      # (row, col) → EmbeddedImage (plot)
         self._py_udf_names: set = set()  # UPPER names of Python funcs as UDFs
         self._py_loops: dict = {}        # (row, col) → loop interval seconds
+        self._py_loop_saved: dict = {}   # (row, col) → last-used period (survives stop)
         self._py_loop_last: dict = {}    # (row, col) → last run monotonic time
         self._py_loop_timer = None       # QTimer ticking due loop cells
         self._py_loop_running = False     # guard against overlapping runs
@@ -2471,6 +2472,7 @@ class SheetWidget(QWidget):
         for a =PY cell, then (re)start or stop the loop timer."""
         if secs:
             self._py_loops[(row, col)] = float(secs)
+            self._py_loop_saved[(row, col)] = float(secs)
             import time
             self._py_loop_last[(row, col)] = time.monotonic()
             self._start_py_loops()
@@ -2518,7 +2520,7 @@ class SheetWidget(QWidget):
     def _on_loop_period(self):
         """Set loop period for the current =PY cell via a popup menu.
 
-        Choosing a period also starts the loop immediately."""
+        Only sets the period — does not start or stop the loop."""
         cur = self.table.currentIndex()
         if not cur.isValid():
             return
@@ -2528,7 +2530,7 @@ class SheetWidget(QWidget):
             return
         from PyQt5.QtWidgets import QMenu, QAction
         menu = QMenu(self)
-        current_secs = self._py_loops.get((row, col))
+        saved = self._py_loop_saved.get((row, col))
         presets = [
             ("0.1 s", 0.1), ("0.2 s", 0.2), ("0.5 s", 0.5),
             ("1 s", 1), ("2 s", 2), ("5 s", 5), ("10 s", 10),
@@ -2537,35 +2539,35 @@ class SheetWidget(QWidget):
         for label, secs in presets:
             act = menu.addAction(label)
             act.setCheckable(True)
-            act.setChecked(current_secs is not None
-                           and abs(current_secs - secs) < 0.01)
+            act.setChecked(saved is not None
+                           and abs(saved - secs) < 0.01)
             act.triggered.connect(
-                lambda checked, s=secs: self._apply_loop_period(row, col, s))
+                lambda checked, s=secs: self._save_loop_period(row, col, s))
         menu.addSeparator()
         custom_act = menu.addAction("Custom\u2026")
         custom_act.triggered.connect(
-            lambda: self._py_loop_custom_and_start(row, col))
-        # Show the menu below the button that triggered it.
+            lambda: self._save_loop_period_custom(row, col))
         btn = self._formula_bar._loop_period_btn
         menu.exec_(btn.mapToGlobal(btn.rect().bottomLeft()))
 
-    def _apply_loop_period(self, row, col, secs):
-        """Set the period AND start the loop."""
-        self._set_py_loop(row, col, secs)
-        self._sync_loop_ui(True)
+    def _save_loop_period(self, row, col, secs):
+        """Remember the period. If the loop is already running, update it."""
+        self._py_loop_saved[(row, col)] = float(secs)
+        if (row, col) in self._py_loops:
+            # Loop is running — update the live interval.
+            self._set_py_loop(row, col, secs)
 
-    def _py_loop_custom_and_start(self, row, col):
-        """Prompt for a custom interval and start the loop."""
-        cur = float(self._py_loops.get((row, col), 1))
+    def _save_loop_period_custom(self, row, col):
+        """Prompt for a custom interval and remember it."""
+        cur = float(self._py_loop_saved.get((row, col), 1))
         secs, ok = QInputDialog.getDouble(
             self, "Python loop", "Re-run this cell every (seconds):",
             cur, 0.1, 86400, 1)
         if ok:
-            self._set_py_loop(row, col, secs)
-            self._sync_loop_ui(True)
+            self._save_loop_period(row, col, secs)
 
     def _on_loop_play(self):
-        """Start / resume the loop for the current =PY cell."""
+        """Start the loop for the current =PY cell using the saved period."""
         cur = self.table.currentIndex()
         if not cur.isValid():
             return
@@ -2573,20 +2575,19 @@ class SheetWidget(QWidget):
         src = self._cell_formulas.get((row, col))
         if not is_python_source(src):
             return
-        secs = self._py_loops.get((row, col))
-        if not secs:
-            # No period set yet — open the period picker.
-            self._on_loop_period()
-            return
+        secs = self._py_loop_saved.get((row, col), 1.0)
         self._set_py_loop(row, col, secs)
         self._sync_loop_ui(True)
 
     def _on_loop_stop(self):
-        """Stop the loop for the current =PY cell."""
+        """Stop the loop but keep the saved period."""
         cur = self.table.currentIndex()
         if not cur.isValid():
             return
         row, col = cur.row(), cur.column()
+        # Save the current period before clearing.
+        if (row, col) in self._py_loops:
+            self._py_loop_saved[(row, col)] = self._py_loops[(row, col)]
         self._set_py_loop(row, col, None)
         self._sync_loop_ui(False)
 
