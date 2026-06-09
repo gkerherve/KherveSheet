@@ -736,12 +736,14 @@ class SparklineDialog(QDialog):
             "color": self.color_btn.color(),
         }
         row, col = self._target_row, self._target_col
-        self._sheet._fmt_delegate._sparklines[(row, col)] = spark
-        if not hasattr(self._sheet, '_cell_sparklines'):
-            self._sheet._cell_sparklines = {}
-        self._sheet._cell_sparklines[(row, col)] = spark
-        idx = self._sheet.table.model().index(row, col)
-        self._sheet.table.update(idx)
+        from .undo_commands import InsertSparklineCmd
+        entries = [((row, col), spark)]
+        cmd = InsertSparklineCmd(self._sheet, entries)
+        undo = getattr(self._sheet, '_undo_stack', None)
+        if undo is not None:
+            undo.push(cmd)
+        else:
+            cmd.redo()
         self.accept()
 
     def _disconnect(self):
@@ -832,22 +834,27 @@ def remove_sparklines(sheet):
                 for c in range(rng.leftColumn(), rng.rightColumn() + 1):
                     cells.append((r, c))
 
-    removed = False
     sparklines = getattr(sheet, '_cell_sparklines', {})
     delegate_sp = sheet._fmt_delegate._sparklines
+    # Collect existing sparklines so we can undo the deletion.
+    entries = []
     for r, c in cells:
-        if (r, c) in sparklines:
-            del sparklines[(r, c)]
-            removed = True
-        if (r, c) in delegate_sp:
-            del delegate_sp[(r, c)]
-            removed = True
-        idx = sheet.table.model().index(r, c)
-        sheet.table.update(idx)
+        spark = sparklines.get((r, c)) or delegate_sp.get((r, c))
+        if spark is not None:
+            entries.append(((r, c), dict(spark)))
 
-    if not removed:
+    if not entries:
         QMessageBox.information(sheet, "Remove Sparkline",
                                 "No sparklines in the selected cells.")
+        return
+
+    from .undo_commands import DeleteSparklineCmd
+    cmd = DeleteSparklineCmd(sheet, entries)
+    undo = getattr(sheet, '_undo_stack', None)
+    if undo is not None:
+        undo.push(cmd)
+    else:
+        cmd.redo()
 
 
 def insert_sparklines_bulk(sheet):
@@ -913,19 +920,22 @@ def insert_sparklines_bulk(sheet):
                   "Win/Loss": "winloss"}[type_combo.currentText()]
     color = color_btn.color()
 
-    if not hasattr(sheet, '_cell_sparklines'):
-        sheet._cell_sparklines = {}
-
+    entries = []
     for col in range(left, right + 1):
         spark = {
             "col": col, "r1": top, "r2": bottom,
             "type": spark_type,
             "color": color,
         }
-        sheet._fmt_delegate._sparklines[(target_row, col)] = spark
-        sheet._cell_sparklines[(target_row, col)] = spark
-        idx = sheet.table.model().index(target_row, col)
-        sheet.table.update(idx)
+        entries.append(((target_row, col), spark))
+
+    from .undo_commands import InsertSparklineCmd
+    cmd = InsertSparklineCmd(sheet, entries)
+    undo = getattr(sheet, '_undo_stack', None)
+    if undo is not None:
+        undo.push(cmd)
+    else:
+        cmd.redo()
 
 
 def _idx_to_col_letter(idx):

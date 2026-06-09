@@ -3663,6 +3663,8 @@ class MainWindow(QMainWindow):
         chart.move(40 + offset, 40 + offset)
         sheet._charts.append(chart)
         sheet.data_changed.connect(chart._on_data_changed)
+        from .undo_commands import InsertChartCmd
+        self._undo_stack.push(InsertChartCmd(sheet, chart))
         chart.show()
         chart.raise_()
 
@@ -3719,6 +3721,8 @@ class MainWindow(QMainWindow):
             chart.move(40 + offset, 40 + offset)
             sheet._charts.append(chart)
             sheet.data_changed.connect(chart._on_data_changed)
+            from .undo_commands import InsertChartCmd
+            self._undo_stack.push(InsertChartCmd(sheet, chart))
             self._status_msg(f"Created {plot_type} chart", 3000)
             return
 
@@ -3769,6 +3773,8 @@ class MainWindow(QMainWindow):
             offset = len(sheet._charts) * 30
             chart.move(40 + offset, 40 + offset)
             sheet._charts.append(chart)
+            from .undo_commands import InsertChartCmd
+            self._undo_stack.push(InsertChartCmd(sheet, chart))
             self._status_msg(f"Created {plot_type} chart", 3000)
             return
 
@@ -3874,6 +3880,8 @@ class MainWindow(QMainWindow):
                 sheet._charts.append(chart)
                 # Connect data change signal for live updates.
                 sheet.data_changed.connect(chart._on_data_changed)
+                from .undo_commands import InsertChartCmd
+                self._undo_stack.push(InsertChartCmd(sheet, chart))
                 first_chart = chart
             else:
                 first_chart.add_series(x, y, label, plot_type,

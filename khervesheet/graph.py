@@ -1865,19 +1865,25 @@ class EmbeddedChart(QWidget):
     # ── Close ───────────────────────────────────────────────────────
     def _close_chart(self):
         self._clear_show_data()
-        if self._source_sheet:
+        sheet = self._source_sheet
+        if sheet:
+            undo = getattr(sheet, '_undo_stack', None)
+            if undo is not None:
+                from .undo_commands import DeleteChartCmd
+                undo.push(DeleteChartCmd(sheet, self))
+                return
+            # Fallback if no undo stack — hard delete.
             try:
-                self._source_sheet.data_changed.disconnect(
-                    self._on_data_changed)
+                sheet.data_changed.disconnect(self._on_data_changed)
             except (TypeError, RuntimeError):
                 pass
-            if hasattr(self._source_sheet, '_charts'):
+            if hasattr(sheet, '_charts'):
                 try:
-                    self._source_sheet._charts.remove(self)
+                    sheet._charts.remove(self)
                 except ValueError:
                     pass
-            if getattr(self._source_sheet, '_selected_chart', None) is self:
-                self._source_sheet._selected_chart = None
+            if getattr(sheet, '_selected_chart', None) is self:
+                sheet._selected_chart = None
         self.deleteLater()
 
     # ── Categorical X-axis support ──────────────────────────────────
@@ -2435,14 +2441,22 @@ class EmbeddedChart(QWidget):
 
     def _open_props_suite(self, start, axis_side="Bottom"):
         from .axis_dialog import AxisPropertiesDialog
-        from .general_properties import GeneralPropertiesDialog
+        from .general_properties import (GeneralPropertiesDialog,
+                                         default_general_state)
         nxt = start
         while nxt is not None:
             if nxt == "general":
+                old_state = default_general_state(self)
                 dlg = GeneralPropertiesDialog(self)
                 res = dlg.exec_()
                 if res == QDialog.Accepted:
+                    new_state = dlg._capture_state()
                     dlg.apply_to_chart(self)
+                    undo = self._get_undo_stack()
+                    if undo is not None:
+                        from .undo_commands import ChartPropertyCmd
+                        undo.push(ChartPropertyCmd(
+                            self, old_state, new_state))
                     nxt = None
                 elif res == GeneralPropertiesDialog.SWITCH_TO_SERIES:
                     nxt = "series"
@@ -2703,6 +2717,11 @@ class EmbeddedChart(QWidget):
 
     # ── Annotations (text / arrow / line) ────────────────────────────
 
+    def _get_undo_stack(self):
+        """Return the shared undo stack (from the source sheet), or None."""
+        sheet = self._source_sheet
+        return getattr(sheet, '_undo_stack', None) if sheet else None
+
     def _add_text_annotation(self):
         """Add a draggable text label at the centre of the current view."""
         text, ok = QInputDialog.getText(self, "Add Text", "Text:")
@@ -2716,8 +2735,13 @@ class EmbeddedChart(QWidget):
             fontsize=10, ha='center', va='center',
             bbox=dict(boxstyle='round,pad=0.3', fc='wheat', alpha=0.8))
         ann.draggable(True)
-        self._annotations.append({"type": "text", "artist": ann,
-                                   "text": text, "xy": (cx, cy)})
+        entry = {"type": "text", "artist": ann,
+                 "text": text, "xy": (cx, cy)}
+        self._annotations.append(entry)
+        undo = self._get_undo_stack()
+        if undo is not None:
+            from .undo_commands import AddAnnotationCmd
+            undo.push(AddAnnotationCmd(self, entry))
         self._canvas.draw_idle()
 
     def _add_arrow_annotation(self):
@@ -2737,10 +2761,15 @@ class EmbeddedChart(QWidget):
             bbox=dict(boxstyle='round,pad=0.2', fc='white', alpha=0.7)
             if text.strip() else None)
         ann.draggable(True)
-        self._annotations.append({"type": "arrow", "artist": ann,
-                                   "text": text,
-                                   "xy": (cx, cy),
-                                   "xytext": (cx + dx, cy + dy)})
+        entry = {"type": "arrow", "artist": ann,
+                 "text": text,
+                 "xy": (cx, cy),
+                 "xytext": (cx + dx, cy + dy)}
+        self._annotations.append(entry)
+        undo = self._get_undo_stack()
+        if undo is not None:
+            from .undo_commands import AddAnnotationCmd
+            undo.push(AddAnnotationCmd(self, entry))
         self._canvas.draw_idle()
 
     def _add_line_annotation(self):
@@ -2753,9 +2782,14 @@ class EmbeddedChart(QWidget):
             "", xy=(cx - dx, cy - dy), xytext=(cx + dx, cy + dy),
             arrowprops=dict(arrowstyle='-', color='black', lw=1.5))
         ann.draggable(True)
-        self._annotations.append({"type": "line", "artist": ann,
-                                   "xy": (cx - dx, cy - dy),
-                                   "xytext": (cx + dx, cy + dy)})
+        entry = {"type": "line", "artist": ann,
+                 "xy": (cx - dx, cy - dy),
+                 "xytext": (cx + dx, cy + dy)}
+        self._annotations.append(entry)
+        undo = self._get_undo_stack()
+        if undo is not None:
+            from .undo_commands import AddAnnotationCmd
+            undo.push(AddAnnotationCmd(self, entry))
         self._canvas.draw_idle()
 
     # ── Annotation selection / deletion / properties ──────────────────
@@ -2870,18 +2904,24 @@ class EmbeddedChart(QWidget):
         """Remove the currently selected annotation."""
         if self._selected_ann_idx < 0:
             return
+        idx = self._selected_ann_idx
+        a = self._annotations[idx]
+        undo = self._get_undo_stack()
+        if undo is not None:
+            from .undo_commands import DeleteAnnotationCmd
+            undo.push(DeleteAnnotationCmd(self, a, idx))
+            return
+        # Fallback — no undo stack.
         from .annotation_tools import clear_selection_artists
         clear_selection_artists(self._ann_select_artists, self._canvas)
         self._ann_select_artists = []
         self._ann_handles = []
         self._ann_dragging_handle = None
-        a = self._annotations.pop(self._selected_ann_idx)
-        artist = a["artist"]
+        self._annotations.pop(idx)
         try:
-            artist.remove()
+            a["artist"].remove()
         except Exception:
             pass
-        # Disconnect old-style dragger if present (legacy).
         dragger = a.get("dragger")
         if dragger is not None:
             try:
@@ -2896,12 +2936,18 @@ class EmbeddedChart(QWidget):
         if self._selected_ann_idx < 0:
             return
         a = self._annotations[self._selected_ann_idx]
+        from .undo_commands import _snapshot_annotation, ModifyAnnotationCmd
+        old_snap = _snapshot_annotation(a)
         if a["type"] == "text":
             from .annotation_tools import TextAnnotationDialog
             dlg = TextAnnotationDialog(a, self)
             if dlg.exec_() == QDialog.Accepted:
                 dlg.apply()
-                # Refresh selection visuals.
+                new_snap = _snapshot_annotation(a)
+                undo = self._get_undo_stack()
+                if undo is not None:
+                    undo.push(ModifyAnnotationCmd(
+                        self, a, old_snap, new_snap))
                 idx = self._selected_ann_idx
                 self._deselect_annotation()
                 self._select_annotation(idx)
@@ -2911,6 +2957,11 @@ class EmbeddedChart(QWidget):
             dlg = LineArrowPropertiesDialog(a, self)
             if dlg.exec_() == QDialog.Accepted:
                 dlg.apply()
+                new_snap = _snapshot_annotation(a)
+                undo = self._get_undo_stack()
+                if undo is not None:
+                    undo.push(ModifyAnnotationCmd(
+                        self, a, old_snap, new_snap))
                 idx = self._selected_ann_idx
                 self._deselect_annotation()
                 self._select_annotation(idx)
