@@ -727,6 +727,27 @@ and <code>def</code>s produce no output on their own.</p>
     <td>a value from another sheet</td></tr>
 </table>
 
+<h3>Writing back with <code>ks_set()</code></h3>
+<p>Push values from Python into any cell or range
+(<code>write()</code> is an alias):</p>
+<table border="1" cellpadding="4" cellspacing="0">
+<tr><th align="left"><code>ks_set("C1", 42)</code></th>
+    <td>write a scalar into C1</td></tr>
+<tr><th align="left"><code>ks_set("D1:D50", arr)</code></th>
+    <td>write a 1-D array down a column</td></tr>
+<tr><th align="left"><code>ks_set("A1:C3", matrix)</code></th>
+    <td>write a 2-D array into a block</td></tr>
+</table>
+<p>The cell running the code is never overwritten.
+A scalar fills the whole range; a list/array fills row-by-row.</p>
+
+<h3>Embedding images with <code>ks_image()</code></h3>
+<p>Return an image to embed it next to the cell, just like a plot:</p>
+<pre>=PY
+ks_image("https://example.com/photo.jpg")</pre>
+<p>Accepts a URL, local file path, raw bytes, a PIL image, or a
+NumPy H&times;W&times;3 uint8 array.</p>
+
 <h3>What a cell can output</h3>
 <ul>
 <li><b>A number or text</b> &mdash; shown directly in the cell.</li>
@@ -737,9 +758,11 @@ elsewhere with <code>ks("C1")</code>. To spill an array instead, end with
 <code>list(my_array)</code> or <code>my_array.tolist()</code>.</li>
 <li><b>A matplotlib figure</b> &mdash; embedded as a picture next to the
 cell.</li>
+<li><b>An image</b> (via <code>ks_image()</code> or returning a QPixmap/PIL
+image) &mdash; embedded as a picture next to the cell.</li>
 </ul>
 
-<h3>Shared namespace</h3>
+<h3>Shared namespace &amp; UDFs</h3>
 <p>All Python cells in a workbook share one namespace, so a function defined
 in one cell is callable from any other:</p>
 <pre>=PY
@@ -747,6 +770,17 @@ def celsius_to_f(c):
     return c * 9 / 5 + 32</pre>
 <pre>=PY
 celsius_to_f(ks("A1"))</pre>
+<p><b>User-defined functions (UDFs):</b> Any function you <code>def</code>
+in a <code>=PY</code> cell can also be called from an ordinary formula.
+For example, after defining <code>celsius_to_f</code> above, you can write
+<code>=CELSIUS_TO_F(A1)</code> in any cell &mdash; case-insensitive,
+and built-in functions are never overridden.</p>
+
+<h3>Python loop (auto-refresh)</h3>
+<p>Right-click a <code>=PY</code> cell &rarr; <b>Python loop</b> to re-run
+it on an interval (0.1&nbsp;s, 1&nbsp;s, 5&nbsp;s, 30&nbsp;s, &hellip; up to
+24&nbsp;hours, or a custom value). The PY badge shows a refresh icon and the
+period. This is handy for live data, clocks, animations, or polling.</p>
 
 <h3>Examples &mdash; calculations</h3>
 <pre>=PY
@@ -757,6 +791,12 @@ np.mean(ks("A1:A10"))            # average of a column</pre>
 <pre>=PY
 import numpy as np
 np.linspace(0, 1, 100)           # stored as an object in the cell</pre>
+
+<h3>Examples &mdash; write back</h3>
+<pre>=PY
+import numpy as np
+ks_set("D1:D50", np.cumsum(ks("A1:A50")))
+"written"</pre>
 
 <h3>Examples &mdash; matplotlib plots</h3>
 <p>Build a figure and return it (or just create one &mdash; KherveSheet
@@ -807,13 +847,21 @@ plt.gcf()</pre>
 <ul>
 <li>Editing a cell that <code>ks()</code> reads re-runs dependent Python
 cells automatically.</li>
+<li><code>print()</code> output is captured and shown in the cell tooltip
+(hover the cell to see it).</li>
 <li>Errors show <code>#PYERR</code> &mdash; hover the cell for the message.</li>
+<li>Each cell has a <b>30-second timeout</b>. An infinite loop is
+automatically stopped; you will see a <code>TimeoutError</code>.</li>
 <li>Code is saved in the <code>.ksheet</code> file. Reopening a file with
 Python cells asks for permission before running it.</li>
 <li>Ready to use: <code>math</code>, <code>numpy as np</code>,
 <code>matplotlib.pyplot as plt</code>, and <code>pandas as pd</code> /
 <code>scipy</code> if installed. You can <code>import</code> anything else
 you have.</li>
+<li>Click the pop-out button next to the PY badge for a larger editor with
+line numbers, autocomplete (Ctrl+Space), comment toggle (Ctrl+/), and a
+<b>Pick cell</b> button to click-insert <code>ks("&hellip;")</code>
+references.</li>
 <li>The AI assistant can also write Python cells for you &mdash; just ask it
 to "write a Python cell that&hellip;".</li>
 </ul>
@@ -862,7 +910,7 @@ _COMPLETE_KEYWORDS = (
     "range len sum min max abs round int float str list dict tuple set "
     "enumerate zip sorted reversed").split()
 _COMPLETE_HINTS = [
-    "ks", "ks_set", "write", "np", "plt", "pd",
+    "ks", "ks_set", "ks_image", "write", "np", "plt", "pd",
     "np.array", "np.linspace", "np.arange", "np.zeros", "np.ones",
     "np.mean", "np.sum", "np.std", "np.polyfit", "np.gradient",
     "plt.plot", "plt.scatter", "plt.bar", "plt.hist", "plt.gcf",
@@ -1174,6 +1222,15 @@ PY_SNIPPETS = {
         "plt.gcf()",
     "Define a helper function":
         "def my_func(x):\n    return x * 2\n",
+    "Write back to the grid (ks_set)":
+        "import numpy as np\n"
+        "ks_set(\"D1:D50\", np.cumsum(ks(\"A1:A50\")))\n"
+        "\"written\"",
+    "Embed an image (ks_image)":
+        "ks_image(\"https://example.com/photo.jpg\")",
+    "Live clock (use with Python loop)":
+        "import datetime\n"
+        "datetime.datetime.now().strftime(\"%H:%M:%S\")",
 }
 
 
