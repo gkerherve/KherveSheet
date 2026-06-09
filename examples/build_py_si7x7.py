@@ -89,14 +89,18 @@ def build() -> str:
     wb = Workbook(min_rows=212, min_cols=205)
     s = wb.add_sheet("Si(111) 7x7")
 
-    # Title on row 0 only (no subtitle merge — B2 holds the =PY cell).
+    # Big title on row 0 (merged across the top).
     s.set(0, 0, "Si(111)-(7x7) Reconstruction")
     s.fmt(0, 0, bold=True, font_size=18, font_color=PALETTE["header"])
     s.merge(0, 0, 1, 6)
 
-    # Label pointing at the =PY program in B2.
+    # Row 1: A2 label points at the =PY program in B2; subtitle sits to
+    # the right (C2:F2) so it never overlaps the B2 code cell.
     s.set(1, 0, "=PY  ->")
     s.fmt(1, 0, bold=True, align="right")
+    s.set(1, 2, "An STM-like intensity matrix written to B10")
+    s.fmt(1, 2, italic=True, font_color="#555555")
+    s.merge(1, 2, 1, 4)
 
     inputs = [
         ("Matrix size  N  (<= 200)", 200),
