@@ -85,7 +85,7 @@ class _FormulaEdit(QPlainTextEdit):
             # Bake to a pixmap (themed icons can render blank on tool
             # buttons — see themed-icon-blank-gotcha).
             pm = icons.themed_icon(
-                "mdi.open-in-new", color="#3776ab").pixmap(18, 18)
+                "mdi.open-in-new", color="#3776ab").pixmap(22, 22)
             if not pm.isNull():
                 self._pop_btn.setIcon(QIcon(pm))
             else:
@@ -113,11 +113,11 @@ class _FormulaEdit(QPlainTextEdit):
         try:
             from . import icons
             pm_period = icons.themed_icon(
-                "mdi.timer-outline", color="#3776ab").pixmap(18, 18)
+                "mdi.timer-outline", color="#3776ab").pixmap(22, 22)
             pm_play = icons.themed_icon(
-                "mdi.play", color="#27ae60").pixmap(18, 18)
+                "mdi.play", color="#27ae60").pixmap(22, 22)
             pm_stop = icons.themed_icon(
-                "mdi.stop", color="#c0392b").pixmap(18, 18)
+                "mdi.stop", color="#c0392b").pixmap(22, 22)
             if not pm_period.isNull():
                 self._loop_period_btn.setIcon(QIcon(pm_period))
             else:
@@ -209,19 +209,20 @@ class _FormulaEdit(QPlainTextEdit):
         x = self.width() - bw - margin
         self._py_badge.setGeometry(x, 0, bw, self.height())
         # Position buttons from right to left: pop-out, play/stop, period.
-        btn_size = 24
+        btn_size = 28
         bx = x - btn_size - 2
         self._pop_btn.setFixedSize(btn_size, btn_size)
-        self._pop_btn.move(bx, 1)
-        bx -= btn_size + 1
+        self._pop_btn.move(bx, max(0, (self.height() - btn_size) // 2))
+        bx -= btn_size + 2
         # Play/stop share the same position (only one visible at a time).
+        vy = max(0, (self.height() - btn_size) // 2)
         self._loop_play_btn.setFixedSize(btn_size, btn_size)
-        self._loop_play_btn.move(bx, 1)
+        self._loop_play_btn.move(bx, vy)
         self._loop_stop_btn.setFixedSize(btn_size, btn_size)
-        self._loop_stop_btn.move(bx, 1)
-        bx -= btn_size + 1
+        self._loop_stop_btn.move(bx, vy)
+        bx -= btn_size + 2
         self._loop_period_btn.setFixedSize(btn_size, btn_size)
-        self._loop_period_btn.move(bx, 1)
+        self._loop_period_btn.move(bx, vy)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -2410,7 +2411,11 @@ class SheetWidget(QWidget):
             self, code, ref,
             run_cb=lambda c: self._run_python_from_dialog(row, col, c),
             help_cb=self._py_help,
-            pick_cb=self._set_py_pick)
+            pick_cb=self._set_py_pick,
+            loop_period_cb=self._on_loop_period,
+            loop_play_cb=self._on_loop_play,
+            loop_stop_cb=self._on_loop_stop,
+            loop_active=(row, col) in self._py_loops)
         # Expose the runtime for the editor's autocomplete namespace.
         dlg._py_runtime_ref = self._py_runtime()
         self._py_dialog = dlg
@@ -2550,6 +2555,9 @@ class SheetWidget(QWidget):
             secs = 1.0
         self._set_py_loop(row, col, secs)
         self._formula_bar.set_loop_active(True)
+        dlg = getattr(self, "_py_dialog", None)
+        if dlg is not None:
+            dlg.set_loop_active(True)
 
     def _on_loop_stop(self):
         """Stop the loop for the current =PY cell."""
@@ -2559,6 +2567,9 @@ class SheetWidget(QWidget):
         row, col = cur.row(), cur.column()
         self._set_py_loop(row, col, None)
         self._formula_bar.set_loop_active(False)
+        dlg = getattr(self, "_py_dialog", None)
+        if dlg is not None:
+            dlg.set_loop_active(False)
 
     def _py_loop_tick(self):
         """Re-run any =PY loop cell whose interval has elapsed."""

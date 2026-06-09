@@ -19,7 +19,7 @@ the Free Software Foundation, either version 3 of the License, or
 import ast
 import re
 
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QSize, pyqtSignal
 from PyQt5.QtGui import (
     QColor, QFont, QSyntaxHighlighter, QTextCharFormat,
 )
@@ -1244,16 +1244,22 @@ class PythonCellDialog(QDialog):
     """
 
     def __init__(self, parent, code, cell_ref, run_cb, help_cb=None,
-                 pick_cb=None):
+                 pick_cb=None, loop_period_cb=None, loop_play_cb=None,
+                 loop_stop_cb=None, loop_active=False):
         super().__init__(parent)
         from PyQt5.QtWidgets import (
             QVBoxLayout, QLabel, QPushButton, QToolBar, QToolButton,
             QMenu, QSplitter, QWidget, QHBoxLayout,
         )
         from PyQt5.QtWidgets import QAction
+        from PyQt5.QtGui import QIcon
         self._run_cb = run_cb
         self._help_cb = help_cb
         self._pick_cb = pick_cb
+        self._loop_period_cb = loop_period_cb
+        self._loop_play_cb = loop_play_cb
+        self._loop_stop_cb = loop_stop_cb
+        self._loop_active = loop_active
         self.setWindowTitle(f"Python — {cell_ref}" if cell_ref
                             else "Python cell")
         self.resize(760, 560)
@@ -1261,21 +1267,32 @@ class PythonCellDialog(QDialog):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
+        # Helper: bake an icon to a pixmap for reliable rendering.
+        def _icon(name, color="#3776ab"):
+            try:
+                from . import icons
+                pm = icons.themed_icon(name, color=color).pixmap(20, 20)
+                return QIcon(pm) if not pm.isNull() else QIcon()
+            except Exception:
+                return QIcon()
+
         # ── Toolbar ──────────────────────────────────────────────────
         tb = QToolBar()
+        tb.setIconSize(QSize(20, 20))
         tb.setStyleSheet("QToolBar{border:0;padding:3px;spacing:3px;}")
-        run_act = QAction("▶ Run", self)
+        run_act = QAction(_icon("mdi.play", "#27ae60"), "Run", self)
         run_act.setShortcut("Ctrl+Return")
         run_act.setToolTip("Run and apply to the cell (Ctrl+Enter)")
         run_act.triggered.connect(self._run)
         tb.addAction(run_act)
         tb.addSeparator()
-        ks_act = QAction("Insert ks()", self)
+        ks_act = QAction(_icon("mdi.table-arrow-left"), "ks()", self)
         ks_act.setToolTip("Insert a cell reference: ks(\"A1\")")
         ks_act.triggered.connect(self._insert_ks)
         tb.addAction(ks_act)
         if pick_cb is not None:
-            self._pick_act = QAction("Pick cell", self)
+            self._pick_act = QAction(
+                _icon("mdi.cursor-default-click-outline"), "Pick", self)
             self._pick_act.setCheckable(True)
             self._pick_act.setToolTip(
                 "Click a grid cell to insert its ks(\"…\") reference")
@@ -1283,7 +1300,8 @@ class PythonCellDialog(QDialog):
             tb.addAction(self._pick_act)
         # Snippets menu.
         snip_btn = QToolButton()
-        snip_btn.setText("Snippets ▾")
+        snip_btn.setIcon(_icon("mdi.code-braces"))
+        snip_btn.setToolTip("Snippets")
         snip_btn.setPopupMode(QToolButton.InstantPopup)
         menu = QMenu(snip_btn)
         for name, body in PY_SNIPPETS.items():
@@ -1292,14 +1310,33 @@ class PythonCellDialog(QDialog):
                 lambda _=False, b=body: self._insert_snippet(b))
         snip_btn.setMenu(menu)
         tb.addWidget(snip_btn)
-        cmt_act = QAction("Comment", self)
+        cmt_act = QAction(_icon("mdi.comment-text-outline"), "Comment", self)
         cmt_act.setShortcut("Ctrl+/")
         cmt_act.setToolTip("Toggle line comments (Ctrl+/)")
         cmt_act.triggered.connect(lambda: self.editor.toggle_comment())
         tb.addAction(cmt_act)
         tb.addSeparator()
+        # Loop controls.
+        period_act = QAction(
+            _icon("mdi.timer-outline"), "Period", self)
+        period_act.setToolTip("Set loop period (auto-refresh interval)")
+        period_act.triggered.connect(self._on_period)
+        tb.addAction(period_act)
+        self._play_act = QAction(
+            _icon("mdi.play-circle-outline", "#27ae60"), "Play", self)
+        self._play_act.setToolTip("Start loop")
+        self._play_act.triggered.connect(self._on_play)
+        tb.addAction(self._play_act)
+        self._stop_act = QAction(
+            _icon("mdi.stop-circle-outline", "#c0392b"), "Stop", self)
+        self._stop_act.setToolTip("Stop loop")
+        self._stop_act.triggered.connect(self._on_stop)
+        tb.addAction(self._stop_act)
+        self._update_loop_actions()
+        tb.addSeparator()
         if help_cb is not None:
-            help_act = QAction("Help", self)
+            help_act = QAction(
+                _icon("mdi.help-circle-outline"), "Help", self)
             help_act.setToolTip("Open the Python examples")
             help_act.triggered.connect(lambda: self._help_cb())
             tb.addAction(help_act)
@@ -1405,3 +1442,29 @@ class PythonCellDialog(QDialog):
     def _insert_snippet(self, body):
         self.editor.textCursor().insertText(body)
         self.editor.setFocus()
+
+    # ── Loop controls ────────────────────────────────────────────────
+
+    def _update_loop_actions(self):
+        self._play_act.setVisible(not self._loop_active)
+        self._stop_act.setVisible(self._loop_active)
+
+    def set_loop_active(self, active: bool):
+        self._loop_active = active
+        self._update_loop_actions()
+
+    def _on_period(self):
+        if self._loop_period_cb:
+            self._loop_period_cb()
+
+    def _on_play(self):
+        if self._loop_play_cb:
+            self._loop_play_cb()
+        self._loop_active = True
+        self._update_loop_actions()
+
+    def _on_stop(self):
+        if self._loop_stop_cb:
+            self._loop_stop_cb()
+        self._loop_active = False
+        self._update_loop_actions()
