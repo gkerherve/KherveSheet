@@ -2096,13 +2096,17 @@ class EmbeddedChart(QWidget):
         except Exception:
             pass
         # Reset data limits from scratch for all artist types.
-        ax.dataLim.set_points(np.array(
-            [[np.inf, np.inf], [-np.inf, -np.inf]]))
-        for s in self._series:
-            sx, sy = s.get("x", []), s.get("y", [])
-            if len(sx) and len(sy):
-                ax.update_datalim(np.column_stack([sx, sy]))
-        ax.autoscale_view(True, True, True)
+        # Skip for heatmap / 3D surface — imshow/plot_surface manage
+        # their own extent and y is a 2D matrix, not a 1D series.
+        skip_types = ("Heatmap", "3D Surface")
+        if not any(s.get("plot_type") in skip_types for s in self._series):
+            ax.dataLim.set_points(np.array(
+                [[np.inf, np.inf], [-np.inf, -np.inf]]))
+            for s in self._series:
+                sx, sy = s.get("x", []), s.get("y", [])
+                if len(sx) and len(sy):
+                    ax.update_datalim(np.column_stack([sx, sy]))
+            ax.autoscale_view(True, True, True)
         if is_time:
             self._apply_time_x()
         elif cat_labels is not None:
@@ -2131,13 +2135,16 @@ class EmbeddedChart(QWidget):
             self._update_artist(s, x, y)
 
         # Reset data limits from scratch so autoscale sees all artists.
-        ax.dataLim.set_points(np.array(
-            [[np.inf, np.inf], [-np.inf, -np.inf]]))
-        for s in self._series:
-            x, y = s.get("x", []), s.get("y", [])
-            if len(x) and len(y):
-                ax.update_datalim(np.column_stack([x, y]))
-        ax.autoscale_view(True, True, True)
+        # Skip for heatmap / 3D surface — y is 2D, not a 1D series.
+        skip_types = ("Heatmap", "3D Surface")
+        if not any(s.get("plot_type") in skip_types for s in self._series):
+            ax.dataLim.set_points(np.array(
+                [[np.inf, np.inf], [-np.inf, -np.inf]]))
+            for s in self._series:
+                x, y = s.get("x", []), s.get("y", [])
+                if len(x) and len(y):
+                    ax.update_datalim(np.column_stack([x, y]))
+            ax.autoscale_view(True, True, True)
         if is_time:
             self._apply_time_x()
         elif cat_labels is not None:
