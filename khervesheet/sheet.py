@@ -5019,6 +5019,28 @@ class SheetWidget(QWidget):
                     nv = _nums([x])
                 return [sl * v + ic for v in nv]
 
+            # ── Remaining Lookup helpers ────────────────────────
+            def _TRANSPOSE(arr):
+                if not isinstance(arr, (list, tuple)):
+                    return arr
+                if arr and isinstance(arr[0], (list, tuple)):
+                    return [list(row) for row in zip(*arr)]
+                # 1-D → column vector
+                return [[v] for v in arr]
+
+            def _AREAS(*args):
+                # Each contiguous range argument counts as one area.
+                return len(args) if args else 1
+
+            def _INDIRECT(ref, a1=True):
+                # Dynamic reference resolution is not supported in the
+                # compiled-expression engine; return the string as-is.
+                return str(ref)
+
+            def _OFFSET(ref, rows, cols, height=None, width=None):
+                # Dynamic reference shifting is not supported; stub.
+                return ref
+
             ns = {"__builtins__": {}, "math": math, "np": np,
                   "abs": abs, "round": round, "int": int, "float": float,
                   "sum": _SUM, "min": _MINF, "max": _MAXF, "len": len,
@@ -5131,6 +5153,8 @@ class SheetWidget(QWidget):
                   "SWITCH": _SWITCH,
                   "VLOOKUP": _VLOOKUP, "HLOOKUP": _HLOOKUP,
                   "XLOOKUP": _XLOOKUP, "LOOKUP": _LOOKUP,
+                  "TRANSPOSE": _TRANSPOSE, "AREAS": _AREAS,
+                  "INDIRECT": _INDIRECT, "OFFSET": _OFFSET,
                   # Statistical
                   "MEDIAN": _MEDIAN,
                   "VAR": _VAR, "VARP": _VARP,
@@ -5287,6 +5311,7 @@ class SheetWidget(QWidget):
         "row", "column", "rows", "columns", "choose", "address",
         "match", "index", "switch",
         "vlookup", "hlookup", "xlookup", "lookup",
+        "transpose", "areas", "indirect", "offset",
         # Statistical
         "median", "var", "varp", "stdevp",
         "vara", "varpa", "stdeva", "stdevpa",
