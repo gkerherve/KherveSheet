@@ -1028,6 +1028,9 @@ class EmbeddedChart(QWidget):
             d["surface3d_config"] = s3c
         gp = getattr(self, '_general_props', None)
         if gp:
+            # Keep figure size in sync with actual widget dimensions.
+            gp["fig_width"] = self.width()
+            gp["fig_height"] = self.height()
             d["general_props"] = gp
         if self._header_row:
             d["header_row"] = True
@@ -2557,6 +2560,7 @@ class EmbeddedChart(QWidget):
         size_menu = menu.addMenu("Size")
         # General screen sizes
         for label, w, h in (
+            ("Square (400\u00d7400)", 400, 400),
             ("Small (320\u00d7240)", 320, 240),
             ("Medium (480\u00d7320)", 480, 320),
             ("Large (640\u00d7480)", 640, 480),

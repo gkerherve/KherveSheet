@@ -20,8 +20,8 @@ from matplotlib.colors import to_hex
 
 from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox,
-    QLineEdit, QCheckBox, QComboBox, QDoubleSpinBox, QPushButton,
-    QDialogButtonBox, QWidget,
+    QLineEdit, QCheckBox, QComboBox, QDoubleSpinBox, QSpinBox,
+    QPushButton, QDialogButtonBox, QWidget,
 )
 
 
@@ -157,6 +157,14 @@ def apply_general_state(chart, state):
             bottom=float(state.get("margin_bottom", 0.15)),
         )
 
+    # ── Figure size ──────────────────────────────────────────────────
+    fig_w = state.get("fig_width")
+    fig_h = state.get("fig_height")
+    if fig_w is not None and fig_h is not None:
+        w, h = int(fig_w), int(fig_h)
+        chart.resize(w, h)
+        chart._aspect_ratio = w / max(h, 1)
+
     keep = bool(state.get("keep_ratio", False))
     chart._keep_ratio = keep
     if keep:
@@ -238,7 +246,42 @@ class GeneralPropertiesDialog(QDialog):
 
         left_col.addStretch()
 
-        # ── RIGHT COLUMN: Layout ────────────────────────────────────
+        # ── RIGHT COLUMN: Figure Size ──────────────────────────────
+        size_box = QGroupBox("Figure Size")
+        sform = QFormLayout(size_box)
+        self.width_spin = QSpinBox()
+        self.width_spin.setRange(100, 4000)
+        self.width_spin.setSingleStep(10)
+        self.width_spin.setSuffix(" px")
+        self.width_spin.setValue(
+            int(state.get("fig_width", chart.width())))
+        sform.addRow("Width:", self.width_spin)
+        self.height_spin = QSpinBox()
+        self.height_spin.setRange(100, 4000)
+        self.height_spin.setSingleStep(10)
+        self.height_spin.setSuffix(" px")
+        self.height_spin.setValue(
+            int(state.get("fig_height", chart.height())))
+        sform.addRow("Height:", self.height_spin)
+        # Preset buttons
+        preset_row = QHBoxLayout()
+        for label, pw, ph in (
+            ("Square", 400, 400),
+            ("Small", 320, 240),
+            ("Medium", 480, 320),
+            ("Large", 640, 480),
+        ):
+            btn = QPushButton(label)
+            btn.setFixedHeight(24)
+            btn.clicked.connect(
+                lambda _=False, w=pw, h=ph: (
+                    self.width_spin.setValue(w),
+                    self.height_spin.setValue(h)))
+            preset_row.addWidget(btn)
+        sform.addRow(preset_row)
+        right_col.addWidget(size_box)
+
+        # ── Layout ──────────────────────────────────────────────────
         layout_box = QGroupBox("Layout")
         lform = QFormLayout(layout_box)
         self.tight_check = QCheckBox("Tight layout")
@@ -376,6 +419,8 @@ class GeneralPropertiesDialog(QDialog):
             "sketch_randomness": self.sketch_randomness.value(),
             "tight_layout": self.tight_check.isChecked(),
             "keep_ratio": self.ratio_check.isChecked(),
+            "fig_width": self.width_spin.value(),
+            "fig_height": self.height_spin.value(),
         }
         for k, spin in self._margin_spins.items():
             state[f"margin_{k}"] = spin.value()
