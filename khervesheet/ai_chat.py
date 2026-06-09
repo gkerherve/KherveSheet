@@ -644,7 +644,7 @@ class AiChatDock(QDockWidget):
         # Welcome bubble.
         welcome = ChatBubble("assistant",
                              "Hello! I can help you edit your spreadsheet. "
-                             "Try asking me to create a template, fill data, "
+                             "Try asking me to write a =PY program, "
                              "format cells, or insert a chart. You can also "
                              "paste a screenshot or image (Ctrl+V) for me to "
                              "look at.\n"
