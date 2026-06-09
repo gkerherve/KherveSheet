@@ -92,7 +92,7 @@ def default_general_state(chart):
                                         _SKETCH_DEFAULTS["length"])),
         "sketch_randomness": float(getattr(chart, "_sketch_randomness",
                                             _SKETCH_DEFAULTS["randomness"])),
-        "tight_layout": bool(getattr(chart, "_tight_layout", False)),
+        "tight_layout": bool(getattr(chart, "_tight_layout", True)),
         "keep_ratio": bool(getattr(chart, "_keep_ratio", False)),
         "margin_left": sp.left,
         "margin_right": sp.right,
@@ -293,8 +293,15 @@ class GeneralPropertiesDialog(QDialog):
         right_col.addWidget(layout_box)
 
         # ── Margins ─────────────────────────────────────────────────
-        margin_box = QGroupBox("Margins")
-        mform = QFormLayout(margin_box)
+        self._margin_box = QGroupBox("Margins")
+        mform = QFormLayout(self._margin_box)
+        from PyQt5.QtWidgets import QLabel
+        self._margin_hint = QLabel(
+            "Margins are computed automatically when\n"
+            "Tight Layout is enabled. Uncheck it above\n"
+            "to set margins manually.")
+        self._margin_hint.setStyleSheet("color: gray; font-style: italic;")
+        mform.addRow(self._margin_hint)
         sp = chart._figure.subplotpars
         self._margin_spins = {}
         for name, val in (
@@ -310,12 +317,15 @@ class GeneralPropertiesDialog(QDialog):
             spin.setValue(float(val))
             mform.addRow(name.capitalize() + ":", spin)
             self._margin_spins[name] = spin
-        right_col.addWidget(margin_box)
+        right_col.addWidget(self._margin_box)
 
         # Disable margin spinboxes when tight layout is on.
-        self.tight_check.toggled.connect(
-            lambda on: margin_box.setEnabled(not on))
-        margin_box.setEnabled(not self.tight_check.isChecked())
+        def _toggle_margins(on):
+            self._margin_hint.setVisible(on)
+            for s in self._margin_spins.values():
+                s.setEnabled(not on)
+        self.tight_check.toggled.connect(_toggle_margins)
+        _toggle_margins(self.tight_check.isChecked())
 
         # ── Effects ─────────────────────────────────────────────────
         fx_box = QGroupBox("Effects")

@@ -491,7 +491,7 @@ class EmbeddedChart(QWidget):
         self._pan_enabled = False     # user must enable via right-click
         self._keep_ratio = False      # fixed aspect-ratio resize
         self._aspect_ratio = 480 / 320  # w/h ratio at creation
-        self._tight_layout = False      # tight layout off by default
+        self._tight_layout = True       # tight layout on by default
         self._annotations = []            # user text/arrow/line annotations
         self._selected_ann_idx = -1       # index of selected annotation
         self._ann_select_artists = []     # visual selection markers
