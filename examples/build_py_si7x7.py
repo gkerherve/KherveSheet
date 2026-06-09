@@ -133,7 +133,8 @@ def build() -> str:
     s.set(9, 0, "B10 ->")
     s.fmt(9, 0, bold=True, align="right")
 
-    out = os.path.join(_REPO, "Si(111) 7x7.ksheet")
+    out = os.path.join(_REPO, "examples", "python", "Materials Science",
+                       "Si(111) 7x7.ksheet")
     wb.save(out)
     return out
 
