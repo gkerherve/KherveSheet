@@ -3209,6 +3209,107 @@ class SheetWidget(QWidget):
             def _WEEKDAY(d):
                 return _dt.date.fromisoformat(str(d)).isoweekday()
 
+            def _DATEVALUE(d):
+                return (_dt.date.fromisoformat(str(d)).toordinal()
+                        - _dt.date(1899, 12, 30).toordinal())
+
+            def _TIMEVALUE(t):
+                tm = _dt.time.fromisoformat(str(t))
+                return ((tm.hour * 3600 + tm.minute * 60 + tm.second)
+                        / 86400)
+
+            def _EDATE(start, months):
+                d = _dt.date.fromisoformat(str(start))
+                m = int(float(months))
+                new_month = d.month + m
+                new_year = d.year + (new_month - 1) // 12
+                new_month = (new_month - 1) % 12 + 1
+                import calendar
+                max_day = calendar.monthrange(new_year, new_month)[1]
+                return _dt.date(new_year, new_month,
+                                min(d.day, max_day)).isoformat()
+
+            def _EOMONTH(start, months):
+                import calendar
+                d = _dt.date.fromisoformat(str(start))
+                m = int(float(months))
+                new_month = d.month + m
+                new_year = d.year + (new_month - 1) // 12
+                new_month = (new_month - 1) % 12 + 1
+                last = calendar.monthrange(new_year, new_month)[1]
+                return _dt.date(new_year, new_month, last).isoformat()
+
+            def _WEEKNUM(d, return_type=1):
+                dt = _dt.date.fromisoformat(str(d))
+                return dt.isocalendar()[1]
+
+            def _ISOWEEKNUM(d):
+                return _dt.date.fromisoformat(str(d)).isocalendar()[1]
+
+            def _YEARFRAC(start, end, basis=0):
+                d1 = _dt.date.fromisoformat(str(start))
+                d2 = _dt.date.fromisoformat(str(end))
+                days = abs((d2 - d1).days)
+                return days / 365.25
+
+            def _DAYS360(start, end, method=False):
+                d1 = _dt.date.fromisoformat(str(start))
+                d2 = _dt.date.fromisoformat(str(end))
+                y1, m1, dy1 = d1.year, d1.month, min(d1.day, 30)
+                y2, m2, dy2 = d2.year, d2.month, d2.day
+                if not method:  # US method
+                    if dy1 == 30 and dy2 == 31:
+                        dy2 = 30
+                    if dy1 == 31:
+                        dy1 = 30
+                else:  # European
+                    dy1 = min(dy1, 30)
+                    dy2 = min(dy2, 30)
+                return ((y2 - y1) * 360 + (m2 - m1) * 30
+                        + (dy2 - dy1))
+
+            def _NETWORKDAYS(start, end, holidays=None):
+                d1 = _dt.date.fromisoformat(str(start))
+                d2 = _dt.date.fromisoformat(str(end))
+                hols = set()
+                if holidays:
+                    for h in _flatten([holidays]):
+                        try:
+                            hols.add(_dt.date.fromisoformat(str(h)))
+                        except Exception:
+                            pass
+                count = 0
+                step = 1 if d2 >= d1 else -1
+                d = d1
+                while ((step == 1 and d <= d2)
+                       or (step == -1 and d >= d2)):
+                    if d.weekday() < 5 and d not in hols:
+                        count += 1
+                    d += _dt.timedelta(days=step)
+                return count * step
+
+            def _WORKDAY(start, days, holidays=None):
+                d = _dt.date.fromisoformat(str(start))
+                n = int(float(days))
+                hols = set()
+                if holidays:
+                    for h in _flatten([holidays]):
+                        try:
+                            hols.add(_dt.date.fromisoformat(str(h)))
+                        except Exception:
+                            pass
+                step = 1 if n > 0 else -1
+                count = 0
+                while count < abs(n):
+                    d += _dt.timedelta(days=step)
+                    if d.weekday() < 5 and d not in hols:
+                        count += 1
+                return d.isoformat()
+
+            # NETWORKDAYS.INTL / WORKDAY.INTL aliased to basic
+            _NETWORKDAYS_INTL = _NETWORKDAYS
+            _WORKDAY_INTL = _WORKDAY
+
             # ── Text helpers ─────────────────────────────────────
             def _LEFT(t, n=1):
                 return str(t)[:int(n)]
@@ -3275,6 +3376,69 @@ class SheetWidget(QWidget):
 
             def _TEXT(v, fmt):
                 return format(float(v), str(fmt))
+
+            def _CHAR(n):
+                return chr(int(float(n)))
+
+            def _CODE(t):
+                s = str(t)
+                return ord(s[0]) if s else 0
+
+            def _CLEAN(t):
+                return "".join(c for c in str(t) if ord(c) >= 32)
+
+            def _T(v):
+                return str(v) if isinstance(v, str) else ""
+
+            def _DOLLAR_F(n, decimals=2):
+                return f"${float(n):,.{int(decimals)}f}"
+
+            def _FIXED(n, decimals=2, no_commas=False):
+                s = f"{float(n):.{int(decimals)}f}"
+                if not no_commas:
+                    parts = s.split(".")
+                    intpart = parts[0]
+                    neg = intpart.startswith("-")
+                    if neg:
+                        intpart = intpart[1:]
+                    groups = []
+                    while intpart:
+                        groups.append(intpart[-3:])
+                        intpart = intpart[:-3]
+                    result = ",".join(reversed(groups))
+                    if neg:
+                        result = "-" + result
+                    if len(parts) > 1:
+                        result += "." + parts[1]
+                    return result
+                return s
+
+            def _NUMBERVALUE(text, dec_sep=".", grp_sep=","):
+                s = (str(text).replace(str(grp_sep), "")
+                     .replace(str(dec_sep), "."))
+                return float(s)
+
+            def _SEARCH(find, within, start=1):
+                pos = (str(within).lower()
+                       .find(str(find).lower(), int(start) - 1))
+                return pos + 1 if pos >= 0 else "#VALUE!"
+
+            def _TEXTJOIN(delimiter, ignore_empty, *args):
+                d = str(delimiter)
+                vals = _flatten(args)
+                if ignore_empty:
+                    vals = [str(v) for v in vals
+                            if v not in ("", None)]
+                else:
+                    vals = [str(v) for v in vals]
+                return d.join(vals)
+
+            def _UNICHAR(n):
+                return chr(int(float(n)))
+
+            def _UNICODE(t):
+                s = str(t)
+                return ord(s[0]) if s else 0
 
             # ── Logical helpers ──────────────────────────────────
             def _IF(cond, true_val, false_val=""):
@@ -3513,6 +3677,191 @@ class SheetWidget(QWidget):
 
             def _RADIANS(d):
                 return math.radians(float(d))
+
+            def _ACOT(x):
+                return math.atan(1.0 / float(x))
+
+            def _ACOTH(x):
+                v = float(x)
+                return 0.5 * math.log((v + 1) / (v - 1))
+
+            def _COT(x):
+                return 1.0 / math.tan(float(x))
+
+            def _COTH(x):
+                return 1.0 / math.tanh(float(x))
+
+            def _CSC(x):
+                return 1.0 / math.sin(float(x))
+
+            def _CSCH(x):
+                return 1.0 / math.sinh(float(x))
+
+            def _SEC(x):
+                return 1.0 / math.cos(float(x))
+
+            def _SECH(x):
+                return 1.0 / math.cosh(float(x))
+
+            def _SQRTPI(x):
+                return math.sqrt(float(x) * math.pi)
+
+            def _BASE(n, radix, min_len=0):
+                num = int(float(n))
+                r = int(float(radix))
+                digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                if num == 0:
+                    return "0".zfill(int(min_len))
+                result = ""
+                while num:
+                    result = digits[num % r] + result
+                    num //= r
+                return result.zfill(int(min_len))
+
+            def _DECIMAL(text, radix):
+                return int(str(text), int(float(radix)))
+
+            def _FACTDOUBLE(n):
+                v = int(float(n))
+                result = 1
+                while v > 1:
+                    result *= v
+                    v -= 2
+                return result
+
+            def _CEILING_MATH(n, significance=1, mode=0):
+                num = float(n)
+                sig = float(significance)
+                if sig == 0:
+                    return 0
+                if mode and num < 0:
+                    return (-math.ceil(-num / abs(sig))
+                            * abs(sig))
+                return math.ceil(num / sig) * sig
+
+            def _FLOOR_MATH(n, significance=1, mode=0):
+                num = float(n)
+                sig = float(significance)
+                if sig == 0:
+                    return 0
+                if mode and num < 0:
+                    return (-math.floor(-num / abs(sig))
+                            * abs(sig))
+                return math.floor(num / sig) * sig
+
+            def _MROUND(n, multiple):
+                num = float(n)
+                m = float(multiple)
+                if m == 0:
+                    return 0
+                return round(num / m) * m
+
+            def _MULTINOMIAL(*args):
+                vals = [int(float(v)) for v in _flatten(args)]
+                total = sum(vals)
+                result = math.factorial(total)
+                for v in vals:
+                    result //= math.factorial(v)
+                return result
+
+            def _COMBINA(n, k):
+                ni, ki = int(float(n)), int(float(k))
+                return _COMBIN(ni + ki - 1, ki)
+
+            def _ROMAN(n, form=0):
+                num = int(float(n))
+                vals = [
+                    (1000, 'M'), (900, 'CM'), (500, 'D'),
+                    (400, 'CD'), (100, 'C'), (90, 'XC'),
+                    (50, 'L'), (40, 'XL'), (10, 'X'),
+                    (9, 'IX'), (5, 'V'), (4, 'IV'), (1, 'I')]
+                result = ""
+                for v, s in vals:
+                    while num >= v:
+                        result += s
+                        num -= v
+                return result
+
+            def _SUMPRODUCT(*args):
+                arrays = [_nums([a]) for a in args]
+                if not arrays:
+                    return 0
+                n = min(len(a) for a in arrays)
+                result = 0
+                for i in range(n):
+                    prod = 1
+                    for a in arrays:
+                        prod *= a[i]
+                    result += prod
+                return result
+
+            def _SUMIFS(sum_rng, *args):
+                sums = _flatten([sum_rng])
+                if len(args) < 2 or len(args) % 2 != 0:
+                    return 0
+                pairs = []
+                for i in range(0, len(args), 2):
+                    pairs.append(
+                        (_flatten([args[i]]), args[i + 1]))
+                n = min(len(sums),
+                        *(len(p[0]) for p in pairs))
+                total = 0.0
+                for i in range(n):
+                    if all(_countif_match(p[0][i], p[1])
+                           for p in pairs):
+                        try:
+                            total += float(sums[i])
+                        except (ValueError, TypeError):
+                            pass
+                return total
+
+            def _SUMX2MY2(x, y):
+                xv, yv = _nums([x]), _nums([y])
+                return sum(a ** 2 - b ** 2
+                           for a, b in zip(xv, yv))
+
+            def _SUMX2PY2(x, y):
+                xv, yv = _nums([x]), _nums([y])
+                return sum(a ** 2 + b ** 2
+                           for a, b in zip(xv, yv))
+
+            def _SUMXMY2(x, y):
+                xv, yv = _nums([x]), _nums([y])
+                return sum((a - b) ** 2
+                           for a, b in zip(xv, yv))
+
+            def _SUBTOTAL(func_num, *args):
+                fn = int(float(func_num))
+                funcs = {
+                    1: _mean, 2: _COUNT, 3: _COUNTA,
+                    4: _MAXF, 5: _MINF, 6: _PRODUCT,
+                    7: _STDEV, 9: _SUM,
+                    101: _mean, 102: _COUNT, 103: _COUNTA,
+                    104: _MAXF, 105: _MINF, 106: _PRODUCT,
+                    107: _STDEV, 109: _SUM}
+                f = funcs.get(fn)
+                if f:
+                    return f(*args)
+                return "#VALUE!"
+
+            def _MDETERM(*args):
+                v = _nums(args)
+                n = int(len(v) ** 0.5)
+                if n * n != len(v):
+                    return "#VALUE!"
+                return float(np.linalg.det(
+                    np.array(v).reshape(n, n)))
+
+            def _MINVERSE(*args):
+                v = _nums(args)
+                n = int(len(v) ** 0.5)
+                if n * n != len(v):
+                    return "#VALUE!"
+                return (np.linalg.inv(np.array(v).reshape(n, n))
+                        .flatten().tolist())
+
+            def _MMULT(a, b):
+                return "#N/A"
 
             # ── Data Analysis functions ──────────────────────────────
             def _DERIV(y, x):
@@ -3817,6 +4166,367 @@ class SheetWidget(QWidget):
 
             def _ERFC(x):
                 return math.erfc(float(x))
+
+            # ── Complex number helpers ──────────────────────────
+            def _parse_complex(z):
+                """Parse '3+4i' or '3-4i' or number into (real, imag)."""
+                s = str(z).strip().replace(" ", "")
+                if s.endswith("i") or s.endswith("j"):
+                    s = s[:-1]
+                    for idx in range(len(s) - 1, 0, -1):
+                        if s[idx] in "+-":
+                            return float(s[:idx]), float(s[idx:])
+                    return 0.0, float(s) if s else 0.0
+                try:
+                    return float(s), 0.0
+                except ValueError:
+                    return 0.0, 0.0
+
+            def _COMPLEX(real, imag, suffix="i"):
+                r, i = float(real), float(imag)
+                if i == 0: return str(r)
+                if r == 0: return f"{i}{suffix}"
+                sign = "+" if i > 0 else ""
+                return f"{r}{sign}{i}{suffix}"
+
+            def _IMREAL(z):
+                r, i = _parse_complex(z)
+                return r
+
+            def _IMAGINARY(z):
+                r, i = _parse_complex(z)
+                return i
+
+            def _IMABS(z):
+                r, i = _parse_complex(z)
+                return (r ** 2 + i ** 2) ** 0.5
+
+            def _IMARGUMENT(z):
+                r, i = _parse_complex(z)
+                return math.atan2(i, r)
+
+            def _IMCONJUGATE(z):
+                r, i = _parse_complex(z)
+                return _COMPLEX(r, -i)
+
+            def _IMCOS(z):
+                r, i = _parse_complex(z)
+                return _COMPLEX(math.cos(r) * math.cosh(i),
+                                -math.sin(r) * math.sinh(i))
+
+            def _IMSIN(z):
+                r, i = _parse_complex(z)
+                return _COMPLEX(math.sin(r) * math.cosh(i),
+                                math.cos(r) * math.sinh(i))
+
+            def _IMEXP(z):
+                r, i = _parse_complex(z)
+                e = math.exp(r)
+                return _COMPLEX(e * math.cos(i), e * math.sin(i))
+
+            def _IMLN(z):
+                r, i = _parse_complex(z)
+                return _COMPLEX(math.log((r ** 2 + i ** 2) ** 0.5),
+                                math.atan2(i, r))
+
+            def _IMLOG10(z):
+                r, i = _parse_complex(z)
+                ln_r = math.log((r ** 2 + i ** 2) ** 0.5)
+                ln_i = math.atan2(i, r)
+                return _COMPLEX(ln_r / math.log(10), ln_i / math.log(10))
+
+            def _IMLOG2(z):
+                r, i = _parse_complex(z)
+                ln_r = math.log((r ** 2 + i ** 2) ** 0.5)
+                ln_i = math.atan2(i, r)
+                return _COMPLEX(ln_r / math.log(2), ln_i / math.log(2))
+
+            def _IMPOWER(z, n):
+                r, i = _parse_complex(z)
+                import cmath
+                c = complex(r, i) ** float(n)
+                return _COMPLEX(c.real, c.imag)
+
+            def _IMSQRT(z):
+                r, i = _parse_complex(z)
+                import cmath
+                c = cmath.sqrt(complex(r, i))
+                return _COMPLEX(c.real, c.imag)
+
+            def _IMSUM(*args):
+                tr, ti = 0.0, 0.0
+                for a in _flatten(args):
+                    r, i = _parse_complex(a)
+                    tr += r; ti += i
+                return _COMPLEX(tr, ti)
+
+            def _IMSUB(z1, z2):
+                r1, i1 = _parse_complex(z1)
+                r2, i2 = _parse_complex(z2)
+                return _COMPLEX(r1 - r2, i1 - i2)
+
+            def _IMPRODUCT(*args):
+                import cmath
+                c = complex(1, 0)
+                for a in _flatten(args):
+                    r, i = _parse_complex(a)
+                    c *= complex(r, i)
+                return _COMPLEX(c.real, c.imag)
+
+            def _IMDIV(z1, z2):
+                r1, i1 = _parse_complex(z1)
+                r2, i2 = _parse_complex(z2)
+                c = complex(r1, i1) / complex(r2, i2)
+                return _COMPLEX(c.real, c.imag)
+
+            def _CONVERT(n, from_unit, to_unit):
+                return "#N/A"  # Full implementation needs unit tables
+
+            # ── Financial functions ─────────────────────────────
+            def _PV(rate, nper, pmt, fv=0, type=0):
+                r, n = float(rate), int(float(nper))
+                p, f, t = float(pmt), float(fv), int(float(type))
+                if r == 0:
+                    return -(p * n + f)
+                return -(f / (1 + r) ** n
+                         + p * (1 + r * t) * ((1 + r) ** n - 1)
+                         / (r * (1 + r) ** n))
+
+            def _FV(rate, nper, pmt, pv=0, type=0):
+                r, n = float(rate), int(float(nper))
+                p, v, t = float(pmt), float(pv), int(float(type))
+                if r == 0:
+                    return -(v + p * n)
+                return -(v * (1 + r) ** n
+                         + p * (1 + r * t) * ((1 + r) ** n - 1) / r)
+
+            def _PMT(rate, nper, pv, fv=0, type=0):
+                r, n = float(rate), int(float(nper))
+                v, f, t = float(pv), float(fv), int(float(type))
+                if r == 0:
+                    return -(v + f) / n
+                q = (1 + r) ** n
+                return -(r * (f + v * q)) / ((1 + r * t) * (q - 1))
+
+            def _NPER(rate, pmt, pv, fv=0, type=0):
+                r, p = float(rate), float(pmt)
+                v, f, t = float(pv), float(fv), int(float(type))
+                if r == 0:
+                    return -(v + f) / p
+                z = p * (1 + r * t)
+                return (math.log((-f * r + z) / (v * r + z))
+                        / math.log(1 + r))
+
+            def _RATE(nper, pmt, pv, fv=0, type=0, guess=0.1):
+                n, p = int(float(nper)), float(pmt)
+                v, f, t = float(pv), float(fv), int(float(type))
+                r = float(guess)
+                for _ in range(100):
+                    if abs(r) < 1e-10:
+                        y = v + p * n + f
+                    else:
+                        q = (1 + r) ** n
+                        y = v * q + p * (1 + r * t) * (q - 1) / r + f
+                    if abs(r) < 1e-10:
+                        dy = p * n
+                    else:
+                        q = (1 + r) ** n
+                        dq = n * (1 + r) ** (n - 1)
+                        dy = (v * dq + p * t * (q - 1) / r
+                              + p * (1 + r * t)
+                              * (dq * r - (q - 1)) / (r * r))
+                    if abs(dy) < 1e-14:
+                        break
+                    r -= y / dy
+                return r
+
+            def _IPMT(rate, per, nper, pv, fv=0, type=0):
+                r = float(rate)
+                p = int(float(per))
+                pmt = _PMT(rate, nper, pv, fv, type)
+                t = int(float(type))
+                if t == 1 and p == 1:
+                    return 0.0
+                bal = float(pv)
+                for i in range(1, p):
+                    if t == 1 and i > 0:
+                        bal += pmt
+                    interest = bal * r
+                    bal += interest + (pmt if t == 0 else 0)
+                if t == 1:
+                    bal_after_pmt = bal + pmt
+                    return bal_after_pmt * r / (1 + r)
+                return bal * r
+
+            def _PPMT(rate, per, nper, pv, fv=0, type=0):
+                return (_PMT(rate, nper, pv, fv, type)
+                        - _IPMT(rate, per, nper, pv, fv, type))
+
+            def _NPV(rate, *args):
+                r = float(rate)
+                vals = _nums(args)
+                return sum(v / (1 + r) ** (i + 1)
+                           for i, v in enumerate(vals))
+
+            def _IRR(values, guess=0.1):
+                vals = _nums([values])
+                r = float(guess)
+                for _ in range(200):
+                    npv = sum(v / (1 + r) ** i
+                              for i, v in enumerate(vals))
+                    dnpv = sum(-i * v / (1 + r) ** (i + 1)
+                               for i, v in enumerate(vals))
+                    if abs(dnpv) < 1e-14:
+                        break
+                    r -= npv / dnpv
+                    if abs(npv) < 1e-10:
+                        break
+                return r
+
+            def _MIRR(values, finance_rate, reinvest_rate):
+                vals = _nums([values])
+                fr, rr = float(finance_rate), float(reinvest_rate)
+                n = len(vals)
+                neg = sum(v / (1 + fr) ** i
+                          for i, v in enumerate(vals) if v < 0)
+                pos = sum(v * (1 + rr) ** (n - 1 - i)
+                          for i, v in enumerate(vals) if v > 0)
+                if neg == 0:
+                    return "#DIV/0!"
+                return ((-pos / neg) ** (1.0 / (n - 1))
+                        * (1 + rr) - 1)
+
+            def _XNPV(rate, values, dates):
+                r = float(rate)
+                vs = _nums([values])
+                ds_raw = _flatten([dates])
+                d0 = None
+                result = 0.0
+                for i, (v, d) in enumerate(zip(vs, ds_raw)):
+                    try:
+                        dt = _dt.date.fromisoformat(str(d))
+                    except Exception:
+                        dt = _dt.date.today()
+                    if d0 is None:
+                        d0 = dt
+                    days = (dt - d0).days
+                    result += v / (1 + r) ** (days / 365.0)
+                return result
+
+            def _XIRR(values, dates, guess=0.1):
+                vs = _nums([values])
+                ds_raw = _flatten([dates])
+                dates_parsed = []
+                for d in ds_raw[:len(vs)]:
+                    try:
+                        dates_parsed.append(
+                            _dt.date.fromisoformat(str(d)))
+                    except Exception:
+                        dates_parsed.append(_dt.date.today())
+                d0 = (dates_parsed[0] if dates_parsed
+                      else _dt.date.today())
+                r = float(guess)
+                for _ in range(200):
+                    npv = sum(
+                        v / (1 + r) ** ((d - d0).days / 365.0)
+                        for v, d in zip(vs, dates_parsed))
+                    dnpv = sum(
+                        -((d - d0).days / 365.0)
+                        * v / (1 + r) ** ((d - d0).days / 365.0 + 1)
+                        for v, d in zip(vs, dates_parsed))
+                    if abs(dnpv) < 1e-14:
+                        break
+                    r -= npv / dnpv
+                    if abs(npv) < 1e-10:
+                        break
+                return r
+
+            def _SLN(cost, salvage, life):
+                return ((float(cost) - float(salvage))
+                        / float(life))
+
+            def _SYD(cost, salvage, life, per):
+                c, s = float(cost), float(salvage)
+                l, p = float(life), float(per)
+                return (c - s) * (l - p + 1) * 2 / (l * (l + 1))
+
+            def _DB(cost, salvage, life, period, month=12):
+                c, s = float(cost), float(salvage)
+                l, p = float(life), float(period)
+                m = float(month)
+                rate = round(1 - (s / c) ** (1 / l), 3)
+                dep = c * rate * m / 12
+                if p == 1:
+                    return dep
+                total = dep
+                for i in range(2, int(p) + 1):
+                    if i == int(l) + 1:
+                        dep = (c - total) * rate * (12 - m) / 12
+                    else:
+                        dep = (c - total) * rate
+                    total += dep
+                return dep
+
+            def _DDB(cost, salvage, life, period, factor=2):
+                c, s = float(cost), float(salvage)
+                l, p = float(life), float(period)
+                f = float(factor)
+                rate = f / l
+                val = c
+                for i in range(1, int(p) + 1):
+                    dep = val * rate
+                    if val - dep < s:
+                        dep = val - s
+                    val -= dep
+                return dep
+
+            def _EFFECT(nominal, npery):
+                nr, n = float(nominal), int(float(npery))
+                return (1 + nr / n) ** n - 1
+
+            def _NOMINAL(effect, npery):
+                er, n = float(effect), int(float(npery))
+                return n * ((1 + er) ** (1.0 / n) - 1)
+
+            def _ISPMT(rate, per, nper, pv):
+                r, p = float(rate), float(per)
+                n, v = float(nper), float(pv)
+                return v * r * (p / n - 1)
+
+            def _FVSCHEDULE(principal, schedule):
+                p = float(principal)
+                for r in _nums([schedule]):
+                    p *= (1 + r)
+                return p
+
+            def _DOLLARDE(dollar, fraction):
+                d = float(dollar)
+                f = int(float(fraction))
+                intpart = int(d)
+                fracpart = d - intpart
+                return intpart + fracpart * 10 ** len(str(f)) / f
+
+            def _DOLLARFR(dollar, fraction):
+                d = float(dollar)
+                f = int(float(fraction))
+                intpart = int(d)
+                fracpart = d - intpart
+                return intpart + fracpart * f / 10 ** len(str(f))
+
+            # Bond / duration stubs (need day-count conventions)
+            def _ACCRINT(*a): return "#N/A"
+            def _ACCRINTM(*a): return "#N/A"
+            def _DISC(*a): return "#N/A"
+            def _DURATION_F(*a): return "#N/A"
+            def _MDURATION(*a): return "#N/A"
+            def _INTRATE(*a): return "#N/A"
+            def _PRICE(*a): return "#N/A"
+            def _PRICEDISC(*a): return "#N/A"
+            def _PRICEMAT(*a): return "#N/A"
+            def _RECEIVED(*a): return "#N/A"
+            def _YIELD_F(*a): return "#N/A"
+            def _YIELDDISC(*a): return "#N/A"
+            def _YIELDMAT(*a): return "#N/A"
 
             # ── Lookup & Reference ──────────────────────────────
             def _RANGE2D(c1, r1, c2, r2):
@@ -4444,6 +5154,75 @@ class SheetWidget(QWidget):
                   "MAXA": _MAXA, "MINA": _MINA,
                   "FREQUENCY": _FREQUENCY,
                   "LINEST": _LINEST, "TREND": _TREND,
+                  # Financial
+                  "PV": _PV, "FV": _FV, "PMT": _PMT,
+                  "NPER": _NPER, "RATE": _RATE,
+                  "IPMT": _IPMT, "PPMT": _PPMT,
+                  "NPV": _NPV, "IRR": _IRR, "MIRR": _MIRR,
+                  "XNPV": _XNPV, "XIRR": _XIRR,
+                  "SLN": _SLN, "SYD": _SYD,
+                  "DB": _DB, "DDB": _DDB,
+                  "EFFECT": _EFFECT, "NOMINAL": _NOMINAL,
+                  "ISPMT": _ISPMT, "FVSCHEDULE": _FVSCHEDULE,
+                  "DOLLARDE": _DOLLARDE, "DOLLARFR": _DOLLARFR,
+                  "ACCRINT": _ACCRINT, "ACCRINTM": _ACCRINTM,
+                  "DISC": _DISC, "DURATION": _DURATION_F,
+                  "MDURATION": _MDURATION,
+                  "INTRATE": _INTRATE,
+                  "PRICE": _PRICE, "PRICEDISC": _PRICEDISC,
+                  "PRICEMAT": _PRICEMAT,
+                  "RECEIVED": _RECEIVED,
+                  "YIELD": _YIELD_F, "YIELDDISC": _YIELDDISC,
+                  "YIELDMAT": _YIELDMAT,
+                  # Text (new)
+                  "CHAR": _CHAR, "CODE": _CODE, "CLEAN": _CLEAN,
+                  "T": _T, "DOLLAR": _DOLLAR_F, "FIXED": _FIXED,
+                  "NUMBERVALUE": _NUMBERVALUE, "SEARCH": _SEARCH,
+                  "TEXTJOIN": _TEXTJOIN,
+                  "UNICHAR": _UNICHAR, "UNICODE": _UNICODE,
+                  # Date & Time (new)
+                  "DATEVALUE": _DATEVALUE, "TIMEVALUE": _TIMEVALUE,
+                  "EDATE": _EDATE, "EOMONTH": _EOMONTH,
+                  "WEEKNUM": _WEEKNUM, "ISOWEEKNUM": _ISOWEEKNUM,
+                  "YEARFRAC": _YEARFRAC, "DAYS360": _DAYS360,
+                  "NETWORKDAYS": _NETWORKDAYS, "WORKDAY": _WORKDAY,
+                  "NETWORKDAYS_INTL": _NETWORKDAYS_INTL,
+                  "WORKDAY_INTL": _WORKDAY_INTL,
+                  # Math & Trig (new)
+                  "ACOT": _ACOT, "ACOTH": _ACOTH,
+                  "COT": _COT, "COTH": _COTH,
+                  "CSC": _CSC, "CSCH": _CSCH,
+                  "SEC": _SEC, "SECH": _SECH,
+                  "SQRTPI": _SQRTPI,
+                  "BASE": _BASE, "DECIMAL": _DECIMAL,
+                  "FACTDOUBLE": _FACTDOUBLE,
+                  "CEILING_MATH": _CEILING_MATH,
+                  "CEILING.MATH": _CEILING_MATH,
+                  "FLOOR_MATH": _FLOOR_MATH,
+                  "FLOOR.MATH": _FLOOR_MATH,
+                  "MROUND": _MROUND,
+                  "MULTINOMIAL": _MULTINOMIAL,
+                  "COMBINA": _COMBINA, "ROMAN": _ROMAN,
+                  "SUMPRODUCT": _SUMPRODUCT,
+                  "SUMIFS": _SUMIFS,
+                  "SUMX2MY2": _SUMX2MY2,
+                  "SUMX2PY2": _SUMX2PY2,
+                  "SUMXMY2": _SUMXMY2,
+                  "SUBTOTAL": _SUBTOTAL,
+                  "MDETERM": _MDETERM, "MINVERSE": _MINVERSE,
+                  "MMULT": _MMULT,
+                  # Engineering — complex numbers (new)
+                  "COMPLEX": _COMPLEX,
+                  "IMREAL": _IMREAL, "IMAGINARY": _IMAGINARY,
+                  "IMABS": _IMABS, "IMARGUMENT": _IMARGUMENT,
+                  "IMCONJUGATE": _IMCONJUGATE,
+                  "IMCOS": _IMCOS, "IMSIN": _IMSIN,
+                  "IMEXP": _IMEXP, "IMLN": _IMLN,
+                  "IMLOG10": _IMLOG10, "IMLOG2": _IMLOG2,
+                  "IMPOWER": _IMPOWER, "IMSQRT": _IMSQRT,
+                  "IMSUM": _IMSUM, "IMSUB": _IMSUB,
+                  "IMPRODUCT": _IMPRODUCT, "IMDIV": _IMDIV,
+                  "CONVERT": _CONVERT,
                   # Compiled-formula runtime helpers (read live values).
                   "_C": self._cell_val,
                   "_CR": self._cell_raw,
@@ -4517,7 +5296,42 @@ class SheetWidget(QWidget):
         "mode", "geomean", "harmean", "trimmean",
         "averageif", "averageifs", "averagea",
         "maxa", "mina",
-        "frequency", "linest", "trend"})
+        "frequency", "linest", "trend",
+        # Financial
+        "pv", "fv", "pmt", "nper", "rate", "ipmt", "ppmt",
+        "npv", "irr", "mirr", "xnpv", "xirr",
+        "sln", "syd", "db", "ddb",
+        "effect", "nominal", "ispmt", "fvschedule",
+        "dollarde", "dollarfr",
+        "accrint", "accrintm", "disc", "duration", "mduration",
+        "intrate", "price", "pricedisc", "pricemat",
+        "received", "yield", "yielddisc", "yieldmat",
+        # Text (new)
+        "char", "code", "clean", "dollar", "fixed",
+        "numbervalue", "search", "textjoin",
+        "unichar", "unicode",
+        # Date & Time (new)
+        "datevalue", "timevalue", "edate", "eomonth",
+        "weeknum", "isoweeknum", "yearfrac", "days360",
+        "networkdays", "workday",
+        "networkdays_intl", "workday_intl",
+        # Math & Trig (new)
+        "acot", "acoth", "cot", "coth", "csc", "csch",
+        "sec", "sech", "sqrtpi",
+        "base", "decimal", "factdouble",
+        "ceiling_math", "floor_math",
+        "mround", "multinomial", "combina", "roman",
+        "sumproduct", "sumifs",
+        "sumx2my2", "sumx2py2", "sumxmy2",
+        "subtotal",
+        "mdeterm", "minverse", "mmult",
+        # Engineering — complex numbers (new)
+        "complex", "imreal", "imaginary",
+        "imabs", "imargument", "imconjugate",
+        "imcos", "imsin", "imexp", "imln",
+        "imlog10", "imlog2", "impower", "imsqrt",
+        "imsum", "imsub", "improduct", "imdiv",
+        "convert"})
 
     def _compile_formula(self, formula):
         """Parse a formula and compile it to a reusable code object.
