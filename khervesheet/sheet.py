@@ -3297,6 +3297,151 @@ class SheetWidget(QWidget):
             def _XOR(*args):
                 return sum(bool(a) for a in args) % 2 == 1
 
+            def _IFNA(val, fallback):
+                return fallback if val == "#N/A" else val
+
+            def _IFS(*args):
+                # IFS(cond1, val1, cond2, val2, ...)
+                for i in range(0, len(args) - 1, 2):
+                    if args[i]:
+                        return args[i + 1]
+                return "#N/A"
+
+            # ── Information functions ────────────────────────────
+            def _ISBLANK(v):
+                return v is None or v == ""
+
+            def _ISERROR(v):
+                return isinstance(v, str) and v.startswith("#")
+
+            def _ISERR(v):
+                return _ISERROR(v) and v != "#N/A"
+
+            def _ISNA(v):
+                return isinstance(v, str) and v == "#N/A"
+
+            def _ISNUMBER(v):
+                if isinstance(v, (int, float)):
+                    return True
+                if isinstance(v, str):
+                    try:
+                        float(v)
+                        return True
+                    except (ValueError, TypeError):
+                        return False
+                return False
+
+            def _ISTEXT(v):
+                if isinstance(v, str):
+                    try:
+                        float(v)
+                        return False
+                    except (ValueError, TypeError):
+                        return v != ""
+                return False
+
+            def _ISNONTEXT(v):
+                return not _ISTEXT(v)
+
+            def _ISLOGICAL(v):
+                return isinstance(v, bool) or v in (True, False)
+
+            def _ISEVEN(v):
+                return int(float(v)) % 2 == 0
+
+            def _ISODD(v):
+                return int(float(v)) % 2 != 0
+
+            def _ISREF(v):
+                # In a spreadsheet context, always False for a value.
+                return False
+
+            def _N(v):
+                try:
+                    return float(v)
+                except (ValueError, TypeError):
+                    return 0
+
+            def _NA():
+                return "#N/A"
+
+            def _TYPE(v):
+                if isinstance(v, (int, float)):
+                    return 1
+                if isinstance(v, str):
+                    if v.startswith("#"):
+                        return 16
+                    return 2
+                if isinstance(v, bool):
+                    return 4
+                return 0
+
+            def _ERROR_TYPE(v):
+                errs = {"#NULL!": 1, "#DIV/0!": 2, "#VALUE!": 3,
+                        "#REF!": 4, "#NAME?": 5, "#NUM!": 6, "#N/A": 7}
+                return errs.get(v, "#N/A")
+
+            def _COUNTBLANK(*args):
+                return sum(1 for a in _flatten(args) if a in ("", None))
+
+            def _COUNTIF(rng, criteria):
+                vals = _flatten([rng])
+                count = 0
+                for v in vals:
+                    if _countif_match(v, criteria):
+                        count += 1
+                return count
+
+            def _COUNTIFS(*args):
+                # COUNTIFS(range1, criteria1, range2, criteria2, ...)
+                if len(args) < 2 or len(args) % 2 != 0:
+                    return 0
+                pairs = []
+                for i in range(0, len(args), 2):
+                    pairs.append((_flatten([args[i]]),  args[i + 1]))
+                n = min(len(p[0]) for p in pairs)
+                count = 0
+                for i in range(n):
+                    if all(_countif_match(p[0][i], p[1]) for p in pairs):
+                        count += 1
+                return count
+
+            def _countif_match(val, criteria):
+                c = str(criteria)
+                if c.startswith(">="):
+                    try: return float(val) >= float(c[2:])
+                    except (ValueError, TypeError): return False
+                if c.startswith("<="):
+                    try: return float(val) <= float(c[2:])
+                    except (ValueError, TypeError): return False
+                if c.startswith("<>"):
+                    return str(val) != c[2:]
+                if c.startswith(">"):
+                    try: return float(val) > float(c[1:])
+                    except (ValueError, TypeError): return False
+                if c.startswith("<"):
+                    try: return float(val) < float(c[1:])
+                    except (ValueError, TypeError): return False
+                if c.startswith("="):
+                    c = c[1:]
+                # Exact match (case-insensitive for strings).
+                try:
+                    return float(val) == float(c)
+                except (ValueError, TypeError):
+                    return str(val).lower() == c.lower()
+
+            def _SUMIF(rng, criteria, sum_rng=None):
+                vals = _flatten([rng])
+                sums = _flatten([sum_rng]) if sum_rng is not None else vals
+                total = 0.0
+                for i, v in enumerate(vals):
+                    if _countif_match(v, criteria):
+                        try:
+                            total += float(sums[i]) if i < len(sums) else 0
+                        except (ValueError, TypeError):
+                            pass
+                return total
+
             # ── Math extras ──────────────────────────────────────
             def _MOD(n, d):
                 return float(n) % float(d)
@@ -3654,8 +3799,21 @@ class SheetWidget(QWidget):
                   "EXACT": _EXACT, "VALUE": _VALUE, "TEXT": _TEXT,
                   # Logical
                   "IF": _IF, "AND": _AND, "OR": _OR, "NOT": _NOT,
-                  "IFERROR": _IFERROR, "XOR": _XOR,
+                  "IFERROR": _IFERROR, "IFNA": _IFNA, "IFS": _IFS,
+                  "XOR": _XOR,
                   "TRUE": True, "FALSE": False,
+                  # Information
+                  "ISBLANK": _ISBLANK, "ISERROR": _ISERROR,
+                  "ISERR": _ISERR, "ISNA": _ISNA,
+                  "ISNUMBER": _ISNUMBER, "ISTEXT": _ISTEXT,
+                  "ISNONTEXT": _ISNONTEXT, "ISLOGICAL": _ISLOGICAL,
+                  "ISEVEN": _ISEVEN, "ISODD": _ISODD,
+                  "ISREF": _ISREF,
+                  "N": _N, "NA": _NA, "TYPE": _TYPE,
+                  "ERROR_TYPE": _ERROR_TYPE,
+                  "COUNTBLANK": _COUNTBLANK,
+                  "COUNTIF": _COUNTIF, "COUNTIFS": _COUNTIFS,
+                  "SUMIF": _SUMIF,
                   # Math extras
                   "MOD": _MOD, "POWER": _POWER,
                   "QUOTIENT": _QUOTIENT, "SIGN": _SIGN,
@@ -3723,6 +3881,15 @@ class SheetWidget(QWidget):
         "fact", "gcd", "lcm", "rand", "randbetween", "rounddown",
         "roundup", "trunc", "combin", "degrees", "radians", "ln",
         "product", "counta", "sumsq",
+        # Logical extras
+        "ifna", "ifs",
+        # Information — N and NA omitted: they look like cell-ref
+        # column letters (N1, NA1) and the function normaliser already
+        # handles N(...) and NA() via the word-followed-by-paren regex.
+        "isblank", "iserror", "iserr", "isna", "isnumber", "istext",
+        "isnontext", "islogical", "iseven", "isodd", "isref",
+        "type", "error_type",
+        "countblank", "countif", "countifs", "sumif",
         # Data Analysis (underscore forms after dot rewrite).
         "deriv", "deriv2", "deriv_smooth",
         "trapz", "cumtrapz", "simps",
