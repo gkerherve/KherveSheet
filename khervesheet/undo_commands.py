@@ -413,3 +413,70 @@ class ChartPropertyCmd(QUndoCommand):
         from .general_properties import apply_general_state
         apply_general_state(self.chart, self.old_state)
         self.chart._canvas.draw_idle()
+
+
+# ── Note / comment add, edit, delete ──────────────────────────────────
+
+class NoteCmd(QUndoCommand):
+    """Undoable add/edit/delete of a cell note or comment."""
+
+    def __init__(self, sheet, row, col, old_note, new_note):
+        """*old_note* / *new_note*: dict ``{"text": ..., "kind": ...}``
+        or ``None`` (meaning no note exists).
+        """
+        if new_note is None:
+            label = "Delete Note"
+        elif old_note is None:
+            label = "Add Note"
+        else:
+            label = "Edit Note"
+        super().__init__(label)
+        self.sheet = sheet
+        self.row = row
+        self.col = col
+        self.old_note = old_note
+        self.new_note = new_note
+
+    def redo(self):
+        self._apply(self.new_note)
+
+    def undo(self):
+        self._apply(self.old_note)
+
+    def _apply(self, note):
+        if note is not None:
+            self.sheet._cell_notes[(self.row, self.col)] = note
+        else:
+            self.sheet._cell_notes.pop((self.row, self.col), None)
+        self.sheet._hide_note_popup()
+        idx = self.sheet.table.model().index(self.row, self.col)
+        self.sheet.table.update(idx)
+
+
+# ── Clear cell format ─────────────────────────────────────────────────
+
+class ClearFormatCmd(QUndoCommand):
+    """Undoable clear of cell formatting from one or more cells."""
+
+    def __init__(self, sheet, old_formats, label="Clear Formatting"):
+        """*old_formats*: dict mapping (row, col) → CellFormat snapshot."""
+        super().__init__(label)
+        self.sheet = sheet
+        self.old_formats = old_formats
+
+    def redo(self):
+        from PyQt5.QtGui import QBrush
+        self.sheet.table.blockSignals(True)
+        for (r, c) in self.old_formats:
+            self.sheet._cell_formats.pop((r, c), None)
+            it = self.sheet.table.item(r, c)
+            if it:
+                it.setBackground(QBrush())
+        self.sheet.table.blockSignals(False)
+        self.sheet.table.viewport().update()
+
+    def undo(self):
+        for (r, c), fmt in self.old_formats.items():
+            if fmt is not None:
+                self.sheet._cell_formats[(r, c)] = fmt
+        self.sheet.table.viewport().update()

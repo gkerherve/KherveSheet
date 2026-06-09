@@ -280,8 +280,9 @@ def insert_comment(sheet, parent=None):
     col = sheet.table.currentColumn()
     if row < 0 or col < 0:
         return
-    existing = sheet._cell_notes.get((row, col), {})
-    old_text = existing.get("text", "") if isinstance(existing, dict) else str(existing)
+    existing = sheet._cell_notes.get((row, col))
+    old_note = dict(existing) if isinstance(existing, dict) else None
+    old_text = old_note.get("text", "") if old_note else ""
     text, ok = QInputDialog.getMultiLineText(
         parent or sheet, "Edit Comment",
         f"Comment for {_cell_ref(row, col)}:",
@@ -289,15 +290,22 @@ def insert_comment(sheet, parent=None):
     if not ok:
         return
     if text.strip():
-        sheet._cell_notes[(row, col)] = {"text": text, "kind": "comment"}
+        new_note = {"text": text, "kind": "comment"}
         it = sheet.table.item(row, col)
         if it is None:
             it = QTableWidgetItem("")
             sheet.table.setItem(row, col, it)
-        it.setToolTip("")  # We handle hover ourselves
+        it.setToolTip("")
     else:
-        sheet._cell_notes.pop((row, col), None)
-    sheet.table.viewport().update()
+        new_note = None
+
+    from .undo_commands import NoteCmd
+    cmd = NoteCmd(sheet, row, col, old_note, new_note)
+    undo = getattr(sheet, '_undo_stack', None)
+    if undo is not None:
+        undo.push(cmd)
+    else:
+        cmd.redo()
 
 
 def insert_note(sheet, parent=None):
@@ -306,8 +314,9 @@ def insert_note(sheet, parent=None):
     col = sheet.table.currentColumn()
     if row < 0 or col < 0:
         return
-    existing = sheet._cell_notes.get((row, col), {})
-    old_text = existing.get("text", "") if isinstance(existing, dict) else str(existing)
+    existing = sheet._cell_notes.get((row, col))
+    old_note = dict(existing) if isinstance(existing, dict) else None
+    old_text = old_note.get("text", "") if old_note else ""
     text, ok = QInputDialog.getMultiLineText(
         parent or sheet, "Edit Note",
         f"Note for {_cell_ref(row, col)}:",
@@ -315,15 +324,22 @@ def insert_note(sheet, parent=None):
     if not ok:
         return
     if text.strip():
-        sheet._cell_notes[(row, col)] = {"text": text, "kind": "note"}
+        new_note = {"text": text, "kind": "note"}
         it = sheet.table.item(row, col)
         if it is None:
             it = QTableWidgetItem("")
             sheet.table.setItem(row, col, it)
-        it.setToolTip("")  # We handle hover ourselves
+        it.setToolTip("")
     else:
-        sheet._cell_notes.pop((row, col), None)
-    sheet.table.viewport().update()
+        new_note = None
+
+    from .undo_commands import NoteCmd
+    cmd = NoteCmd(sheet, row, col, old_note, new_note)
+    undo = getattr(sheet, '_undo_stack', None)
+    if undo is not None:
+        undo.push(cmd)
+    else:
+        cmd.redo()
 
 
 def _cell_ref(row, col):

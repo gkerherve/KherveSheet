@@ -1708,13 +1708,22 @@ class SheetWidget(QWidget):
 
     def clear_cell_format(self, row: int, col: int):
         """Remove all formatting from a cell."""
-        self._cell_formats.pop((row, col), None)
-        self.table.blockSignals(True)
-        it = self.table.item(row, col)
-        if it:
-            it.setBackground(QBrush())
-        self.table.blockSignals(False)
-        self.table.viewport().update()
+        import copy
+        old_fmt = self._cell_formats.get((row, col))
+        if old_fmt is None:
+            return  # nothing to clear
+        if self._undo_stack is not None:
+            from .undo_commands import ClearFormatCmd
+            self._undo_stack.push(
+                ClearFormatCmd(self, {(row, col): copy.deepcopy(old_fmt)}))
+        else:
+            self._cell_formats.pop((row, col), None)
+            self.table.blockSignals(True)
+            it = self.table.item(row, col)
+            if it:
+                it.setBackground(QBrush())
+            self.table.blockSignals(False)
+            self.table.viewport().update()
 
     # ── Headers ──────────────────────────────────────────────────────
     def _refresh_headers(self):
@@ -5826,9 +5835,12 @@ class SheetWidget(QWidget):
         it = self.table.item(row, col)
         if it is None:
             return
-        old = it.text()
-        it.setText(old[:start] + new_word + old[end:])
-        self._shadow[(row, col)] = it.text()
+        old_text = it.text()
+        new_text = old_text[:start] + new_word + old_text[end:]
+        if self._undo_stack is not None:
+            self._undo_stack.push(
+                CellEditCmd(self, row, col, old_text, new_text))
+        self._set_cell_quiet(row, col, new_text)
 
     def _cell_menu(self, pos):
         menu = QMenu(self)
@@ -5943,10 +5955,17 @@ class SheetWidget(QWidget):
 
     def _delete_note(self, row, col):
         """Remove a note/comment from a cell."""
-        self._cell_notes.pop((row, col), None)
-        self._hide_note_popup()
-        idx = self.table.model().index(row, col)
-        self.table.update(idx)
+        existing = self._cell_notes.get((row, col))
+        old_note = dict(existing) if isinstance(existing, dict) else None
+        if self._undo_stack is not None:
+            from .undo_commands import NoteCmd
+            self._undo_stack.push(
+                NoteCmd(self, row, col, old_note, None))
+        else:
+            self._cell_notes.pop((row, col), None)
+            self._hide_note_popup()
+            idx = self.table.model().index(row, col)
+            self.table.update(idx)
 
     def _add_note(self, row, col, kind):
         """Add a new note or comment to the cell."""
