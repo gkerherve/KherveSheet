@@ -21,7 +21,7 @@ from .python_engine import (
     is_python_source, strip_marker,
 )
 
-from PyQt5.QtCore import Qt, QEvent, QRect, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QEvent, QRect, QSize, QTimer, pyqtSignal
 from PyQt5.QtGui import (QColor, QFont, QPainter, QPen, QPixmap, QBrush,
                          QIcon)
 from PyQt5.QtWidgets import (
@@ -94,22 +94,26 @@ class _FormulaEdit(QPlainTextEdit):
             self._pop_btn.setText("⤢")
         self._pop_btn.clicked.connect(self.popOutRequested)
         self._pop_btn.hide()
-        # Loop control buttons: period, play, stop.
+        # Loop control buttons: period (clock), play/stop (toggle).
+        _btn_sz = QSize(22, 22)
         self._loop_period_btn = QToolButton(self)
         self._loop_period_btn.setToolTip("Set loop period (auto-refresh interval)")
         self._loop_period_btn.setCursor(Qt.PointingHandCursor)
         self._loop_period_btn.setAutoRaise(True)
         self._loop_period_btn.setFocusPolicy(Qt.NoFocus)
+        self._loop_period_btn.setIconSize(_btn_sz)
         self._loop_play_btn = QToolButton(self)
         self._loop_play_btn.setToolTip("Start loop")
         self._loop_play_btn.setCursor(Qt.PointingHandCursor)
         self._loop_play_btn.setAutoRaise(True)
         self._loop_play_btn.setFocusPolicy(Qt.NoFocus)
+        self._loop_play_btn.setIconSize(_btn_sz)
         self._loop_stop_btn = QToolButton(self)
         self._loop_stop_btn.setToolTip("Stop loop")
         self._loop_stop_btn.setCursor(Qt.PointingHandCursor)
         self._loop_stop_btn.setAutoRaise(True)
         self._loop_stop_btn.setFocusPolicy(Qt.NoFocus)
+        self._loop_stop_btn.setIconSize(_btn_sz)
         try:
             from . import icons
             pm_period = icons.themed_icon(
@@ -141,6 +145,8 @@ class _FormulaEdit(QPlainTextEdit):
         self._loop_play_btn.hide()
         self._loop_stop_btn.hide()
         self._loop_active = False  # tracks whether loop is running
+        # Also set iconSize on the pop-out button.
+        self._pop_btn.setIconSize(_btn_sz)
 
     def set_python_mode(self, on: bool):
         """Switch the bar between Excel-formula and Python-cell editing."""
@@ -208,21 +214,21 @@ class _FormulaEdit(QPlainTextEdit):
         bw = 22
         x = self.width() - bw - margin
         self._py_badge.setGeometry(x, 0, bw, self.height())
-        # Position buttons from right to left: pop-out, play/stop, period.
+        # Position buttons top-right, right to left: pop-out, play/stop, period.
         btn_size = 28
+        ty = 2  # pin to top
         bx = x - btn_size - 2
         self._pop_btn.setFixedSize(btn_size, btn_size)
-        self._pop_btn.move(bx, max(0, (self.height() - btn_size) // 2))
+        self._pop_btn.move(bx, ty)
         bx -= btn_size + 2
         # Play/stop share the same position (only one visible at a time).
-        vy = max(0, (self.height() - btn_size) // 2)
         self._loop_play_btn.setFixedSize(btn_size, btn_size)
-        self._loop_play_btn.move(bx, vy)
+        self._loop_play_btn.move(bx, ty)
         self._loop_stop_btn.setFixedSize(btn_size, btn_size)
-        self._loop_stop_btn.move(bx, vy)
+        self._loop_stop_btn.move(bx, ty)
         bx -= btn_size + 2
         self._loop_period_btn.setFixedSize(btn_size, btn_size)
-        self._loop_period_btn.move(bx, vy)
+        self._loop_period_btn.move(bx, ty)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -2510,7 +2516,9 @@ class SheetWidget(QWidget):
     # ── Formula-bar loop buttons ─────────────────────────────────────
 
     def _on_loop_period(self):
-        """Set loop period for the current =PY cell via a popup menu."""
+        """Set loop period for the current =PY cell via a popup menu.
+
+        Choosing a period also starts the loop immediately."""
         cur = self.table.currentIndex()
         if not cur.isValid():
             return
@@ -2532,13 +2540,29 @@ class SheetWidget(QWidget):
             act.setChecked(current_secs is not None
                            and abs(current_secs - secs) < 0.01)
             act.triggered.connect(
-                lambda checked, s=secs: self._set_py_loop(row, col, s))
+                lambda checked, s=secs: self._apply_loop_period(row, col, s))
         menu.addSeparator()
         custom_act = menu.addAction("Custom\u2026")
         custom_act.triggered.connect(
-            lambda: self._py_loop_custom(row, col))
-        menu.exec_(self._formula_bar._loop_period_btn.mapToGlobal(
-            self._formula_bar._loop_period_btn.rect().bottomLeft()))
+            lambda: self._py_loop_custom_and_start(row, col))
+        # Show the menu below the button that triggered it.
+        btn = self._formula_bar._loop_period_btn
+        menu.exec_(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    def _apply_loop_period(self, row, col, secs):
+        """Set the period AND start the loop."""
+        self._set_py_loop(row, col, secs)
+        self._sync_loop_ui(True)
+
+    def _py_loop_custom_and_start(self, row, col):
+        """Prompt for a custom interval and start the loop."""
+        cur = float(self._py_loops.get((row, col), 1))
+        secs, ok = QInputDialog.getDouble(
+            self, "Python loop", "Re-run this cell every (seconds):",
+            cur, 0.1, 86400, 1)
+        if ok:
+            self._set_py_loop(row, col, secs)
+            self._sync_loop_ui(True)
 
     def _on_loop_play(self):
         """Start / resume the loop for the current =PY cell."""
@@ -2551,13 +2575,11 @@ class SheetWidget(QWidget):
             return
         secs = self._py_loops.get((row, col))
         if not secs:
-            # No period set yet — default to 1 s.
-            secs = 1.0
+            # No period set yet — open the period picker.
+            self._on_loop_period()
+            return
         self._set_py_loop(row, col, secs)
-        self._formula_bar.set_loop_active(True)
-        dlg = getattr(self, "_py_dialog", None)
-        if dlg is not None:
-            dlg.set_loop_active(True)
+        self._sync_loop_ui(True)
 
     def _on_loop_stop(self):
         """Stop the loop for the current =PY cell."""
@@ -2566,10 +2588,14 @@ class SheetWidget(QWidget):
             return
         row, col = cur.row(), cur.column()
         self._set_py_loop(row, col, None)
-        self._formula_bar.set_loop_active(False)
+        self._sync_loop_ui(False)
+
+    def _sync_loop_ui(self, active: bool):
+        """Keep formula-bar and pop-out dialog loop state in sync."""
+        self._formula_bar.set_loop_active(active)
         dlg = getattr(self, "_py_dialog", None)
         if dlg is not None:
-            dlg.set_loop_active(False)
+            dlg.set_loop_active(active)
 
     def _py_loop_tick(self):
         """Re-run any =PY loop cell whose interval has elapsed."""
