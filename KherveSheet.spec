@@ -67,6 +67,10 @@ for _pkg in _collect:
     except Exception:
         pass   # optional / not installed — skip
 
+# Strip per-document git repos that should never be shipped.
+datas = [(src, dst) for src, dst in datas
+         if ".ksheet_versions" not in src and "/.git" not in src]
+
 a = Analysis(
     ["KherveSheet.py"],
     pathex=[],
