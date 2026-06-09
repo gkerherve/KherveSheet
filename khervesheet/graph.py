@@ -1091,7 +1091,7 @@ class EmbeddedChart(QWidget):
                         fc = bp.get_facecolor()
                         ad["bbox_fc"] = to_hex(fc[:3])
                         ad["bbox_alpha"] = float(fc[3]) if len(fc) > 3 else 1.0
-                        ad["bbox_style"] = str(bp.get_boxstyle()).split("(")[0]
+                        ad["bbox_style"] = type(bp.get_boxstyle()).__name__.lower()
                 elif a["type"] == "arrow":
                     artist = a["artist"]
                     ad["text"] = artist.get_text()
@@ -1679,6 +1679,9 @@ class EmbeddedChart(QWidget):
                 tc = ad.get("color", "black")
                 rot = ad.get("rotation", 0)
                 bs = ad.get("bbox_style", "round")
+                # Sanitize corrupted bbox_style from older saves.
+                if bs.startswith("<") or "object at" in bs:
+                    bs = "round"
                 bfc = ad.get("bbox_fc", "wheat")
                 ba = ad.get("bbox_alpha", 0.8)
                 bbox_d = dict(boxstyle=f'{bs},pad=0.3',
