@@ -45,6 +45,9 @@ class _FormulaEdit(QPlainTextEdit):
     returnPressed = pyqtSignal()
     textEdited = pyqtSignal(str)       # renamed to avoid shadowing QPlainTextEdit.textChanged
     popOutRequested = pyqtSignal()     # pop-out editor button clicked
+    loopPeriodRequested = pyqtSignal() # loop-period button clicked
+    loopPlayRequested = pyqtSignal()   # play/resume loop
+    loopStopRequested = pyqtSignal()   # stop/pause loop
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -82,7 +85,7 @@ class _FormulaEdit(QPlainTextEdit):
             # Bake to a pixmap (themed icons can render blank on tool
             # buttons — see themed-icon-blank-gotcha).
             pm = icons.themed_icon(
-                "mdi.open-in-new", color="#3776ab").pixmap(16, 16)
+                "mdi.open-in-new", color="#3776ab").pixmap(18, 18)
             if not pm.isNull():
                 self._pop_btn.setIcon(QIcon(pm))
             else:
@@ -91,6 +94,53 @@ class _FormulaEdit(QPlainTextEdit):
             self._pop_btn.setText("⤢")
         self._pop_btn.clicked.connect(self.popOutRequested)
         self._pop_btn.hide()
+        # Loop control buttons: period, play, stop.
+        self._loop_period_btn = QToolButton(self)
+        self._loop_period_btn.setToolTip("Set loop period (auto-refresh interval)")
+        self._loop_period_btn.setCursor(Qt.PointingHandCursor)
+        self._loop_period_btn.setAutoRaise(True)
+        self._loop_period_btn.setFocusPolicy(Qt.NoFocus)
+        self._loop_play_btn = QToolButton(self)
+        self._loop_play_btn.setToolTip("Start loop")
+        self._loop_play_btn.setCursor(Qt.PointingHandCursor)
+        self._loop_play_btn.setAutoRaise(True)
+        self._loop_play_btn.setFocusPolicy(Qt.NoFocus)
+        self._loop_stop_btn = QToolButton(self)
+        self._loop_stop_btn.setToolTip("Stop loop")
+        self._loop_stop_btn.setCursor(Qt.PointingHandCursor)
+        self._loop_stop_btn.setAutoRaise(True)
+        self._loop_stop_btn.setFocusPolicy(Qt.NoFocus)
+        try:
+            from . import icons
+            pm_period = icons.themed_icon(
+                "mdi.timer-outline", color="#3776ab").pixmap(18, 18)
+            pm_play = icons.themed_icon(
+                "mdi.play", color="#27ae60").pixmap(18, 18)
+            pm_stop = icons.themed_icon(
+                "mdi.stop", color="#c0392b").pixmap(18, 18)
+            if not pm_period.isNull():
+                self._loop_period_btn.setIcon(QIcon(pm_period))
+            else:
+                self._loop_period_btn.setText("⏱")
+            if not pm_play.isNull():
+                self._loop_play_btn.setIcon(QIcon(pm_play))
+            else:
+                self._loop_play_btn.setText("▶")
+            if not pm_stop.isNull():
+                self._loop_stop_btn.setIcon(QIcon(pm_stop))
+            else:
+                self._loop_stop_btn.setText("⏹")
+        except Exception:
+            self._loop_period_btn.setText("⏱")
+            self._loop_play_btn.setText("▶")
+            self._loop_stop_btn.setText("⏹")
+        self._loop_period_btn.clicked.connect(self.loopPeriodRequested)
+        self._loop_play_btn.clicked.connect(self.loopPlayRequested)
+        self._loop_stop_btn.clicked.connect(self.loopStopRequested)
+        self._loop_period_btn.hide()
+        self._loop_play_btn.hide()
+        self._loop_stop_btn.hide()
+        self._loop_active = False  # tracks whether loop is running
 
     def set_python_mode(self, on: bool):
         """Switch the bar between Excel-formula and Python-cell editing."""
@@ -114,6 +164,9 @@ class _FormulaEdit(QPlainTextEdit):
             self._py_badge.raise_()
             self._pop_btn.show()
             self._pop_btn.raise_()
+            self._loop_period_btn.show()
+            self._loop_period_btn.raise_()
+            self._update_loop_buttons()
             self._position_py_badge()
         else:
             if self._highlighter is not None:
@@ -125,17 +178,50 @@ class _FormulaEdit(QPlainTextEdit):
             self.setStyleSheet("")
             self._py_badge.hide()
             self._pop_btn.hide()
+            self._loop_period_btn.hide()
+            self._loop_play_btn.hide()
+            self._loop_stop_btn.hide()
+
+    def _update_loop_buttons(self):
+        """Show play or stop based on whether the loop is active."""
+        if self._loop_active:
+            self._loop_play_btn.hide()
+            self._loop_stop_btn.show()
+            self._loop_stop_btn.raise_()
+        else:
+            self._loop_stop_btn.hide()
+            self._loop_play_btn.show()
+            self._loop_play_btn.raise_()
+
+    def set_loop_active(self, active: bool):
+        """Update the play/stop button state."""
+        self._loop_active = active
+        if self._python_mode:
+            self._update_loop_buttons()
+            self._position_py_badge()
 
     def _position_py_badge(self):
         """Pin the PY strip (full-height) to the right edge and the
-        pop-out button just to its left, clear of the scrollbar."""
+        loop/pop-out buttons just to its left, clear of the scrollbar."""
         sb = self.verticalScrollBar()
         margin = sb.width() if sb.isVisible() else 0
         bw = 22
         x = self.width() - bw - margin
         self._py_badge.setGeometry(x, 0, bw, self.height())
-        self._pop_btn.setFixedSize(20, 20)
-        self._pop_btn.move(x - 22, 2)
+        # Position buttons from right to left: pop-out, play/stop, period.
+        btn_size = 24
+        bx = x - btn_size - 2
+        self._pop_btn.setFixedSize(btn_size, btn_size)
+        self._pop_btn.move(bx, 1)
+        bx -= btn_size + 1
+        # Play/stop share the same position (only one visible at a time).
+        self._loop_play_btn.setFixedSize(btn_size, btn_size)
+        self._loop_play_btn.move(bx, 1)
+        self._loop_stop_btn.setFixedSize(btn_size, btn_size)
+        self._loop_stop_btn.move(bx, 1)
+        bx -= btn_size + 1
+        self._loop_period_btn.setFixedSize(btn_size, btn_size)
+        self._loop_period_btn.move(bx, 1)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -1309,6 +1395,9 @@ class SheetWidget(QWidget):
         self._formula_bar.returnPressed.connect(self._apply_formula_bar)
         self._formula_bar.textEdited.connect(self._on_formula_bar_text)
         self._formula_bar.popOutRequested.connect(self._open_python_popout)
+        self._formula_bar.loopPeriodRequested.connect(self._on_loop_period)
+        self._formula_bar.loopPlayRequested.connect(self._on_loop_play)
+        self._formula_bar.loopStopRequested.connect(self._on_loop_stop)
 
         fbar.addWidget(cell_lbl)
         fbar.addWidget(self._cell_ref_label)
@@ -1820,6 +1909,8 @@ class SheetWidget(QWidget):
         if formula:
             self._formula_bar.set_python_mode(is_python_source(formula))
             self._formula_bar._py_badge.set_loop(self._py_loops.get((row, col)))
+            self._formula_bar.set_loop_active(
+                (row, col) in self._py_loops)
             self._formula_bar.setText(formula)
         else:
             self._formula_bar.set_python_mode(False)
@@ -2410,6 +2501,64 @@ class SheetWidget(QWidget):
             cur, 0.1, 86400, 1)
         if ok:
             self._set_py_loop(row, col, secs)
+
+    # ── Formula-bar loop buttons ─────────────────────────────────────
+
+    def _on_loop_period(self):
+        """Set loop period for the current =PY cell via a popup menu."""
+        cur = self.table.currentIndex()
+        if not cur.isValid():
+            return
+        row, col = cur.row(), cur.column()
+        src = self._cell_formulas.get((row, col))
+        if not is_python_source(src):
+            return
+        from PyQt5.QtWidgets import QMenu, QAction
+        menu = QMenu(self)
+        current_secs = self._py_loops.get((row, col))
+        presets = [
+            ("0.1 s", 0.1), ("0.2 s", 0.2), ("0.5 s", 0.5),
+            ("1 s", 1), ("2 s", 2), ("5 s", 5), ("10 s", 10),
+            ("30 s", 30), ("1 min", 60), ("5 min", 300), ("15 min", 900),
+        ]
+        for label, secs in presets:
+            act = menu.addAction(label)
+            act.setCheckable(True)
+            act.setChecked(current_secs is not None
+                           and abs(current_secs - secs) < 0.01)
+            act.triggered.connect(
+                lambda checked, s=secs: self._set_py_loop(row, col, s))
+        menu.addSeparator()
+        custom_act = menu.addAction("Custom\u2026")
+        custom_act.triggered.connect(
+            lambda: self._py_loop_custom(row, col))
+        menu.exec_(self._formula_bar._loop_period_btn.mapToGlobal(
+            self._formula_bar._loop_period_btn.rect().bottomLeft()))
+
+    def _on_loop_play(self):
+        """Start / resume the loop for the current =PY cell."""
+        cur = self.table.currentIndex()
+        if not cur.isValid():
+            return
+        row, col = cur.row(), cur.column()
+        src = self._cell_formulas.get((row, col))
+        if not is_python_source(src):
+            return
+        secs = self._py_loops.get((row, col))
+        if not secs:
+            # No period set yet — default to 1 s.
+            secs = 1.0
+        self._set_py_loop(row, col, secs)
+        self._formula_bar.set_loop_active(True)
+
+    def _on_loop_stop(self):
+        """Stop the loop for the current =PY cell."""
+        cur = self.table.currentIndex()
+        if not cur.isValid():
+            return
+        row, col = cur.row(), cur.column()
+        self._set_py_loop(row, col, None)
+        self._formula_bar.set_loop_active(False)
 
     def _py_loop_tick(self):
         """Re-run any =PY loop cell whose interval has elapsed."""
