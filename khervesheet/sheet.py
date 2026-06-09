@@ -6040,15 +6040,22 @@ class SheetWidget(QWidget):
                 if (r, c) not in selected:
                     row_data.append("")
                     continue
-                # Copy the formula if the cell has one, else display text.
                 formula = self._cell_formulas.get((r, c))
-                if formula:
+                if formula and is_python_source(formula):
+                    # =PY cells are multi-line — they would break the TSV
+                    # row/column format.  Put display text into the TSV and
+                    # carry the full source in metadata so paste restores it.
+                    it = self.table.item(r, c)
+                    row_data.append(it.text() if it else "")
+                    cell_meta = meta.setdefault((dr, dc), {})
+                    cell_meta["py_formula"] = formula
+                elif formula:
                     row_data.append(formula)
                 else:
                     it = self.table.item(r, c)
                     row_data.append(it.text() if it else "")
                 # Collect metadata
-                cell_meta = {}
+                cell_meta = meta.get((dr, dc), {})
                 it = self.table.item(r, c)
                 # A real checkbox cell has CheckStateRole data set; the
                 # ItemIsUserCheckable flag alone is on by default for every
@@ -6071,9 +6078,21 @@ class SheetWidget(QWidget):
         QApplication.clipboard().setText(clip_text)
         self._copied_meta = meta
         self._copy_origin = (top, left)
+        # Collect charts that overlap the copied bounding box.
+        charts_data = []
+        for ch in getattr(self, '_charts', []):
+            cx, cy = ch.pos().x(), ch.pos().y()
+            cw, ch2 = ch.width(), ch.height()
+            # Check if the chart overlaps any cell in the selected range.
+            mid_r = self.table.rowAt(cy + ch2 // 2)
+            mid_c = self.table.columnAt(cx + cw // 2)
+            if (top <= mid_r <= bot and left <= mid_c <= right):
+                charts_data.append(ch.to_dict())
         # Share the metadata across sheets, tied to this clipboard text.
         global _CELL_CLIPBOARD
-        _CELL_CLIPBOARD = {"text": clip_text, "meta": meta}
+        _CELL_CLIPBOARD = {
+            "text": clip_text, "meta": meta, "charts": charts_data,
+        }
         # Start marching ants around the full bounding box.
         from PyQt5.QtWidgets import QTableWidgetSelectionRange
         self._start_marching_ants(
@@ -6258,6 +6277,24 @@ class SheetWidget(QWidget):
                     if meta:
                         dm = meta.get((dr, dc))
                         if dm:
+                            # =PY cells: the multi-line source was stored in
+                            # metadata to avoid breaking TSV row format.
+                            if "py_formula" in dm:
+                                py_src = dm["py_formula"]
+                                self._cell_formulas[(r, c)] = py_src
+                                self._register_py_deps(r, c, py_src)
+                                try:
+                                    dec = self._cell_decimals(r, c)
+                                    disp = self._evaluate_python(
+                                        py_src, r, c, dec)
+                                except Exception:
+                                    import traceback
+                                    disp = "#PYERR"
+                                    self._py_errors[(r, c)] = \
+                                        traceback.format_exc()
+                                it.setText(disp)
+                                self._shadow[(r, c)] = disp
+                                formula_cells.append((r, c))
                             if "checkbox" in dm:
                                 it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
                                 it.setCheckState(
@@ -6294,6 +6331,21 @@ class SheetWidget(QWidget):
             self.data_changed.emit(c)
             self._recalc_dependents(r, c)
         self._refresh_cross_sheet()
+        # Paste any charts that were inside the copied range.
+        charts_list = (_CELL_CLIPBOARD or {}).get("charts") or []
+        if charts_list and _CELL_CLIPBOARD.get("text") == text:
+            from .graph import EmbeddedChart
+            if not hasattr(self, '_charts'):
+                self._charts = []
+            viewport = self.table.viewport()
+            for cd in charts_list:
+                try:
+                    ch = EmbeddedChart.from_dict(cd, self, viewport)
+                    ch.show()
+                    ch.raise_()
+                    self._charts.append(ch)
+                except Exception:
+                    pass
         # Clear marching ants after paste.
         self._clear_marching_ants()
 
