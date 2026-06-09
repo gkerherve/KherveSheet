@@ -25,7 +25,7 @@ from PyQt5.QtWidgets import (
     QDockWidget, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QPlainTextEdit, QToolButton, QScrollArea, QFrame,
     QDialog, QLineEdit, QComboBox, QFormLayout, QDialogButtonBox,
-    QSizePolicy, QShortcut, QApplication,
+    QSizePolicy, QShortcut, QApplication, QPushButton, QGridLayout,
 )
 
 from .ai_backend import AiBackend, HAVE_ANTHROPIC
@@ -525,6 +525,149 @@ class _ChatInput(QPlainTextEdit):
         super().insertFromMimeData(source)
 
 
+# ── Example-prompts help dialog ──────────────────────────────────
+
+_EXAMPLE_PROMPTS = [
+    ("Bouncing Ball with Gravity",
+     "Write a =PY program in D5 that animates a bouncing ball with "
+     "realistic gravity. The ball should bounce off the floor and walls, "
+     "losing energy on each bounce. Show it as a live matplotlib animation."),
+
+    ("Damped Harmonic Oscillator",
+     "Write a =PY program in D5 that simulates a damped harmonic "
+     "oscillator. Solve the ODE m*x'' + c*x' + k*x = 0 with scipy and "
+     "plot displacement vs time, overlaying the exponential decay envelope."),
+
+    ("Monte Carlo Pi Estimation",
+     "Write a =PY program in D5 that estimates pi using a Monte Carlo "
+     "method. Throw 10 000 random darts at a unit square and plot the "
+     "points (colour inside/outside the quarter-circle). Display the "
+     "estimated pi value on the chart."),
+
+    ("Projectile Motion with Drag",
+     "Write a =PY program in D5 that simulates projectile motion with "
+     "quadratic air resistance. Compare trajectories for different launch "
+     "angles (30, 45, 60 degrees) on a single plot, alongside the ideal "
+     "no-drag parabola."),
+
+    ("2D Heat Equation (Diffusion)",
+     "Write a =PY program in D5 that solves the 2D heat equation on a "
+     "square plate using finite differences. Start with a hot centre spot "
+     "and show the final temperature distribution as a heatmap with a "
+     "colour bar."),
+
+    ("Fourier Series Approximation",
+     "Write a =PY program in D5 that builds the Fourier series "
+     "approximation of a square wave. Plot the original wave alongside "
+     "partial sums with N = 1, 3, 7, 15 terms and show how the Gibbs "
+     "phenomenon appears."),
+
+    ("Double Pendulum Chaos",
+     "Write a =PY program in D5 that simulates a double pendulum using "
+     "scipy.integrate.solve_ivp. Plot the trajectory of the lower bob "
+     "in the x-y plane and colour it by time to reveal chaotic motion."),
+
+    ("Radioactive Decay Chain",
+     "Write a =PY program in D5 that simulates a three-stage radioactive "
+     "decay chain (A -> B -> C -> stable) by solving the coupled ODEs. "
+     "Plot the number of atoms of each species vs time."),
+
+    ("Lorenz Attractor",
+     "Write a =PY program in D5 that integrates the Lorenz system "
+     "(sigma=10, rho=28, beta=8/3) and plots the 3D attractor using "
+     "mpl_toolkits.mplot3d, coloured by the z-coordinate."),
+
+    ("Mandelbrot Set",
+     "Write a =PY program in D5 that renders the Mandelbrot set. "
+     "Compute escape times on a 800x600 grid for the region "
+     "x in [-2, 0.8], y in [-1.2, 1.2] and display the result as "
+     "a high-resolution image with a 'hot' colour map."),
+
+    ("XPS Peak Fitting (Gaussian + Shirley)",
+     "Write a =PY program in D5 that generates a synthetic XPS C 1s "
+     "spectrum with 3 Gaussian peaks on a Shirley background, adds "
+     "Poisson noise, then fits it back with scipy.optimize.curve_fit. "
+     "Plot data, individual components, total fit, and residual."),
+
+    ("Predator-Prey (Lotka-Volterra)",
+     "Write a =PY program in D5 that solves the Lotka-Volterra "
+     "predator-prey equations. Plot both populations vs time and also "
+     "the phase portrait (prey vs predator)."),
+
+    ("Random Walk & Diffusion",
+     "Write a =PY program in D5 that simulates 50 independent 2D "
+     "random walks of 1000 steps each. Plot all trajectories in faint "
+     "colour and overlay the mean-square displacement vs step number to "
+     "verify the diffusion law <r^2> = 4Dt."),
+
+    ("Blackbody Radiation (Planck's Law)",
+     "Write a =PY program in D5 that plots Planck's blackbody spectral "
+     "radiance for temperatures 3000 K, 4000 K, 5000 K, and 6000 K. "
+     "Mark the Wien displacement peak on each curve."),
+
+    ("Particle-in-a-Box Wavefunctions",
+     "Write a =PY program in D5 that plots the first 5 energy levels "
+     "and wavefunctions of a quantum particle in a 1D box. Offset each "
+     "wavefunction vertically by its energy level."),
+
+    ("Stellar HR Diagram",
+     "Write a =PY program in D5 that generates a synthetic "
+     "Hertzsprung-Russell diagram. Scatter-plot ~500 stars with "
+     "temperature on an inverted x-axis and luminosity on a log y-axis, "
+     "colouring by spectral class (O B A F G K M)."),
+]
+
+
+class _AiHelpDialog(QDialog):
+    """Dialog showing clickable example prompts for the AI chat."""
+
+    prompt_chosen = pyqtSignal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Example Prompts — =PY Programs")
+        self.resize(680, 520)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(8)
+
+        info = QLabel(
+            "Click any example below to paste it into the chat input. "
+            "All examples create a <b>=PY</b> Python program in cell D5."
+        )
+        info.setWordWrap(True)
+        layout.addWidget(info)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        inner = QWidget()
+        grid = QVBoxLayout(inner)
+        grid.setSpacing(6)
+        grid.setContentsMargins(4, 4, 4, 4)
+
+        for title, prompt in _EXAMPLE_PROMPTS:
+            btn = QPushButton(title)
+            btn.setToolTip(prompt)
+            btn.setStyleSheet(
+                "QPushButton { text-align: left; padding: 8px 12px; }"
+            )
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda checked, p=prompt: self._choose(p))
+            grid.addWidget(btn)
+
+        grid.addStretch()
+        scroll.setWidget(inner)
+        layout.addWidget(scroll, stretch=1)
+
+        close_btn = QDialogButtonBox(QDialogButtonBox.Close)
+        close_btn.rejected.connect(self.reject)
+        layout.addWidget(close_btn)
+
+    def _choose(self, prompt: str):
+        self.prompt_chosen.emit(prompt)
+        self.accept()
+
+
 # ── Chat dock widget ──────────────────────────────────────────────
 
 class AiChatDock(QDockWidget):
@@ -567,6 +710,11 @@ class AiChatDock(QDockWidget):
         larger_btn.setToolTip("Increase text size")
         larger_btn.clicked.connect(lambda: self._change_font(+1))
         header.addWidget(larger_btn)
+        help_btn = QToolButton()
+        help_btn.setIcon(icons.themed_icon("mdi.help-circle-outline"))
+        help_btn.setToolTip("Example prompts")
+        help_btn.clicked.connect(self._open_help)
+        header.addWidget(help_btn)
         gear_btn = QToolButton()
         gear_btn.setIcon(icons.themed_icon("mdi.cog"))
         gear_btn.setToolTip("AI Chat settings")
@@ -761,6 +909,15 @@ class AiChatDock(QDockWidget):
         dlg = ApiKeyDialog(self)
         if dlg.exec_():
             self._update_title()
+
+    def _open_help(self):
+        dlg = _AiHelpDialog(self)
+        dlg.prompt_chosen.connect(self._insert_prompt)
+        dlg.exec_()
+
+    def _insert_prompt(self, text: str):
+        self._input.setPlainText(text)
+        self._input.setFocus()
 
     def _clear_chat(self):
         # Remove all bubbles.
