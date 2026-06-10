@@ -238,6 +238,9 @@ class PythonRuntime:
         g["math"] = math
         try:
             import numpy as np
+            # NumPy 2.0 renamed trapz → trapezoid; shim for 1.x bundles
+            if not hasattr(np, "trapezoid"):
+                np.trapezoid = np.trapz          # type: ignore[attr-defined]
             g["np"] = np
             g["numpy"] = np
         except Exception:
