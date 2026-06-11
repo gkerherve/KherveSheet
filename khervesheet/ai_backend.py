@@ -50,7 +50,10 @@ TOOLS = [
         "name": "read_cells",
         "description": (
             "Read cell values from a rectangular range in a sheet. "
-            "Returns a 2D list of string values."
+            "Returns a 2D list of displayed string values. Also returns "
+            "a 'formulas' dict mapping cell refs (e.g. 'B3') to their "
+            "underlying formula or =PY source code, so you can read and "
+            "modify Python code in cells."
         ),
         "input_schema": {
             "type": "object",
@@ -285,7 +288,8 @@ TOOLS = [
         "name": "read_selection",
         "description": (
             "Read the user's current cell selection "
-            "(active sheet, range, and values)."
+            "(active sheet, range, values, and underlying formulas/"
+            "=PY source code if any)."
         ),
         "input_schema": {
             "type": "object",
@@ -655,7 +659,9 @@ existing data, formatting, and charts untouched unless asked.
 - If you are unsure of the current contents of a cell or range, \
 use read_cells to check before writing.
 - Always read_cells first if you need to understand existing data \
-before modifying.
+before modifying. read_cells and read_selection return both the \
+displayed values AND the underlying formulas/=PY source code, so \
+you can read and modify Python code in cells.
 - EFFICIENCY IS CRITICAL — minimise tool calls. Batch as much as \
 possible into each format_cells call.
 

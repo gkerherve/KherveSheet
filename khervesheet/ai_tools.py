@@ -190,12 +190,19 @@ class AiToolExecutor:
             r2 = r1 + _MAX_READ_ROWS - 1
             truncated = True
         rows: List[List[str]] = []
+        formulas: Dict[str, str] = {}  # "B3" → "=SUM(A1:A5)" or "=PY\n..."
         for r in range(r1, r2 + 1):
             row = []
             for c in range(c1, c2 + 1):
                 row.append(sheet.cell_text(r, c))
+                f = sheet._cell_formulas.get((r, c))
+                if f:
+                    ref = f"{col_index_to_letter(c)}{r + 1}"
+                    formulas[ref] = f
             rows.append(row)
         result: dict = {"values": rows}
+        if formulas:
+            result["formulas"] = formulas
         if truncated:
             result["truncated"] = True
             result["note"] = (
@@ -215,13 +222,21 @@ class AiToolExecutor:
         r1, c1 = s.topRow(), s.leftColumn()
         r2, c2 = s.bottomRow(), s.rightColumn()
         rows: List[List[str]] = []
+        formulas: Dict[str, str] = {}
         for r in range(r1, r2 + 1):
             row = []
             for c in range(c1, c2 + 1):
                 row.append(sheet.cell_text(r, c))
+                f = sheet._cell_formulas.get((r, c))
+                if f:
+                    ref = f"{col_index_to_letter(c)}{r + 1}"
+                    formulas[ref] = f
             rows.append(row)
         rng = _range_label(r1, c1, r2, c2)
-        return {"sheet": name, "range": rng, "values": rows}
+        result: dict = {"sheet": name, "range": rng, "values": rows}
+        if formulas:
+            result["formulas"] = formulas
+        return result
 
     # ── Mutating tools ──────────────────────────────────────────
 
