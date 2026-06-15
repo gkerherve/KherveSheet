@@ -210,6 +210,9 @@ class MainWindow(QMainWindow):
         self._ai_chat_act = view_menu.addAction("AI Chat Sidebar")
         self._ai_chat_act.setCheckable(True)
         self._ai_chat_act.setChecked(False)
+        self._ai_chat_act.setIcon(icons.themed_icon("mdi.robot"))
+        self._ai_chat_act.setShortcut("Ctrl+Shift+A")
+        self._ai_chat_act.setToolTip("Show/hide AI Chat sidebar (Ctrl+Shift+A)")
         self._ai_chat_act.toggled.connect(self._toggle_ai_chat)
 
         # ── Insert ───────────────────────────────────────────────────
@@ -405,7 +408,7 @@ class MainWindow(QMainWindow):
         tools_menu.addSeparator()
         ai_act = tools_menu.addAction(
             "AI Chat\u2026",
-            lambda: self._ai_chat_act.setChecked(True))
+            lambda: self._ai_chat_act.toggle())
         ai_act.setIcon(icons.themed_icon("mdi.robot"))
 
         # ── Examples (its own top-level menu, before Help) ───────────
@@ -507,6 +510,10 @@ class MainWindow(QMainWindow):
                 lambda _=False, c=_cls: self._open_science_tool(c))
         self._science_btn.setMenu(sci_menu)
         std.addWidget(self._science_btn)
+
+        # ── AI Chat sidebar toggle (checkable, syncs with View menu) ─
+        std.addSeparator()
+        std.addAction(self._ai_chat_act)
 
         # Font toolbar
         fmt = self.addToolBar("Font")
@@ -4372,9 +4379,23 @@ class MainWindow(QMainWindow):
                 self._ai_dock = AiChatDock(self)
                 self.addDockWidget(Qt.RightDockWidgetArea, self._ai_dock)
             self._ai_dock.show()
+            self._ai_dock.raise_()
         elif hasattr(self, '_ai_dock'):
             self._ai_dock.hide()
         self._settings.setValue("ai/chat_visible", checked)
+
+    def _on_ai_dock_closed(self):
+        """Sync the toggle when the dock is closed via its own X button.
+
+        Called from ``AiChatDock.closeEvent``; updates the checkable
+        action without re-entering ``_toggle_ai_chat`` (which would hide
+        an already-closing dock).
+        """
+        if self._ai_chat_act.isChecked():
+            self._ai_chat_act.blockSignals(True)
+            self._ai_chat_act.setChecked(False)
+            self._ai_chat_act.blockSignals(False)
+            self._settings.setValue("ai/chat_visible", False)
 
     def _open_science_tool(self, dialog_cls):
         """Open a Science data-analysis tool dialog (non-modal)."""

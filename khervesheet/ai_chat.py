@@ -990,5 +990,10 @@ class AiChatDock(QDockWidget):
         sb.setValue(sb.maximum())
 
     def closeEvent(self, event):
+        # Closing via the dock's own X button must uncheck the View/
+        # toolbar toggle so it reflects the hidden state.
+        mw = self._mw
+        if mw is not None and hasattr(mw, "_on_ai_dock_closed"):
+            mw._on_ai_dock_closed()
         self._backend.shutdown()
         super().closeEvent(event)
