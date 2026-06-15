@@ -14,8 +14,8 @@ the Free Software Foundation, either version 3 of the License, or
 from typing import Optional
 
 from PyQt5.QtCore import QPointF, QRectF, Qt
-from PyQt5.QtGui import (QBrush, QColor, QFont, QIcon, QPainter, QPen,
-                         QPixmap, QPolygonF)
+from PyQt5.QtGui import (QBrush, QColor, QFont, QFontMetricsF, QIcon,
+                         QPainter, QPen, QPixmap, QPolygonF)
 from PyQt5.QtWidgets import QApplication, QStyle
 
 
@@ -137,18 +137,37 @@ def themed_icon(qta_name: str, std_fallback=None,
 
 
 def _draw_app_pixmap(size: int = 32) -> QPixmap:
-    """Render the green "KS" monogram at *size* pixels (crisp at any res)."""
+    """Render the green "Ksheet" wordmark at *size* px (crisp at any res).
+
+    The font is auto-fit so the word spans the tile width with a small
+    margin, staying legible from 16 px favicons up to 256 px.
+    """
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     p.setRenderHint(QPainter.Antialiasing, True)
+    p.setRenderHint(QPainter.TextAntialiasing, True)
     p.setBrush(QColor(34, 139, 34))
     p.setPen(Qt.NoPen)
     radius = max(1, size * 6 // 32)
     p.drawRoundedRect(0, 0, size, size, radius, radius)
+
+    text = "Ksheet"
+    margin = size * 0.14
+    avail = size - 2 * margin
+    # Pick the largest point size whose rendered width fits the tile.
+    font = QFont("Segoe UI", 10, QFont.Bold)
+    pt = 1.0
+    while True:
+        font.setPointSizeF(pt + 0.5)
+        fm = QFontMetricsF(font)
+        if fm.horizontalAdvance(text) > avail or pt > size:
+            break
+        pt += 0.5
+    font.setPointSizeF(pt)
+    p.setFont(font)
     p.setPen(Qt.white)
-    p.setFont(QFont("Segoe UI", max(6, size * 13 // 32), QFont.Bold))
-    p.drawText(pm.rect(), Qt.AlignCenter, "KS")
+    p.drawText(pm.rect(), Qt.AlignCenter, text)
     p.end()
     return pm
 
