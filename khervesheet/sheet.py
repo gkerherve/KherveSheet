@@ -6344,6 +6344,27 @@ class SheetWidget(QWidget):
         painter.setBrush(Qt.NoBrush)
         painter.drawRect(rect.adjusted(1, 1, -1, -1))
 
+    def _grow_for_paste(self, row, col, text):
+        """Expand the grid so a paste block starting at (row, col) fits
+        instead of silently truncating at the current extent (a fresh
+        sheet only reaches column Z until scrolled).  Columns cap at
+        MAX_COLS."""
+        lines = [ln for ln in text.split("\n") if ln]
+        if not lines:
+            return
+        need_rows = row + len(lines)
+        need_cols = min(self.MAX_COLS,
+                        col + max(ln.count("\t") + 1 for ln in lines))
+        grew = False
+        if need_rows > self.table.rowCount():
+            self.table.setRowCount(need_rows)
+            grew = True
+        if need_cols > self.table.columnCount():
+            self.table.setColumnCount(need_cols)
+            grew = True
+        if grew:
+            self._refresh_headers()
+
     def _paste_values_only(self):
         """Paste clipboard content as plain values (no formulas)."""
         text = QApplication.clipboard().text()
@@ -6353,6 +6374,7 @@ class SheetWidget(QWidget):
         col = self.table.currentColumn()
         if row < 0 or col < 0:
             return
+        self._grow_for_paste(row, col, text)
         changes = []
         self.table.blockSignals(True)
         try:
@@ -6410,6 +6432,7 @@ class SheetWidget(QWidget):
         col = self.table.currentColumn()
         if row < 0 or col < 0:
             return
+        self._grow_for_paste(row, col, text)
         # Use the shared in-app metadata only if it matches the clipboard
         # text (so it follows a copy across sheets, but an external paste
         # doesn't pick up stale formatting).
