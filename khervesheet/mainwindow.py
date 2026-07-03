@@ -1207,25 +1207,36 @@ class MainWindow(QMainWindow):
 
     def _save_file(self) -> bool:
         if self._current_file:
-            if self._current_file.endswith(".ksheet"):
+            low = self._current_file.lower()
+            if low.endswith(".ksheet"):
                 self._save_to_ksheet(self._current_file)
-            else:
+            elif low.endswith(".csv"):
                 self._save_to_csv(self._current_file)
+            else:
+                # Imported Excel (or anything else): overwriting the
+                # original would corrupt it — redirect to Save As with
+                # a .ksheet name suggested alongside the source file.
+                return self._save_file_as()
             self._undo_stack.setClean()
             return True
         return self._save_file_as()
 
     def _save_file_as(self) -> bool:
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save As", "",
+        suggested = ""
+        if self._current_file:
+            suggested = os.path.splitext(self._current_file)[0] + ".ksheet"
+        path, chosen_filter = QFileDialog.getSaveFileName(
+            self, "Save As", suggested,
             "KherveSheet (*.ksheet);;"
             "CSV Files (*.csv);;All Files (*)")
         if not path:
             return False
-        if path.endswith(".ksheet"):
-            self._save_to_ksheet(path)
-        else:
+        if not path.lower().endswith((".ksheet", ".csv")):
+            path += ".csv" if "CSV" in chosen_filter else ".ksheet"
+        if path.lower().endswith(".csv"):
             self._save_to_csv(path)
+        else:
+            self._save_to_ksheet(path)
         self._current_file = path
         self._add_recent(path)
         self._update_title()
