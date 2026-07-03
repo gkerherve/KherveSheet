@@ -1471,8 +1471,8 @@ class MainWindow(QMainWindow):
             if first is not None:
                 wb.tabs.setCurrentWidget(first)
 
-            # Reconstruct charts and floating text boxes now that the
-            # sheet viewports exist as valid parent widgets.
+            # Reconstruct charts, pictures and floating text boxes now
+            # that the sheet viewports exist as valid parent widgets.
             from . import excel_import
             for title in titles:
                 try:
@@ -1480,7 +1480,7 @@ class MainWindow(QMainWindow):
                         sheet_by_title[title], wb_f[title], sheet_by_title)
                 except Exception:
                     pass
-            excel_import.import_textboxes(path, sheet_by_title)
+            excel_import.import_drawings(path, sheet_by_title)
             self._status_msg(
                 f"Loaded {len(titles)} sheet(s) from {path}", 5000)
         except Exception as e:

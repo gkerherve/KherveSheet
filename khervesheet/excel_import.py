@@ -1,6 +1,6 @@
-"""Excel import extras — reconstruct embedded charts and floating
-text boxes from an .xlsx workbook (cell comments are handled inline by
-the main loader).
+"""Excel import extras — reconstruct embedded charts, pictures and
+floating text boxes from an .xlsx workbook (cell comments are handled
+inline by the main loader).
 
 Copyright (C) 2026 Gwilherm Kerherve
 
@@ -335,7 +335,8 @@ def import_charts(sheet, ws_f, sheet_by_title):
                                  y_col=ycol, row_start=yr0, row_end=yr1)
 
 
-# ── Text-box import (raw drawing XML — openpyxl can't read shapes) ──────
+# ── Drawing import: text boxes + pictures (raw drawing XML —
+#    openpyxl can't read shapes, and drops pictures without Pillow) ──────
 
 _NS = {
     "or": "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
@@ -344,9 +345,18 @@ _NS = {
     "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
 }
 _R_ID = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+_R_EMBED = ("{http://schemas.openxmlformats.org/officeDocument"
+            "/2006/relationships}embed")
+
+# OpenXML drawing offsets are in EMU; 9525 EMU per screen pixel (96 dpi).
+_EMU_PER_PX = 9525
 
 
 def _resolve(base, target):
+    # Absolute targets ('/xl/media/image1.png', as written by openpyxl)
+    # are package-root relative; zip entry names carry no leading slash.
+    if target.startswith("/"):
+        return posixpath.normpath(target).lstrip("/")
     return posixpath.normpath(posixpath.join(posixpath.dirname(base), target))
 
 
@@ -414,10 +424,101 @@ def _anchor_cell(node):
     return col, row
 
 
-def import_textboxes(path, sheet_by_title):
-    """Parse drawing XML for floating text boxes and recreate them as
-    real EmbeddedShape rectangles (with fill, outline and editable text)
-    positioned/sized from their cell anchors."""
+def _col_x(table, col):
+    """Pixel x of a column edge; columns beyond the table's current
+    extent count at the default section width."""
+    n = table.columnCount()
+    x = sum(table.columnWidth(c) for c in range(min(col, n)))
+    if col > n:
+        x += (col - n) * max(
+            table.horizontalHeader().defaultSectionSize(), 1)
+    return x
+
+
+def _row_y(table, row):
+    """Pixel y of a row edge; rows beyond the table's current extent
+    count at the default section height."""
+    n = table.rowCount()
+    y = sum(table.rowHeight(r) for r in range(min(row, n)))
+    if row > n:
+        y += (row - n) * max(
+            table.verticalHeader().defaultSectionSize(), 1)
+    return y
+
+
+def _anchor_px(node, table):
+    """Resolve an xdr:from / xdr:to node to viewport pixel coordinates,
+    including the sub-cell EMU offsets.  Returns (x, y) or None."""
+    if node is None:
+        return None
+
+    def _num(tag):
+        el = node.find(tag, _NS)
+        try:
+            return int(el.text) if el is not None and el.text else 0
+        except ValueError:
+            return 0
+
+    return (_col_x(table, _num("xdr:col"))
+            + _num("xdr:colOff") // _EMU_PER_PX,
+            _row_y(table, _num("xdr:row"))
+            + _num("xdr:rowOff") // _EMU_PER_PX)
+
+
+def _import_picture(zf, names, anc, pic, draw_rels, sheet):
+    """Recreate one <xdr:pic> as an EmbeddedImage on *sheet*.  Returns
+    True when an image was placed."""
+    from PyQt5.QtGui import QPixmap
+    from .embedded_image import EmbeddedImage
+
+    blip = pic.find("xdr:blipFill/a:blip", _NS)
+    if blip is None:
+        return False
+    target = draw_rels.get(blip.get(_R_EMBED))
+    if not target or target not in names:
+        return False
+    pm = QPixmap()
+    if not pm.loadFromData(zf.read(target)) or pm.isNull():
+        return False   # unsupported format (e.g. EMF/WMF)
+
+    table = sheet.table
+    frm = _anchor_px(anc.find("xdr:from", _NS), table)
+    if frm is None:
+        # absoluteAnchor positions in raw EMU instead of cell anchors.
+        pos = anc.find("xdr:pos", _NS)
+        if pos is None:
+            return False
+        frm = (int(pos.get("x") or 0) // _EMU_PER_PX,
+               int(pos.get("y") or 0) // _EMU_PER_PX)
+    x_px, y_px = frm
+
+    # Size: twoCellAnchor carries xdr:to; one/absoluteAnchor carry xdr:ext.
+    w_px = h_px = 0
+    to = _anchor_px(anc.find("xdr:to", _NS), table)
+    if to is not None:
+        w_px, h_px = to[0] - x_px, to[1] - y_px
+    else:
+        ext = anc.find("xdr:ext", _NS)
+        if ext is not None:
+            w_px = int(ext.get("cx") or 0) // _EMU_PER_PX
+            h_px = int(ext.get("cy") or 0) // _EMU_PER_PX
+
+    img = EmbeddedImage(pm, table.viewport())
+    img.move(max(0, x_px), max(0, y_px))
+    if w_px > 10 and h_px > 10:
+        img.resize(w_px, h_px)
+        img._aspect_ratio = w_px / max(h_px, 1)
+    if not hasattr(sheet, "_images"):
+        sheet._images = []
+    sheet._images.append(img)
+    img.show()
+    return True
+
+
+def import_drawings(path, sheet_by_title):
+    """Parse drawing XML for floating text boxes and pictures, and
+    recreate them as EmbeddedShape rectangles / EmbeddedImages
+    positioned and sized from their cell anchors."""
     from .shapes import EmbeddedShape
     touched = set()
     try:
@@ -451,9 +552,21 @@ def import_textboxes(path, sheet_by_title):
                     sheet._shapes = []
                 table = sheet.table
                 viewport = table.viewport()
+                draw_rels = _read_rels(
+                    zf, names,
+                    posixpath.dirname(draw_path) + "/_rels/"
+                    + posixpath.basename(draw_path) + ".rels")
 
                 d_root = ET.fromstring(zf.read(draw_path))
                 for anc in list(d_root):
+                    # Pictures (including those nested in group shapes).
+                    for pic in anc.findall(".//xdr:pic", _NS):
+                        try:
+                            if _import_picture(zf, names, anc, pic,
+                                               draw_rels, sheet):
+                                touched.add(sheet)
+                        except Exception:
+                            pass
                     sp = anc.find("xdr:sp", _NS)
                     if sp is None:
                         continue
