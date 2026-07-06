@@ -23,60 +23,8 @@ _FILL = "#228B22"
 _EDGE = "#1c7a1c"
 _INK = "#ffffff"
 
-# Each glyph is built in a unit box (x, y in 0..1, y downward). Caps fill
-# the box height; lowercase glyphs sit on the baseline (y=1) at *xh* of it.
-
-
-def _glyph_K():
-    w = 0.82
-    p = QPainterPath()
-    p.moveTo(0.0, 0.0); p.lineTo(0.0, 1.0)
-    p.moveTo(0.0, 0.52); p.lineTo(w, 0.0)
-    p.moveTo(0.0, 0.52); p.lineTo(w, 1.0)
-    return p, w
-
-
-def _glyph_S():
-    w = 0.64
-    p = QPainterPath()
-    p.moveTo(0.60, 0.20)
-    p.cubicTo(0.54, 0.00, 0.08, 0.00, 0.06, 0.26)
-    p.cubicTo(0.04, 0.46, 0.60, 0.46, 0.58, 0.70)
-    p.cubicTo(0.56, 1.00, 0.10, 1.00, 0.04, 0.78)
-    return p, w
-
-
-def _glyph_h(xh):
-    w = 0.64
-    top = 1.0 - xh
-    p = QPainterPath()
-    p.moveTo(0.0, 0.0); p.lineTo(0.0, 1.0)               # full-height stem
-    p.moveTo(0.0, top + 0.12)                            # shoulder + right leg
-    p.cubicTo(0.0, top, w, top, w, top + 0.12)
-    p.lineTo(w, 1.0)
-    return p, w
-
-
-def _glyph_e(xh):
-    w = 0.66
-    top = 1.0 - xh
-    a, b = 0.03, w - 0.03
-    mid = top + xh * 0.42
-    p = QPainterPath()
-    p.moveTo(b - 0.02, mid)                              # bowl, open lower-right
-    p.cubicTo(b + 0.03, top - 0.03, a - 0.03, top - 0.03, a, mid)
-    p.cubicTo(a - 0.03, 1.0, b + 0.03, 1.0, b, 1.0 - xh * 0.20)
-    p.moveTo(a + 0.02, mid); p.lineTo(b - 0.02, mid)     # crossbar
-    return p, w
-
-
-def _glyph_t(xh):
-    w = 0.42
-    top = 1.0 - xh
-    p = QPainterPath()
-    p.moveTo(w * 0.40, top - 0.16); p.lineTo(w * 0.40, 0.96)   # stem
-    p.moveTo(0.0, top); p.lineTo(w, top)                       # crossbar
-    return p, w
+# The grid schematic is a stroked vector path (font-independent); the
+# "KSheet" wordmark itself is drawn with a normal system font.
 
 
 def _stroke(p, path, color, box, weight):
@@ -107,19 +55,24 @@ def _tile(p, s):
     return rect
 
 
-def _wordmark(p, rect):
-    xh = 0.66
-    items = [_glyph_K(), _glyph_S(), _glyph_h(xh), _glyph_e(xh),
-             _glyph_e(xh), _glyph_t(xh)]
-    gap = 0.10
-    total = sum(w for _p, w in items) + gap * (len(items) - 1)
-    pad_x, pad_y = rect.width() * 0.11, rect.height() * 0.22
-    ch = min(rect.height() - 2 * pad_y, (rect.width() - 2 * pad_x) / total)
-    x = rect.x() + (rect.width() - total * ch) / 2.0
-    top = rect.y() + (rect.height() - ch) / 2.0
-    for path, gw in items:
-        _stroke(p, path, _INK, QRectF(x, top, gw * ch, ch), 0.15)
-        x += (gw + gap) * ch
+def _wordmark(p, rect, text):
+    """Draw *text* centred in *rect* with a normal bold system font,
+    scaled up to the largest size that still fits the tile width."""
+    from PyQt5.QtGui import QFont, QFontMetricsF
+    avail = rect.width() * 0.82
+    font = QFont("Segoe UI")
+    font.setBold(True)
+    size = 1.0
+    while size < rect.height():
+        font.setPointSizeF(size + 0.5)
+        fm = QFontMetricsF(font)
+        if fm.horizontalAdvance(text) > avail or fm.height() > rect.height():
+            break
+        size += 0.5
+    font.setPointSizeF(size)
+    p.setFont(font)
+    p.setPen(QColor(_INK))
+    p.drawText(rect, Qt.AlignCenter, text)
 
 
 def _grid(p, box):
@@ -143,7 +96,7 @@ def paint(size: int) -> QPixmap:
     s = float(size)
     rect = _tile(p, s)
     x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
-    _wordmark(p, QRectF(x, y + h * 0.05, w, h * 0.44))
+    _wordmark(p, QRectF(x, y + h * 0.05, w, h * 0.44), "KSheet")
     gw, gh = w * 0.46, h * 0.38
     _grid(p, QRectF(x + (w - gw) / 2.0, y + h * 0.54, gw, gh))
     p.end()
