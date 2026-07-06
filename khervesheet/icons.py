@@ -137,39 +137,12 @@ def themed_icon(qta_name: str, std_fallback=None,
 
 
 def _draw_app_pixmap(size: int = 32) -> QPixmap:
-    """Render the green "Ksheet" wordmark at *size* px (crisp at any res).
-
-    The font is auto-fit so the word spans the tile width with a small
-    margin, staying legible from 16 px favicons up to 256 px.
-    """
-    pm = QPixmap(size, size)
-    pm.fill(Qt.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.Antialiasing, True)
-    p.setRenderHint(QPainter.TextAntialiasing, True)
-    p.setBrush(QColor(34, 139, 34))
-    p.setPen(Qt.NoPen)
-    radius = max(1, size * 6 // 32)
-    p.drawRoundedRect(0, 0, size, size, radius, radius)
-
-    text = "Ksheet"
-    margin = size * 0.14
-    avail = size - 2 * margin
-    # Pick the largest point size whose rendered width fits the tile.
-    font = QFont("Segoe UI", 10, QFont.Bold)
-    pt = 1.0
-    while True:
-        font.setPointSizeF(pt + 0.5)
-        fm = QFontMetricsF(font)
-        if fm.horizontalAdvance(text) > avail or pt > size:
-            break
-        pt += 0.5
-    font.setPointSizeF(pt)
-    p.setFont(font)
-    p.setPen(Qt.white)
-    p.drawText(pm.rect(), Qt.AlignCenter, text)
-    p.end()
-    return pm
+    """Render the KherveSheet mark at *size* px (crisp at any res): a
+    "KSheet" wordmark above a spreadsheet grid on a green tile. Drawn as
+    stroked vector paths in ``appmark`` (Kherve-family icon style), so it
+    needs no system font and stays sharp from 16 px to 256 px."""
+    from . import appmark
+    return appmark.paint(size)
 
 
 def make_app_icon() -> QIcon:
