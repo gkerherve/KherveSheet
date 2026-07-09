@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel,
     QLineEdit, QComboBox, QDoubleSpinBox, QCheckBox, QPushButton,
     QDialogButtonBox, QGroupBox, QColorDialog, QSpinBox, QTabWidget,
-    QWidget,
+    QWidget, QListWidget, QSplitter, QScrollArea,
 )
 
 import matplotlib.patches as mpatches
@@ -250,17 +250,16 @@ class _ColorButton(QPushButton):
             self._update_swatch()
 
 
-class TextAnnotationDialog(QDialog):
-    """Edit properties of a text annotation."""
+class TextAnnotationEditor(QWidget):
+    """Embeddable property controls for a text annotation."""
 
     def __init__(self, ann_dict, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Text Annotation Properties")
-        self.setMinimumWidth(340)
         self._ann = ann_dict
         artist = ann_dict["artist"]
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         form = QFormLayout()
 
         # Text
@@ -360,13 +359,7 @@ class TextAnnotationDialog(QDialog):
         self._pos_y.setValue(xy[1])
         pf.addRow("Y:", self._pos_y)
         layout.addWidget(pos_group)
-
-        # Buttons
-        btns = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        layout.addWidget(btns)
+        layout.addStretch(1)
 
     def apply(self):
         """Apply properties to the annotation artist."""
@@ -399,20 +392,18 @@ class TextAnnotationDialog(QDialog):
 
 # ── Line / Arrow Properties Dialog ────────────────────────────────────
 
-class LineArrowPropertiesDialog(QDialog):
-    """Edit properties of a line segment or arrow annotation."""
+class LineArrowEditor(QWidget):
+    """Embeddable property controls for a line segment or arrow."""
 
     def __init__(self, ann_dict, parent=None):
         super().__init__(parent)
         atype = ann_dict["type"]
-        self.setWindowTitle(
-            "Arrow Properties" if atype == "arrow" else "Line Properties")
-        self.setMinimumWidth(360)
         self._ann = ann_dict
         artist = ann_dict["artist"]
         ap = artist.arrowprops if hasattr(artist, "arrowprops") else {}
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
 
         # ── Label (arrow only) ────────────────────────────────────────
         if atype == "arrow":
@@ -515,13 +506,7 @@ class LineArrowPropertiesDialog(QDialog):
         ef.addRow("End Y:", self._end_y)
 
         layout.addWidget(ep_group)
-
-        # Buttons
-        btns = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        btns.accepted.connect(self.accept)
-        btns.rejected.connect(self.reject)
-        layout.addWidget(btns)
+        layout.addStretch(1)
 
     def apply(self):
         """Apply properties to the annotation artist."""
@@ -567,3 +552,242 @@ class LineArrowPropertiesDialog(QDialog):
                 pass
         # Also store on the annotation so future redraws keep them.
         artist.arrowprops = new_props
+
+
+# ── Stand-alone property dialogs (thin wrappers) ──────────────────────
+
+class TextAnnotationDialog(QDialog):
+    """Modal wrapper around :class:`TextAnnotationEditor`."""
+
+    def __init__(self, ann_dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Text Annotation Properties")
+        self.setMinimumWidth(340)
+        self._editor = TextAnnotationEditor(ann_dict, self)
+        lay = QVBoxLayout(self)
+        lay.addWidget(self._editor)
+        btns = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+    def apply(self):
+        self._editor.apply()
+
+
+class LineArrowPropertiesDialog(QDialog):
+    """Modal wrapper around :class:`LineArrowEditor`."""
+
+    def __init__(self, ann_dict, parent=None):
+        super().__init__(parent)
+        atype = ann_dict["type"]
+        self.setWindowTitle(
+            "Arrow Properties" if atype == "arrow" else "Line Properties")
+        self.setMinimumWidth(360)
+        self._editor = LineArrowEditor(ann_dict, self)
+        lay = QVBoxLayout(self)
+        lay.addWidget(self._editor)
+        btns = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+    def apply(self):
+        self._editor.apply()
+
+
+# ── Annotations Manager ───────────────────────────────────────────────
+
+class AnnotationsManagerDialog(QDialog):
+    """Manage every annotation on a chart from a single place.
+
+    Left: a list of all text / arrow / line annotations.  Right: the
+    property editor for the selected one.  A Delete button removes the
+    selection.  This is the way to reach annotations that are hard to
+    click directly, and it replaces the individual property dialogs.
+    """
+
+    def __init__(self, chart, parent=None, preselect_idx=None):
+        super().__init__(parent)
+        self.setWindowTitle("Annotations Manager")
+        self.resize(640, 460)
+        self._chart = chart
+        self._editor = None
+        self._current_idx = -1
+
+        outer = QVBoxLayout(self)
+        split = QSplitter(Qt.Horizontal)
+        outer.addWidget(split, 1)
+
+        # ── Left: list + delete ──────────────────────────────────────
+        left = QWidget()
+        lv = QVBoxLayout(left)
+        lv.setContentsMargins(0, 0, 0, 0)
+        self._list = QListWidget()
+        self._list.setMinimumWidth(190)
+        lv.addWidget(self._list, 1)
+        self._del_btn = QPushButton("Delete")
+        self._del_btn.setToolTip("Remove the selected annotation")
+        self._del_btn.clicked.connect(self._delete_current)
+        lv.addWidget(self._del_btn)
+        split.addWidget(left)
+
+        # ── Right: editor host (scrollable) ──────────────────────────
+        self._scroll = QScrollArea()
+        self._scroll.setWidgetResizable(True)
+        self._right_host = QWidget()
+        self._right_layout = QVBoxLayout(self._right_host)
+        self._placeholder = QLabel(
+            "No annotation selected.\n\nAdd text, arrows or lines from the "
+            "chart's right-click menu, then edit them here.")
+        self._placeholder.setAlignment(Qt.AlignCenter)
+        self._placeholder.setWordWrap(True)
+        self._right_layout.addWidget(self._placeholder)
+        self._right_layout.addStretch(1)
+        self._scroll.setWidget(self._right_host)
+        split.addWidget(self._scroll)
+        split.setSizes([210, 430])
+
+        # ── Footer ───────────────────────────────────────────────────
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        apply_btn = QPushButton("Apply")
+        apply_btn.setToolTip("Apply the current edits to the chart")
+        apply_btn.clicked.connect(self._apply_current)
+        bb.addButton(apply_btn, QDialogButtonBox.ApplyRole)
+        bb.rejected.connect(self.reject)
+        outer.addWidget(bb)
+
+        self._list.currentRowChanged.connect(self._on_row_changed)
+        self._reload_list()
+        n = self._list.count()
+        if n:
+            if isinstance(preselect_idx, int) and 0 <= preselect_idx < n:
+                self._list.setCurrentRow(preselect_idx)
+            else:
+                self._list.setCurrentRow(0)
+        else:
+            self._del_btn.setEnabled(False)
+
+    # ── list helpers ──────────────────────────────────────────────────
+    @staticmethod
+    def _ann_label(i, a):
+        atype = a.get("type", "?")
+        artist = a.get("artist")
+        try:
+            text = artist.get_text()
+        except Exception:
+            text = a.get("text", "")
+        text = (text or "").strip()
+        if len(text) > 24:
+            text = text[:23] + "…"
+        if atype == "text":
+            body = f"“{text}”" if text else "(empty)"
+            return f"{i + 1}.  Text — {body}"
+        if atype == "arrow":
+            body = f" — “{text}”" if text else ""
+            return f"{i + 1}.  Arrow{body}"
+        if atype == "line":
+            return f"{i + 1}.  Line"
+        return f"{i + 1}.  {atype.title()}"
+
+    def _reload_list(self):
+        self._list.blockSignals(True)
+        self._list.clear()
+        for i, a in enumerate(self._chart._annotations):
+            self._list.addItem(self._ann_label(i, a))
+        self._list.blockSignals(False)
+
+    def _clear_editor(self):
+        if self._editor is not None:
+            self._right_layout.removeWidget(self._editor)
+            self._editor.setParent(None)
+            self._editor.deleteLater()
+            self._editor = None
+
+    # ── selection / editing ──────────────────────────────────────────
+    def _on_row_changed(self, row):
+        # Commit edits to the previously shown annotation first.
+        self._commit_current()
+        self._clear_editor()
+        self._current_idx = row
+        anns = self._chart._annotations
+        if row < 0 or row >= len(anns):
+            self._placeholder.show()
+            return
+        a = anns[row]
+        self._placeholder.hide()
+        if a["type"] == "text":
+            self._editor = TextAnnotationEditor(a, self._right_host)
+        else:
+            self._editor = LineArrowEditor(a, self._right_host)
+        self._right_layout.insertWidget(0, self._editor)
+        # Highlight it on the chart so the user sees which one it is.
+        try:
+            self._chart._select_annotation(row)
+        except Exception:
+            pass
+
+    def _commit_current(self):
+        """Apply pending editor edits to the current annotation."""
+        if self._editor is None:
+            return
+        idx = self._current_idx
+        anns = self._chart._annotations
+        if idx < 0 or idx >= len(anns):
+            return
+        a = anns[idx]
+        from .undo_commands import (_snapshot_annotation,
+                                     ModifyAnnotationCmd)
+        old_snap = _snapshot_annotation(a)
+        self._editor.apply()
+        new_snap = _snapshot_annotation(a)
+        if new_snap != old_snap:
+            undo = self._chart._get_undo_stack()
+            if undo is not None:
+                undo.push(ModifyAnnotationCmd(
+                    self._chart, a, old_snap, new_snap))
+            self._chart._canvas.draw_idle()
+        # Keep the list label in sync (text may have changed).
+        if 0 <= idx < self._list.count():
+            it = self._list.item(idx)
+            if it is not None:
+                it.setText(self._ann_label(idx, a))
+
+    def _apply_current(self):
+        self._commit_current()
+        idx = self._current_idx
+        # Refresh selection visuals to match the new geometry.
+        if 0 <= idx < len(self._chart._annotations):
+            try:
+                self._chart._select_annotation(idx)
+            except Exception:
+                pass
+
+    def _delete_current(self):
+        idx = self._current_idx
+        anns = self._chart._annotations
+        if idx < 0 or idx >= len(anns):
+            return
+        # Drop the editor first so the row change that follows does not
+        # try to commit edits to an annotation we are removing.
+        self._clear_editor()
+        self._current_idx = -1
+        try:
+            self._chart._select_annotation(idx)
+            self._chart._delete_selected_annotation()
+        except Exception:
+            pass
+        self._reload_list()
+        n = self._list.count()
+        if n:
+            self._list.setCurrentRow(min(idx, n - 1))
+        else:
+            self._del_btn.setEnabled(False)
+            self._placeholder.show()
+
+    def reject(self):
+        # Commit any pending edits before closing (covers Close and [X]).
+        self._commit_current()
+        super().reject()

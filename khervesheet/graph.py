@@ -2566,6 +2566,10 @@ class EmbeddedChart(QWidget):
         ann_menu.addAction("Add Text\u2026", self._add_text_annotation)
         ann_menu.addAction("Add Arrow\u2026", self._add_arrow_annotation)
         ann_menu.addAction("Add Line\u2026", self._add_line_annotation)
+        if self._annotations:
+            ann_menu.addSeparator()
+            ann_menu.addAction("Manage Annotations\u2026",
+                               lambda: self._open_annotations_manager())
         if self._selected_ann_idx >= 0:
             ann_menu.addSeparator()
             ann_menu.addAction("Properties\u2026",
@@ -2932,40 +2936,20 @@ class EmbeddedChart(QWidget):
         self._canvas.draw_idle()
 
     def _open_annotation_properties(self):
-        """Open the property dialog for the selected annotation."""
-        if self._selected_ann_idx < 0:
+        """Open the Annotations Manager on the selected annotation."""
+        self._open_annotations_manager(self._selected_ann_idx)
+
+    def _open_annotations_manager(self, preselect_idx=None):
+        """Open the Annotations Manager (list + properties + delete)."""
+        if not self._annotations:
             return
-        a = self._annotations[self._selected_ann_idx]
-        from .undo_commands import _snapshot_annotation, ModifyAnnotationCmd
-        old_snap = _snapshot_annotation(a)
-        if a["type"] == "text":
-            from .annotation_tools import TextAnnotationDialog
-            dlg = TextAnnotationDialog(a, self)
-            if dlg.exec_() == QDialog.Accepted:
-                dlg.apply()
-                new_snap = _snapshot_annotation(a)
-                undo = self._get_undo_stack()
-                if undo is not None:
-                    undo.push(ModifyAnnotationCmd(
-                        self, a, old_snap, new_snap))
-                idx = self._selected_ann_idx
-                self._deselect_annotation()
-                self._select_annotation(idx)
-                self._canvas.draw_idle()
-        elif a["type"] in ("arrow", "line"):
-            from .annotation_tools import LineArrowPropertiesDialog
-            dlg = LineArrowPropertiesDialog(a, self)
-            if dlg.exec_() == QDialog.Accepted:
-                dlg.apply()
-                new_snap = _snapshot_annotation(a)
-                undo = self._get_undo_stack()
-                if undo is not None:
-                    undo.push(ModifyAnnotationCmd(
-                        self, a, old_snap, new_snap))
-                idx = self._selected_ann_idx
-                self._deselect_annotation()
-                self._select_annotation(idx)
-                self._canvas.draw_idle()
+        if not isinstance(preselect_idx, int) or preselect_idx < 0:
+            preselect_idx = (self._selected_ann_idx
+                             if self._selected_ann_idx >= 0 else None)
+        from .annotation_tools import AnnotationsManagerDialog
+        dlg = AnnotationsManagerDialog(self, self, preselect_idx)
+        dlg.exec_()
+        self._canvas.draw_idle()
 
     def keyPressEvent(self, event):
         """Delete selected annotation on Delete/Backspace."""
