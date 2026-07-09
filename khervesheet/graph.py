@@ -1363,7 +1363,7 @@ class EmbeddedChart(QWidget):
             title = lp.get("title")
             if title:
                 kw["title"] = title
-            leg = self._install_legend(ax, **kw)
+            leg = chart._install_legend(ax, **kw)
             if leg:
                 leg.set_draggable(True)
                 lc = lp.get("label_color", "#000000")
@@ -1633,7 +1633,7 @@ class EmbeddedChart(QWidget):
             title = lp.get("title")
             if title:
                 kw["title"] = title
-            leg = self._install_legend(ax, **kw)
+            leg = chart._install_legend(ax, **kw)
             if leg:
                 leg.set_draggable(True)
                 lc = lp.get("label_color", "#000000")
