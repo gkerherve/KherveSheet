@@ -3558,21 +3558,38 @@ class _AddSeriesDialog(QDialog):
         layout.addWidget(btns)
 
         self._pick_target = None
-        self._prev_sel_callback = None
+        self._parent_dlg = parent
 
     # ── Pick mode ────────────────────────────────────────────────
+    def _status(self, text, timeout=0):
+        """Route a status message to the main window, if reachable.
+
+        The sheet is a ``SheetWidget`` and has no ``_status_msg`` of its
+        own — that lives on the ``MainWindow``.  Calling it on the sheet
+        raised an ``AttributeError`` inside the button slot, which aborts
+        the whole process.  Reach the top-level window instead.
+        """
+        win = self._sheet.window()
+        if hasattr(win, "_status_msg"):
+            win._status_msg(text, timeout)
+
     def _start_pick(self, line_edit):
-        """Hide the dialog and wait for a column selection on the sheet."""
+        """Collapse the dialog chain and wait for a sheet selection."""
+        if self._pick_target is not None:
+            return  # a pick is already in progress
         self._pick_target = line_edit
+        # Hide this dialog *and* the modal parent, otherwise the parent
+        # keeps blocking input to the grid and the pick can never land.
         self.hide()
+        if self._parent_dlg is not None:
+            self._parent_dlg.hide()
         table = self._sheet.table
         # Connect to column header click.
         hdr = table.horizontalHeader()
         hdr.sectionClicked.connect(self._on_header_click)
         # Also allow clicking any cell.
-        self._prev_sel_callback = None
         table.cellPressed.connect(self._on_cell_click)
-        self._sheet._status_msg(
+        self._status(
             "Click a column header or cell to select the range\u2026")
 
     def _finish_pick(self, col_idx):
@@ -3600,8 +3617,11 @@ class _AddSeriesDialog(QDialog):
         if self._pick_target is not None:
             self._pick_target.setText(rng)
             self._pick_target = None
-        self._sheet._status_msg("", 0)
+        self._status("", 0)
+        if self._parent_dlg is not None:
+            self._parent_dlg.show()
         self.show()
+        self.raise_()
         self.activateWindow()
 
     def _on_header_click(self, logical_idx):
