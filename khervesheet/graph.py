@@ -21,7 +21,7 @@ from PyQt5.QtWidgets import (
     QComboBox, QLineEdit, QFormLayout, QDialogButtonBox,
     QWidget, QCheckBox, QMenu, QInputDialog, QGroupBox, QSpinBox,
     QSplitter, QTabWidget, QListWidget, QDoubleSpinBox,
-    QColorDialog, QToolButton, QApplication,
+    QColorDialog, QToolButton, QApplication, QMessageBox,
 )
 
 import matplotlib
@@ -593,9 +593,7 @@ class EmbeddedChart(QWidget):
             self._redraw_bars()
 
         if plot_type not in ("Heatmap", "3D Surface"):
-            leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
-            if leg:
-                leg.set_draggable(True)
+            self._install_legend(ax)
         ax.set_xlabel("X")
         ax.set_ylabel("Y")
         self._canvas.draw_idle()
@@ -694,9 +692,7 @@ class EmbeddedChart(QWidget):
                   _colors=colors)
         # Refresh legend.
         if self._ax.get_legend() is not None:
-            leg = self._ax.legend(loc="best", framealpha=0.8, fontsize=8)
-            if leg:
-                leg.set_draggable(True)
+            self._install_legend()
         self._canvas.draw_idle()
 
     def _redraw_pie(self):
@@ -803,9 +799,7 @@ class EmbeddedChart(QWidget):
             self._redraw_bars()
         # Refresh legend (skip for heatmap / 3-D surface).
         if new_plot_type not in ("Heatmap", "3D Surface"):
-            leg = self._ax.legend(loc="best", framealpha=0.8, fontsize=8)
-            if leg:
-                leg.set_draggable(True)
+            self._install_legend()
         else:
             old_leg = self._ax.get_legend()
             if old_leg is not None:
@@ -1369,7 +1363,7 @@ class EmbeddedChart(QWidget):
             title = lp.get("title")
             if title:
                 kw["title"] = title
-            leg = ax.legend(**kw)
+            leg = self._install_legend(ax, **kw)
             if leg:
                 leg.set_draggable(True)
                 lc = lp.get("label_color", "#000000")
@@ -1639,7 +1633,7 @@ class EmbeddedChart(QWidget):
             title = lp.get("title")
             if title:
                 kw["title"] = title
-            leg = ax.legend(**kw)
+            leg = self._install_legend(ax, **kw)
             if leg:
                 leg.set_draggable(True)
                 lc = lp.get("label_color", "#000000")
@@ -1808,7 +1802,7 @@ class EmbeddedChart(QWidget):
                 "fancybox": lp.get("fancybox", True),
                 "ncol": lp.get("ncol", 1),
             }
-            leg = ax.legend(**kw)
+            leg = self._install_legend(ax, **kw)
             if leg:
                 leg.set_draggable(True)
             self._legend_props = dict(lp)
@@ -2064,9 +2058,7 @@ class EmbeddedChart(QWidget):
             if artist is not None and hasattr(artist, "set_label"):
                 artist.set_label(text)
         if refresh_legend and self._ax.get_legend() is not None:
-            leg = self._ax.legend(loc="best", framealpha=0.8, fontsize=8)
-            if leg:
-                leg.set_draggable(True)
+            self._install_legend()
             self._canvas.draw_idle()
 
     def _refresh_data(self):
@@ -2466,7 +2458,7 @@ class EmbeddedChart(QWidget):
                     nxt = None
             elif nxt == "series":
                 dlg = PlotDetailsDialog(self)
-                res = dlg.exec_()
+                res = dlg.run()
                 if res == QDialog.Accepted:
                     dlg.apply_to_chart(self)
                     nxt = None
@@ -3073,6 +3065,62 @@ class EmbeddedChart(QWidget):
                 keep.append((idx, artist))
         self._fill_artists = keep
 
+    # ── Legend building ───────────────────────────────────────────────
+    def _legend_handles_labels(self, ax):
+        """Return (handles, labels), using a filled-rectangle swatch for
+        any series that has an area fill so the legend reflects the fill
+        instead of showing a plain line."""
+        handles, labels = ax.get_legend_handles_labels()
+        if not self._fill_artists or not handles:
+            return handles, labels
+        from matplotlib.patches import Patch
+        fills = {idx: fc for idx, fc in self._fill_artists}
+        art2idx = {id(s.get("artist")): i
+                   for i, s in enumerate(self._series)
+                   if s.get("artist") is not None}
+        new_handles = []
+        for h, lab in zip(handles, labels):
+            fc = fills.get(art2idx.get(id(h)))
+            if fc is None:
+                new_handles.append(h)
+                continue
+            # Face = the fill colour (keeps its translucency); edge and
+            # width = the line's, so the swatch reads as "filled line".
+            try:
+                face = fc.get_facecolor()
+                if hasattr(face, "__len__") and len(face):
+                    face = face[0]
+            except Exception:
+                face = None
+            edge, lw = None, 1.0
+            try:
+                edge = h.get_color()
+                lw = h.get_linewidth()
+            except Exception:
+                pass
+            new_handles.append(Patch(
+                facecolor=face if face is not None else edge,
+                edgecolor=edge, linewidth=lw, label=lab))
+        return new_handles, labels
+
+    def _install_legend(self, ax=None, **kw):
+        """(Re)build the legend on *ax* with fill-aware swatches."""
+        ax = ax if ax is not None else self._ax
+        handles, labels = self._legend_handles_labels(ax)
+        if not handles:
+            existing = ax.get_legend()
+            if existing is not None:
+                existing.remove()
+            return None
+        kw.setdefault("loc", "best")
+        kw.setdefault("framealpha", 0.8)
+        if "prop" not in kw:
+            kw.setdefault("fontsize", 8)
+        leg = ax.legend(handles, labels, **kw)
+        if leg:
+            leg.set_draggable(True)
+        return leg
+
     # ── Event filter on canvas ─────────────────────────────────────
     def eventFilter(self, obj, event):
         """Intercept mouse events on the canvas for drag / resize.
@@ -3493,7 +3541,52 @@ class _ColorButton(QPushButton):
             self._update_style()
 
 
-class _AddSeriesDialog(QDialog):
+class _HideSafeModalDialog(QDialog):
+    """A modal dialog whose modal loop survives ``hide()`` / ``show()``.
+
+    ``QDialog.exec_()`` returns the instant the dialog is hidden.  That
+    breaks the Add-Series column picker, which hides the dialog (and its
+    parent) so the user can click the sheet grid: exec_ returned
+    ``Rejected`` immediately, so no series was ever added.
+
+    ``run()`` spins its own ``QEventLoop`` instead.  Hiding then merely
+    relinquishes the modal block (the grid becomes clickable) and
+    re-showing restores it — without ending the loop.  Only accept /
+    reject / done end it.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._run_loop = None
+        self._run_result = QDialog.Rejected
+
+    def run(self):
+        """Show modally and block until accept/reject, surviving hide()."""
+        from PyQt5.QtCore import QEventLoop
+        self._run_result = QDialog.Rejected
+        self.setModal(True)
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        self._run_loop = QEventLoop()
+        self._run_loop.exec_()
+        self._run_loop = None
+        return self._run_result
+
+    def done(self, code):
+        # If run() is driving us, quit our own loop; otherwise fall back
+        # to the normal QDialog behaviour (in case exec_() is ever used).
+        loop = self._run_loop
+        if loop is not None:
+            self._run_result = int(code)
+            self.hide()
+            if loop.isRunning():
+                loop.quit()
+        else:
+            super().done(code)
+
+
+class _AddSeriesDialog(_HideSafeModalDialog):
     """Dialog for adding a chart series with mouse-pick support.
 
     Provides Y-range (required) and X-range (optional) fields, each with
@@ -3625,7 +3718,7 @@ class _AddSeriesDialog(QDialog):
         return result
 
 
-class PlotDetailsDialog(QDialog):
+class PlotDetailsDialog(_HideSafeModalDialog):
     """Series Properties — per-series list + property tabs."""
 
     def __init__(self, chart, parent=None):
@@ -3748,7 +3841,7 @@ class PlotDetailsDialog(QDialog):
         if not sheet:
             return
         dlg = _AddSeriesDialog(sheet, self)
-        if dlg.exec_() != QDialog.Accepted:
+        if dlg.run() != QDialog.Accepted:
             return
         y_rng = dlg.y_range.text().strip()
         x_rng = dlg.x_range.text().strip()
@@ -3777,6 +3870,11 @@ class PlotDetailsDialog(QDialog):
         mask = ~(np.isnan(x_slice) | np.isnan(y_slice))
         x, y = x_slice[mask], y_slice[mask]
         if len(x) == 0:
+            QMessageBox.information(
+                self, "Add Series",
+                f"No numeric data found in {y_rng or 'the chosen range'}.\n\n"
+                "Pick a column that contains numbers, or check that the "
+                "range covers the data rows.")
             return
         chart.add_series(x, y, label, "Line", y_col=y_col,
                          row_start=r1, row_end=r2)
@@ -3826,9 +3924,7 @@ class PlotDetailsDialog(QDialog):
         for s in chart._series:
             self.fill_target.addItem(s["label"])
         # Refresh legend.
-        leg = chart._ax.legend(loc="best", framealpha=0.8, fontsize=8)
-        if leg:
-            leg.set_draggable(True)
+        chart._install_legend()
         chart._canvas.draw_idle()
         if self._series_list.count():
             self._series_list.setCurrentRow(
@@ -4334,9 +4430,7 @@ class PlotDetailsDialog(QDialog):
             pt = s.get("plot_type", "")
             if pt not in ("Heatmap", "3D Surface"):
                 if ax.get_legend() is not None:
-                    leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
-                    if leg:
-                        leg.set_draggable(True)
+                    chart._install_legend(ax)
             else:
                 old_leg = ax.get_legend()
                 if old_leg is not None:
@@ -4735,7 +4829,8 @@ class LegendEditorDialog(QDialog):
         prop = {"family": font_family, "size": font_size,
                 "weight": font_weight, "style": font_style}
 
-        leg = ax.legend(
+        leg = chart._install_legend(
+            ax,
             loc="best",
             prop=prop,
             frameon=self._frame_chk.isChecked(),
