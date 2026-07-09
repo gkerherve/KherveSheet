@@ -771,4 +771,31 @@ def main():
     from .mainwindow import MainWindow
     w = MainWindow()
     w.show()
+
+    # Open a document passed on the command line (e.g. double-clicking a
+    # .ksheet in the file explorer hands the path to the app as argv[1]).
+    path = _file_arg_to_open(app.arguments()[1:])
+    if path:
+        try:
+            w._open_path(path)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
     sys.exit(app.exec_())
+
+
+def _file_arg_to_open(args):
+    """Return the first command-line argument that is an openable file.
+
+    Skips Qt/option flags (anything starting with ``-``) and only
+    accepts paths with a recognised extension that exist on disk.
+    """
+    from .mainwindow import MainWindow
+    for arg in args:
+        if not arg or arg.startswith("-"):
+            continue
+        if arg.lower().endswith(MainWindow._OPENABLE_EXTS) and \
+                os.path.isfile(arg):
+            return os.path.abspath(arg)
+    return None
