@@ -2233,11 +2233,19 @@ class EmbeddedChart(QWidget):
 
         self._show_data_active = True
         self._show_data_overlays = overlays
-        # Keep every chart above the range overlays so the column-colour
-        # highlights never bleed over a plot — not just the active one.
+        # Keep every embedded object above the range overlays so the
+        # column-colour highlights never bleed over a plot, picture, shape or
+        # equation — not just the active chart.
         for chart in getattr(sheet, "_charts", []):
             if chart is not self:
                 chart.raise_()
+        for obj in (list(getattr(sheet, "_images", []))
+                    + list(getattr(sheet, "_shapes", []))
+                    + list(getattr(sheet, "_equations", []))):
+            try:
+                obj.raise_()
+            except Exception:
+                pass
         self.raise_()
         if self._handle_overlay.isVisible():
             self._handle_overlay.raise_()
