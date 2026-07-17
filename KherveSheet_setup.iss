@@ -17,7 +17,9 @@
 #define MyAppName        "KherveSheet"
 #define MyAppPublisher   "Gwilherm Kerherve"
 #define MyAppExeName     "KherveSheet.exe"
-#define MyAppVersion     "0.1"
+#ifndef MyAppVersion
+  #define MyAppVersion   "0.1"
+#endif
 
 [Setup]
 ; Globally-unique app ID — keeps the uninstaller info tidy and lets
@@ -54,6 +56,20 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 Name: "fileassoc_ksheet"; Description: "Open .ksheet files with {#MyAppName}"; GroupDescription: "File associations:"; Flags: unchecked
 Name: "fileassoc_csv"; Description: "Open .csv files with {#MyAppName}"; GroupDescription: "File associations:"; Flags: unchecked
+
+[InstallDelete]
+; Wipe the previous payload before copying the new one.
+;
+; Inno overwrites files but never removes ones a newer build dropped, so
+; upgrading left the union of both builds behind. That is not merely untidy:
+; numpy renamed core -> _core between 1.x and 2.x, so an upgrade that changes
+; the numpy major leaves the old orphaned package next to the new one, and
+; h5py's extensions — ABI-bound to one numpy — then fail to import. The app
+; reported that as "h5py is required for .ksheet files".
+;
+; Everything here is build output reinstalled immediately below; no user data
+; lives under {app}.
+Type: filesandordirs; Name: "{app}\_internal"
 
 [Files]
 ; Sweep the entire PyInstaller dist folder — bootloader + _internal
