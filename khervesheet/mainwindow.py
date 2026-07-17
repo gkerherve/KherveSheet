@@ -10,6 +10,7 @@ the Free Software Foundation, either version 3 of the License, or
 
 import csv
 import os
+import sys
 
 from PyQt5.QtCore import Qt, QSize
 from PyQt5.QtGui import QColor, QIcon, QKeySequence, QFont
@@ -33,6 +34,31 @@ from .python_engine import is_python_source
 # References to extra windows opened via "New Window" so they are not
 # garbage-collected while still on screen.
 _OPEN_WINDOWS = []
+
+
+def _import_h5py(parent):
+    """Return the h5py module, or None after reporting why it is unusable.
+
+    A failed extension load ("DLL load failed", a mangled hdf5.dll) also
+    raises ImportError, so reporting every failure as "not installed" sends
+    users off to pip when the real fault is the bundle. In a frozen build pip
+    is never the answer, so the two cases get different advice and the
+    original exception text is always shown.
+    """
+    try:
+        import h5py
+        return h5py
+    except Exception as exc:
+        if getattr(sys, "frozen", False):
+            advice = ("This build of KherveSheet is missing a working copy of "
+                      "h5py. Please report the message above.")
+        else:
+            advice = "Install with: pip install h5py"
+        QMessageBox.warning(
+            parent, "HDF5 Unavailable",
+            f".ksheet files need h5py, which failed to load.\n\n"
+            f"{type(exc).__name__}: {exc}\n\n{advice}")
+        return None
 
 
 class MainWindow(QMainWindow):
@@ -1602,13 +1628,8 @@ class MainWindow(QMainWindow):
 
     # ── KherveSheet native HDF5 I/O ────────────────────────────────
     def _save_to_ksheet(self, path: str):
-        try:
-            import h5py
-        except ImportError:
-            QMessageBox.warning(
-                self, "Missing Library",
-                "h5py is required for .ksheet files.\n"
-                "Install with: pip install h5py")
+        h5py = _import_h5py(self)
+        if h5py is None:
             return
         import json
         import numpy as np
@@ -1905,13 +1926,8 @@ class MainWindow(QMainWindow):
         return False
 
     def _load_ksheet(self, path: str):
-        try:
-            import h5py
-        except ImportError:
-            QMessageBox.warning(
-                self, "Missing Library",
-                "h5py is required for .ksheet files.\n"
-                "Install with: pip install h5py")
+        h5py = _import_h5py(self)
+        if h5py is None:
             return
         import json
         import numpy as np

@@ -41,6 +41,14 @@ datas = [
     ("khervesheet/python_help.html", "khervesheet"),
     ("khervesheet/userguide.html", "khervesheet"),
 ]
+
+# Bake the resolved version into the frozen build — a PyInstaller bundle
+# never ships .git, so without this khervesheet/_version.py would fall
+# back to the placeholder "0.1.0". Write this file with the real
+# git-derived version just before invoking PyInstaller.
+_version_file = ROOT / "khervesheet" / "VERSION"
+if _version_file.is_file():
+    datas.append((str(_version_file), "khervesheet"))
 binaries = []
 hiddenimports = ["khervesheet"]
 
@@ -48,28 +56,53 @@ hiddenimports = ["khervesheet"]
 # miss.  numpy / scipy / pandas / matplotlib / PyQt5 have good built-in
 # hooks, so they are deliberately NOT collect_all'd here (that would bloat
 # the build).  AI backends are optional — collected only if installed.
-_collect = [
+#
+# Split into required vs optional.  A missing *required* package must abort
+# the build: silently skipping one produces an .exe that looks fine, ships
+# to users, and only fails when someone opens a .ksheet.  Optional AI
+# backends may legitimately be absent, so those still skip quietly.
+_REQUIRED = [
     "lmfit", "asteval", "uncertainties",   # curve-fitting (lmfit + deps)
     "qtawesome",                            # themed icon fonts
     "h5py",                                 # .ksheet (HDF5) I/O
     "pygit2",                               # per-document git
     "openpyxl",                             # Excel import/export
     "spellchecker",                         # bundled dictionary data
-    "anthropic", "openai", "mistralai", "ollama",   # optional AI providers
     "certifi",                             # SSL certs for =PY HTTPS fetches
 ]
-for _pkg in _collect:
+_OPTIONAL = ["anthropic", "openai", "mistralai", "ollama"]
+
+_missing = []
+for _pkg in _REQUIRED + _OPTIONAL:
     try:
         _d, _b, _h = collect_all(_pkg)
         datas += _d
         binaries += _b
         hiddenimports += _h
-    except Exception:
-        pass   # optional / not installed — skip
+    except Exception as _exc:
+        if _pkg in _REQUIRED:
+            _missing.append(f"{_pkg} ({type(_exc).__name__}: {_exc})")
+        # optional backend — skip quietly
+
+if _missing:
+    raise SystemExit(
+        "KherveSheet.spec: required packages unavailable in the build "
+        "environment:\n  - " + "\n  - ".join(_missing) +
+        "\n\nInstall them (pip install -r requirements.txt) and rebuild. "
+        "Shipping without these produces a broken .exe.")
+
+# h5py's compiled extensions and hdf5.dll must survive into the bundle;
+# assert it here rather than discovering it from a user bug report.
+if not any("h5py" in _dst for _src, _dst in binaries):
+    raise SystemExit(
+        "KherveSheet.spec: h5py collected no binaries — the HDF5 extension "
+        "modules are missing and .ksheet files would fail to open.")
 
 # Strip per-document git repos that should never be shipped.
-datas = [(src, dst) for src, dst in datas
-         if ".ksheet_versions" not in src and "/.git" not in src]
+def _keep(path):
+    parts = Path(path).parts
+    return ".ksheet_versions" not in parts and ".git" not in parts
+datas = [(src, dst) for src, dst in datas if _keep(src)]
 
 a = Analysis(
     ["KherveSheet.py"],
@@ -80,7 +113,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["tkinter", "PySide6", "PySide2"],
+    excludes=["tkinter", "PySide6", "PySide2", "PyQt6", "torch", "xarray"],
     noarchive=False,
 )
 
