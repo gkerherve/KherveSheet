@@ -99,10 +99,15 @@ if not any("h5py" in _dst for _src, _dst in binaries):
         "modules are missing and .ksheet files would fail to open.")
 
 # Strip per-document git repos that should never be shipped.
+#
+# This has to run on a.datas *after* Analysis, not on the `datas` list above:
+# ("examples", "examples") is a directory tuple that PyInstaller only expands
+# into individual files during Analysis, so filtering the tuple here matches
+# nothing and the whole .ksheet_versions tree ships anyway. Those paths are
+# also deep enough to push the Inno Setup compile past MAX_PATH and abort it.
 def _keep(path):
     parts = Path(path).parts
     return ".ksheet_versions" not in parts and ".git" not in parts
-datas = [(src, dst) for src, dst in datas if _keep(src)]
 
 a = Analysis(
     ["KherveSheet.py"],
@@ -116,6 +121,11 @@ a = Analysis(
     excludes=["tkinter", "PySide6", "PySide2", "PyQt6", "torch", "xarray"],
     noarchive=False,
 )
+
+_before = len(a.datas)
+a.datas = TOC([(dst, src, kind) for dst, src, kind in a.datas if _keep(dst)])
+print(f"KherveSheet.spec: stripped {_before - len(a.datas)} "
+      f".ksheet_versions/.git files from the bundle")
 
 pyz = PYZ(a.pure)
 
