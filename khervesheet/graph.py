@@ -766,45 +766,125 @@ class EmbeddedChart(QWidget):
             lines = ax.plot(x, y, label=label)
             return lines[0] if lines else None
 
+    def _rebuild_axes(self, want_3d):
+        """Swap the axes between 2-D and 3-D projections.
+
+        Returns True when a new axes was created — every artist on
+        the old axes (including annotations) is discarded and the
+        caller must re-plot all series.  Returns False when the
+        current projection already matches.
+        """
+        is_3d = hasattr(self._ax, 'get_zlim')
+        if is_3d == bool(want_3d):
+            return False
+        from .heatmap_options import _remove_colorbar, _remove_annotations
+        _remove_colorbar(self)
+        _remove_annotations(self)
+        self._heatmap_orig_pos = None
+        # Annotation artists live on the old axes and die with it.
+        self._annotations = []
+        self._selected_ann_idx = -1
+        self._ann_select_artists = []
+        self._ann_handles = []
+        self._figure.clf()
+        if want_3d:
+            from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+            self._ax = self._figure.add_subplot(111, projection='3d')
+        else:
+            self._ax = self._figure.add_subplot(111)
+        self._ax.set_facecolor('white')
+        self._ax.patch.set_alpha(1.0)
+        if self._tight_layout:
+            try:
+                self._figure.set_layout_engine("tight")
+            except Exception:
+                pass
+        return True
+
     def change_series_type(self, series_idx, new_plot_type):
-        """Remove the old artist and replot a series with a new type."""
+        """Remove the old artist and replot a series with a new type.
+
+        Returns True on success, False when the change is impossible
+        (a 2-D matrix series can only be Heatmap or 3D Surface).
+        """
         if series_idx < 0 or series_idx >= len(self._series):
-            return
+            return False
         s = self._series[series_idx]
         if s["plot_type"] == new_plot_type:
-            return
+            return True
+        matrix_types = ("Heatmap", "3D Surface")
+        if (np.asarray(s["y"]).ndim > 1
+                and new_plot_type not in matrix_types):
+            return False
         old_type = s["plot_type"]
-        old_artist = s.get("artist")
-        # Remove old artist from axes.
-        if old_artist is not None:
-            try:
-                old_artist.remove()
-            except Exception:
-                # Some artist types (stem, bar containers) need
-                # per-child removal.
-                if hasattr(old_artist, '__iter__'):
-                    for child in old_artist:
-                        try:
-                            child.remove()
-                        except Exception:
-                            pass
-        # Replot with new type.
-        x, y = np.asarray(s["x"]), np.asarray(s["y"])
-        new_artist = self._plot_one(
-            self._ax, x, y, s["label"], new_plot_type)
-        s["artist"] = new_artist
-        s["plot_type"] = new_plot_type
+
+        # Moving to or from 3D Surface changes the axes projection.
+        if self._rebuild_axes(new_plot_type == "3D Surface"):
+            s["plot_type"] = new_plot_type
+            # The old axes is gone — re-plot every series fresh.
+            for t in self._series:
+                try:
+                    t["artist"] = self._plot_one(
+                        self._ax, np.asarray(t["x"]),
+                        np.asarray(t["y"]), t["label"],
+                        t["plot_type"])
+                except Exception:
+                    t["artist"] = None
+        else:
+            old_artist = s.get("artist")
+            # Remove old artist from axes.
+            if old_artist is not None:
+                try:
+                    old_artist.remove()
+                except Exception:
+                    # Some artist types (stem, bar containers) need
+                    # per-child removal.
+                    if hasattr(old_artist, '__iter__'):
+                        for child in old_artist:
+                            try:
+                                child.remove()
+                            except Exception:
+                                pass
+            # Leaving Heatmap: drop its colorbar and annotations.
+            if old_type == "Heatmap":
+                from .heatmap_options import (_remove_colorbar,
+                                              _remove_annotations)
+                _remove_colorbar(self)
+                _remove_annotations(self)
+            # Replot with new type.
+            x, y = np.asarray(s["x"]), np.asarray(s["y"])
+            new_artist = self._plot_one(
+                self._ax, x, y, s["label"], new_plot_type)
+            s["artist"] = new_artist
+            s["plot_type"] = new_plot_type
         # If changing to or from Bar, recalculate bar layout.
         if new_plot_type == "Bar" or old_type == "Bar":
             self._redraw_bars()
+        # Carry stored options (colormap, colorbar, …) over so the
+        # chart keeps its configuration across type switches.
+        if series_idx == 0 and new_plot_type == "Heatmap":
+            from .heatmap_options import (redraw_heatmap,
+                                          DEFAULT_HEATMAP_CONFIG)
+            cfg = (getattr(self, '_heatmap_config', None)
+                   or dict(DEFAULT_HEATMAP_CONFIG))
+            self._heatmap_config = cfg
+            redraw_heatmap(self, cfg)
+        elif series_idx == 0 and new_plot_type == "3D Surface":
+            from .heatmap_options import (redraw_surface,
+                                          DEFAULT_SURFACE3D_CONFIG)
+            cfg = (getattr(self, '_surface3d_config', None)
+                   or dict(DEFAULT_SURFACE3D_CONFIG))
+            self._surface3d_config = cfg
+            redraw_surface(self, cfg)
         # Refresh legend (skip for heatmap / 3-D surface).
-        if new_plot_type not in ("Heatmap", "3D Surface"):
+        if new_plot_type not in matrix_types:
             self._install_legend()
         else:
             old_leg = self._ax.get_legend()
             if old_leg is not None:
                 old_leg.remove()
         self._canvas.draw_idle()
+        return True
 
     # ── Programmatic axis editing (used by the AI assistant) ──────────
     def set_axis_options(self, *, invert_x=None, invert_y=None,
@@ -4325,7 +4405,16 @@ class PlotDetailsDialog(_HideSafeModalDialog):
             # Change plot type if different.
             new_pt = self.plot_type_combo.currentText()
             if new_pt != s.get("plot_type"):
-                chart.change_series_type(row, new_pt)
+                if not chart.change_series_type(row, new_pt):
+                    QMessageBox.information(
+                        self, "Plot Type",
+                        "This series holds a 2-D matrix of data — "
+                        "it can only be shown as a Heatmap or a "
+                        "3D Surface.")
+                    idx = self.plot_type_combo.findText(
+                        s.get("plot_type", "Line"))
+                    if idx >= 0:
+                        self.plot_type_combo.setCurrentIndex(idx)
 
             artist = s.get("artist")
             s["label"] = self.label_edit.text()
