@@ -45,6 +45,10 @@ into a new module and import.
   - `fit_models.py` — `FitFunction` registry wrapping every built-in lmfit model plus a custom-function builder (compiles an expression in `x` into an lmfit model); linear/poly/Shirley/Tougaard backgrounds.
   - `fitting.py`    — `FittingDialog` (KherveFitting-style lmfit peak fitting: add any lmfit/custom function, per-peak parameter editor with value/min/max/vary, pick background, live plot + fit report, write components back to sheet).
   - `icons.py`      — qtawesome icon factory (themed MDI + custom QPainter plot glyphs).
+  - `updater.py`    — silent auto-updater: polls the `Kherve-Downloads`
+    releases API (tag prefix `khervesheet-v`), downloads and checksums the
+    Inno installer in the background, prompts to restart, hands over to a
+    detached batch helper. Windows + frozen builds only.
   - `git_backend.py` — per-document Git repo: auto-commit, push, pull, history, branches (pygit2).
   - `history_dialog.py` — `HistoryDialog` commit browser with DAG graph, diff view, restore.
 - `requirements.txt`, `LICENSE` (GPL-3.0).

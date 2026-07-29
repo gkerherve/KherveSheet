@@ -470,6 +470,8 @@ class MainWindow(QMainWindow):
         help_menu.addAction("&User Guide", self._open_user_guide)
         help_menu.addAction("Python in KherveSheet", self._show_python_help)
         help_menu.addSeparator()
+        help_menu.addAction("Check for &Updates…", self._check_for_updates)
+        help_menu.addSeparator()
         help_menu.addAction("&About", self._show_about)
         help_menu.addAction("GitHub Repository", self._open_github)
 
@@ -4664,3 +4666,23 @@ class MainWindow(QMainWindow):
         from PyQt5.QtCore import QUrl
         QDesktopServices.openUrl(
             QUrl("https://github.com/gkerherve/KherveSheet"))
+
+    # ── Updates ──────────────────────────────────────────────────────
+    def _update_manager(self):
+        """Lazily built so a source checkout never pays for the import."""
+        mgr = getattr(self, "_updater", None)
+        if mgr is None:
+            from .updater import UpdateManager
+            mgr = self._updater = UpdateManager(self)
+        return mgr
+
+    def _check_for_updates(self):
+        self._update_manager().check_now()
+
+    def start_update_check(self):
+        """Silent startup check — a no-op unless it's warranted."""
+        try:
+            self._update_manager().start_background_check()
+        except Exception:
+            # An updater that can't start must never block the app.
+            pass

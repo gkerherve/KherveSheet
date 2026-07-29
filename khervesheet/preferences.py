@@ -62,6 +62,13 @@ class PreferencesDialog(QDialog):
         self._autosave_interval.setSuffix(" min")
         form.addRow("Autosave interval:", self._autosave_interval)
 
+        self._update_check = QCheckBox(
+            "Automatically check for updates")
+        self._update_check.setToolTip(
+            "Checks once a day in the background and downloads the new "
+            "version quietly. You are asked before anything is installed.")
+        form.addRow(self._update_check)
+
         return w
 
     # ── Appearance tab ───────────────────────────────────────────────
@@ -115,6 +122,8 @@ class PreferencesDialog(QDialog):
             s.value("prefs/autosave", False, type=bool))
         self._autosave_interval.setValue(
             int(s.value("prefs/autosave_interval", 5)))
+        self._update_check.setChecked(
+            s.value("update/auto_check", True, type=bool))
 
         font_family = s.value("prefs/font_family", "")
         if font_family:
@@ -141,6 +150,13 @@ class PreferencesDialog(QDialog):
         s.setValue("prefs/autosave", self._autosave_check.isChecked())
         s.setValue("prefs/autosave_interval",
                    self._autosave_interval.value())
+
+        # Re-enabling the check should take effect now, not after the
+        # daily throttle from the last check happens to expire.
+        auto_update = self._update_check.isChecked()
+        if auto_update and not s.value("update/auto_check", True, type=bool):
+            s.remove("update/last_check")
+        s.setValue("update/auto_check", auto_update)
         s.setValue("prefs/font_family",
                    self._font_combo.currentFont().family())
         s.setValue("prefs/font_size", self._font_size_spin.value())

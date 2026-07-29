@@ -782,6 +782,10 @@ def main():
             import traceback
             traceback.print_exc()
 
+    # Silent update check — self-throttled, and only ever does anything
+    # for an installed Windows build.
+    w.start_update_check()
+
     sys.exit(app.exec_())
 
 
