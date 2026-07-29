@@ -936,6 +936,8 @@ class AiChatDock(QDockWidget):
                 w.deleteLater()
         self._current_bubble = None
         self._backend._messages.clear()
+        from . import ai_memory
+        ai_memory.forget()
         # Re-add welcome.
         welcome = ChatBubble("assistant",
                              "Conversation cleared. How can I help?",

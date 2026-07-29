@@ -22,6 +22,8 @@ from PyQt5.QtCore import (
 )
 from PyQt5.QtWidgets import QApplication
 
+from . import ai_memory
+
 # ── Optional dependency guard ──────────────────────────────────────
 try:
     import anthropic
@@ -915,7 +917,9 @@ class AiBackend(QObject):
     def __init__(self, mainwindow):
         super().__init__(mainwindow)
         self._mw = mainwindow
-        self._messages: List[dict] = []
+        # Reloaded from the last session, then sanitised: a file saved
+        # mid-exchange must not produce a history the API rejects.
+        self._messages: List[dict] = _trim_messages(ai_memory.load())
         self._macro_open = False
 
         # Tool executor.
@@ -1020,6 +1024,7 @@ class AiBackend(QObject):
         # Adopt the history the worker built (assistant + tool turns).
         if history:
             self._messages = list(history)
+        ai_memory.save(self._messages)
         if self._macro_open:
             self._mw._undo_stack.endMacro()
             self._macro_open = False
