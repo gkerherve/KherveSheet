@@ -1,0 +1,86 @@
+name: macOS build
+
+# PyInstaller cannot cross-compile, so the .app has to be produced on a
+# Mac.  Two runners rather than one universal2 build: a universal bundle
+# would need universal wheels for numpy/scipy/h5py/pygit2 all the way
+# down, and those are not consistently published.
+#
+# macos-14 -> Apple Silicon (arm64), macos-13 -> Intel (x86_64).
+# The Intel DMG also runs on Apple Silicon under Rosetta, so it is the
+# safe one to hand to someone whose hardware you do not know.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "khervesheet-v*"
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-14
+            arch: arm64
+          - runner: macos-13
+            arch: x86_64
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # KherveSheet.spec bakes khervesheet/VERSION into the bundle and
+          # that string comes from `git rev-list --count HEAD` — a shallow
+          # clone would silently ship the wrong build number.
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Freeze the version string
+        # Written before PyInstaller runs: the bundle ships no .git, so
+        # without this file the app reports the 0.1.0 placeholder.
+        run: |
+          COUNT=$(git rev-list --count HEAD)
+          SHA=$(git rev-parse --short HEAD)
+          printf '0.1.%s+%s' "$COUNT" "$SHA" > khervesheet/VERSION
+          echo "VERSION=$(cat khervesheet/VERSION)" >> "$GITHUB_ENV"
+          cat khervesheet/VERSION
+
+      - name: Build the .app
+        run: pyinstaller KherveSheet.spec --noconfirm
+
+      - name: Check the bundle
+        # Not a launch test — a GUI app on a headless runner would just
+        # hang.  These are the things that have actually been wrong in a
+        # finished bundle: no Info.plist, or h5py's HDF5 extension
+        # dropped, which surfaces to users as "h5py is required".
+        run: |
+          test -x dist/KherveSheet.app/Contents/MacOS/KherveSheet
+          plutil -p dist/KherveSheet.app/Contents/Info.plist \
+            | grep -E 'CFBundleIdentifier|CFBundleShortVersionString'
+          find dist/KherveSheet.app -name 'libhdf5*' -o -name '*h5py*' \
+            | head -5 | grep -q . \
+            || { echo "h5py missing from the bundle" >&2; exit 1; }
+
+      - name: Build the DMG
+        run: |
+          chmod +x tools/make_dmg.sh
+          tools/make_dmg.sh
+
+      - name: Upload the DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: KherveSheet-${{ env.VERSION }}-${{ matrix.arch }}
+          path: installer/*.dmg
+          if-no-files-found: error

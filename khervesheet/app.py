@@ -13,7 +13,7 @@ import os
 import sys
 import tempfile
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QEvent, QObject, Qt
 from PyQt5.QtGui import QColor, QPalette
 from PyQt5.QtWidgets import QApplication, QStyleFactory
 
@@ -723,6 +723,51 @@ def apply_theme(app, name: str):
     app.setStyleSheet(qss)
 
 
+def _safe_open(window, path):
+    """Open *path* in *window*, logging rather than raising on failure."""
+    try:
+        window._open_path(path)
+    except Exception:
+        import traceback
+        traceback.print_exc()
+
+
+class _FileOpenFilter(QObject):
+    """Route macOS "open document" Apple Events to the main window.
+
+    Double-clicking a .ksheet in Finder does not put the path in argv the
+    way Explorer does — LaunchServices sends the running app a
+    QFileOpenEvent instead.  On a cold start that event can arrive while
+    QApplication is still initialising, before MainWindow exists, so the
+    filter has to be installed first and the paths replayed once there is
+    a window to open them in.  It also handles the warm case: opening a
+    second document while the app runs, which otherwise does nothing.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._window = None
+        self._pending = []
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.FileOpen:
+            path = event.file()
+            if path:
+                if self._window is None:
+                    self._pending.append(path)
+                else:
+                    _safe_open(self._window, path)
+                return True
+        return False
+
+    def attach(self, window):
+        """Bind the window and flush anything queued before it existed."""
+        self._window = window
+        pending, self._pending = self._pending, []
+        for path in pending:
+            _safe_open(window, path)
+
+
 def main():
     _enable_crash_logging()
 
@@ -750,6 +795,14 @@ def main():
             pass
 
     app = QApplication(sys.argv)
+    # Install before anything slow happens — a document double-clicked to
+    # launch the app fires its event during startup and is lost otherwise.
+    # A filter on the application object sees every event in the thread,
+    # so only pay for it where FileOpen events actually occur.
+    open_filter = None
+    if sys.platform == "darwin":
+        open_filter = _FileOpenFilter()
+        app.installEventFilter(open_filter)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("KherveSheet")
     app.setOrganizationDomain("khervesheet.local")
@@ -776,11 +829,12 @@ def main():
     # .ksheet in the file explorer hands the path to the app as argv[1]).
     path = _file_arg_to_open(app.arguments()[1:])
     if path:
-        try:
-            w._open_path(path)
-        except Exception:
-            import traceback
-            traceback.print_exc()
+        _safe_open(w, path)
+
+    # macOS delivers the same intent as an Apple Event instead; replay
+    # whatever arrived while the window was still being built.
+    if open_filter is not None:
+        open_filter.attach(w)
 
     # Silent update check — self-throttled, and only ever does anything
     # for an installed Windows build.

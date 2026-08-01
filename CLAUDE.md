@@ -52,6 +52,16 @@ into a new module and import.
   - `git_backend.py` — per-document Git repo: auto-commit, push, pull, history, branches (pygit2).
   - `history_dialog.py` — `HistoryDialog` commit browser with DAG graph, diff view, restore.
 - `requirements.txt`, `LICENSE` (GPL-3.0).
+- Packaging — one PyInstaller spec, two platform tails:
+  - `KherveSheet.spec` — shared Analysis; branches on `sys.platform` for
+    the icon (.ico/.icns), UPX (off on macOS — it breaks Mach-O) and a
+    `BUNDLE()` step that produces `KherveSheet.app`.
+  - `tools/generate_icon.py` — renders the app mark into a multi-res
+    `.ico` or `.icns`; the format follows the output extension.
+  - `KherveSheet_setup.iss` — Windows Inno Setup installer.
+  - `tools/make_dmg.sh` + `.github/workflows/macos-build.yml` — macOS
+    DMG, built on GitHub runners (arm64 + x86_64). Ad-hoc signed only,
+    not notarized; see `README.macos.md`.
 
 ## UI conventions
 

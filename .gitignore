@@ -21,3 +21,7 @@ Thumbs.db
 # Per-document version-history repos created at runtime
 .ksheet_versions/
 **/.ksheet_versions/
+*/VERSION
+
+# Packaged installers (Inno .exe / macOS .dmg) — build output, 100 MB+
+installer/

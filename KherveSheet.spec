@@ -20,13 +20,21 @@ from PyInstaller.utils.hooks import collect_all
 
 ROOT = Path(SPECPATH)
 
-# ── Generate the Windows .ico from the runtime make_app_icon() ─────
+IS_MAC = sys.platform == "darwin"
+
+# UPX mangles Mach-O load commands and invalidates the ad-hoc signature
+# PyInstaller applies, which on Apple Silicon means the app is killed at
+# launch rather than merely unpacking slowly.  Compress on Windows only.
+USE_UPX = not IS_MAC
+
+# ── Generate the platform icon from the runtime app mark ────────────
 #
 # Single source of truth for the green "KS" monogram lives in
-# khervesheet/icons.py.  tools/generate_icon.py renders it at all 7
-# sizes (16..256) into a multi-resolution ICO under build/.  The
-# resulting file is referenced by the EXE() block below.
-ICON_PATH = ROOT / "build" / "KherveSheet.ico"
+# khervesheet/icons.py.  tools/generate_icon.py renders it into a
+# multi-resolution ICO (Windows, 16..256) or ICNS (macOS, 16..1024)
+# under build/.  The resulting file is referenced by EXE()/BUNDLE().
+ICON_PATH = ROOT / "build" / (
+    "KherveSheet.icns" if IS_MAC else "KherveSheet.ico")
 if not ICON_PATH.exists():
     import subprocess as _sp
     _sp.run(
@@ -139,7 +147,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=USE_UPX,
     console=False,               # GUI app — no console window
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -153,7 +161,65 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=USE_UPX,
     upx_exclude=[],
     name="KherveSheet",
 )
+
+# ── macOS .app bundle ────────────────────────────────────────────────
+#
+# COLLECT alone yields dist/KherveSheet/ — a bare folder Finder will not
+# treat as an application.  BUNDLE wraps it into KherveSheet.app with the
+# Info.plist that makes the Dock icon, the document associations and the
+# Retina-native rendering work.
+if IS_MAC:
+    # CFBundleShortVersionString must be dot-separated digits; the
+    # git-derived string carries a "+sha" suffix Finder would reject.
+    _short_version = "0.1.0"
+    if _version_file.is_file():
+        _short_version = _version_file.read_text(
+            encoding="utf-8").strip().split("+")[0] or _short_version
+
+    _doc_types = [
+        {
+            "CFBundleTypeName": "KherveSheet Workbook",
+            "CFBundleTypeExtensions": ["ksheet"],
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Owner",
+            "CFBundleTypeIconFile": ICON_PATH.name,
+        },
+        {
+            "CFBundleTypeName": "Comma-Separated Values",
+            "CFBundleTypeExtensions": ["csv"],
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+        },
+        {
+            "CFBundleTypeName": "Excel Workbook",
+            "CFBundleTypeExtensions": ["xlsx", "xlsm"],
+            "CFBundleTypeRole": "Editor",
+            "LSHandlerRank": "Alternate",
+        },
+    ]
+
+    app = BUNDLE(
+        coll,
+        name="KherveSheet.app",
+        icon=str(ICON_PATH),
+        bundle_identifier="com.kerherve.khervesheet",
+        version=_short_version,
+        info_plist={
+            "CFBundleName": "KherveSheet",
+            "CFBundleDisplayName": "KherveSheet",
+            "CFBundleShortVersionString": _short_version,
+            "CFBundleVersion": _short_version,
+            "LSMinimumSystemVersion": "11.0",
+            # Without this the app renders at 1x and scales up — every
+            # glyph in the grid looks blurred on a Retina display.
+            "NSHighResolutionCapable": True,
+            "NSRequiresAquaSystemAppearance": False,
+            "CFBundleDocumentTypes": _doc_types,
+            "NSHumanReadableCopyright":
+                "Copyright (C) 2026 Gwilherm Kerherve. GPL-3.0.",
+        },
+    )

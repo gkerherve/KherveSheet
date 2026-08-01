@@ -1,13 +1,22 @@
-"""Generate KherveSheet.ico from the runtime make_app_icon().
+"""Generate KherveSheet.ico / KherveSheet.icns from the runtime icon.
 
 Single source of truth for the green "KS" monogram lives in
-khervesheet.icons.make_app_icon() — that draws the icon via QPainter.
-This script renders it at 7 sizes (16..256) into a multi-resolution
-.ico and writes the result to the path supplied on the command line
-(defaults to build/KherveSheet.ico).
+khervesheet.appmark — it is drawn as stroked vector paths via QPainter
+and stays crisp at any size.  This script renders it at whatever sizes
+the target container needs and writes the result to the path supplied
+on the command line.
 
-PyInstaller's KherveSheet.spec runs this before the actual Analysis
-so the bootloader .exe gets the proper Windows icon.
+The output format follows the file extension:
+
+  python tools/generate_icon.py build/KherveSheet.ico    # Windows
+  python tools/generate_icon.py build/KherveSheet.icns   # macOS
+
+PyInstaller's KherveSheet.spec runs this before the actual Analysis so
+the bootloader gets the proper platform icon.
+
+Both writers are pure Python — the .icns container is assembled here
+rather than shelling out to ``iconutil`` so the file can be produced
+(and inspected) off a Mac.
 
 Copyright (C) 2026 Gwilherm Kerherve
 
@@ -27,23 +36,43 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-# Use the native platform plugin so system fonts are available.
-os.environ.pop("QT_QPA_PLATFORM", None)
+# The mark is drawn as vector paths and needs no system font, so render
+# offscreen: this has to work on a headless CI runner with no window
+# server, and forcing the plugin keeps the output byte-identical
+# wherever the build happens.
+os.environ["QT_QPA_PLATFORM"] = "offscreen"
 
 from PyQt5.QtCore import QBuffer, QByteArray      # noqa: E402
 from PyQt5.QtWidgets import QApplication           # noqa: E402
 
 SIZES = (16, 24, 32, 48, 64, 128, 256)
 
+# ICNS icon-type codes keyed by pixel size, mirroring the mapping
+# ``iconutil`` applies to an .iconset folder.  Several sizes appear
+# twice because Retina variants are distinct chunk types carrying the
+# same pixels (e.g. icon_16x16@2x and icon_32x32 are both 32 px, stored
+# as ic11 and icp5).  Every one of these types accepts a PNG payload.
+ICNS_TYPES = (
+    ("icp4", 16),     # 16x16
+    ("icp5", 32),     # 32x32
+    ("ic11", 32),     # 16x16@2x
+    ("ic12", 64),     # 32x32@2x
+    ("ic07", 128),    # 128x128
+    ("ic13", 256),    # 128x128@2x
+    ("ic08", 256),    # 256x256
+    ("ic14", 512),    # 256x256@2x
+    ("ic09", 512),    # 512x512
+    ("ic10", 1024),   # 512x512@2x
+)
 
-def _render_icon_pngs() -> dict[int, bytes]:
-    """Render the app icon at each standard size via QPainter."""
+
+def _render_pngs(sizes) -> dict[int, bytes]:
+    """Render the app mark at each requested size, as PNG bytes."""
     app = QApplication.instance() or QApplication([])  # noqa: F841
-    from khervesheet.icons import make_app_icon
-    icon = make_app_icon()
+    from khervesheet.icons import _draw_app_pixmap
     pngs: dict[int, bytes] = {}
-    for sz in SIZES:
-        pm = icon.pixmap(sz, sz)
+    for sz in sorted(set(sizes)):
+        pm = _draw_app_pixmap(sz)
         ba = QByteArray()
         buf = QBuffer(ba)
         buf.open(QBuffer.WriteOnly)
@@ -71,10 +100,29 @@ def _compose_ico(pngs_by_size: dict[int, bytes]) -> bytes:
     return bytes(out)
 
 
+def _compose_icns(pngs_by_size: dict[int, bytes]) -> bytes:
+    """Build an ICNS file: 'icns' + total length, then typed chunks.
+
+    Every field is big-endian, and each chunk's declared length counts
+    its own 8-byte header — get that wrong and Finder silently shows the
+    generic document icon instead of erroring.
+    """
+    chunks = bytearray()
+    for code, sz in ICNS_TYPES:
+        data = pngs_by_size[sz]
+        chunks += code.encode("ascii")
+        chunks += struct.pack(">I", len(data) + 8)
+        chunks += data
+    return b"icns" + struct.pack(">I", len(chunks) + 8) + bytes(chunks)
+
+
 def main(out_path: Path) -> int:
-    pngs = _render_icon_pngs()
+    icns = out_path.suffix.lower() == ".icns"
+    sizes = [sz for _c, sz in ICNS_TYPES] if icns else SIZES
+    pngs = _render_pngs(sizes)
+    blob = _compose_icns(pngs) if icns else _compose_ico(pngs)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_bytes(_compose_ico(pngs))
+    out_path.write_bytes(blob)
     print(f"Wrote {out_path} ({out_path.stat().st_size:,} bytes)")
     return 0
 
