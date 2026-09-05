@@ -65,9 +65,9 @@ into a new module and import.
   - `ai_tools_extra.py` — document I/O (open/save/new) and analysis
     (`run_solver`, `fit_trendline`, `fit_peaks`) tools, registered into
     `AiToolExecutor` at construction.
-  - `ai_tools_schema.py` — input schemas for those tools; appended to
-    `ai_backend.TOOLS`. An MCP host writes its own system prompt, so
-    anything an agent must know belongs in these descriptions.
+  - `ai_tools_schema.py` — `EXTRA_TOOLS`, the input schemas for those.
+    An MCP host writes its own system prompt, so anything an agent must
+    know belongs in these descriptions.
   - `peakfit.py`     — Qt-free lmfit peak-fitting core shared by
     `FittingDialog` and the tool layer.
 - `requirements.txt`, `LICENSE` (GPL-3.0).
@@ -102,6 +102,18 @@ ways: the built-in chat (which supplies a system prompt) and any MCP
 client (which does not — the host writes its own). **Any constraint
 that matters must therefore be enforced in the executor or stated in
 the tool's schema description, never only in the chat prompt.**
+
+Two tables, one executor:
+
+- `ai_backend.TOOLS` — what the chat is offered (the grid, charts,
+  formatting, the function catalogue).
+- `ai_backend.MCP_TOOLS` — `TOOLS + EXTRA_TOOLS`, what an MCP client is
+  offered. The extras (document I/O, Solver, fitting) are withheld from
+  the chat on purpose: in the window those are menu items the user
+  drives, while an MCP client has no menus.
+
+`AiToolExecutor` dispatches every name in either table, so a new tool
+only has to be added to the right schema list.
 
 ## Undo / redo policy
 

@@ -456,3 +456,32 @@ def test_a_headless_solver_asks_nobody(app, monkeypatch):
     finally:
         dlg._disconnect_sheet()
         dlg.deleteLater()
+
+
+# ── Which caller sees which tools ──────────────────────────────────
+
+_MCP_ONLY = {"get_document_info", "save_workbook", "open_workbook",
+             "new_workbook", "run_solver", "fit_trendline", "fit_peaks",
+             "list_fit_models"}
+
+
+def test_the_chat_is_not_offered_the_mcp_only_tools():
+    """In the window, File ▸ Save and Tools ▸ Solver are a click away."""
+    from khervesheet.ai_backend import TOOLS
+    assert _MCP_ONLY.isdisjoint({t["name"] for t in TOOLS})
+    assert "read_cells" in {t["name"] for t in TOOLS}
+
+
+def test_an_mcp_client_is_offered_both_tables():
+    from khervesheet.ai_backend import MCP_TOOLS, TOOLS
+    names = {t["name"] for t in MCP_TOOLS}
+    assert _MCP_ONLY <= names
+    assert {t["name"] for t in TOOLS} <= names
+    assert len(MCP_TOOLS) == len(names)      # no duplicate definitions
+
+
+def test_the_executor_can_still_run_every_name_in_either_table(ex):
+    from khervesheet.ai_backend import MCP_TOOLS
+    missing = [t["name"] for t in MCP_TOOLS
+               if t["name"] not in ex._dispatch]
+    assert missing == []

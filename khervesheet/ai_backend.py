@@ -596,8 +596,16 @@ TOOLS = [
     },
 ]
 
-#: Document I/O + Solver/fitting, defined in ai_tools_schema.py.
-TOOLS += EXTRA_TOOLS
+#: What an MCP client is offered: the chat's tools plus document I/O
+#: and the Solver/fitting tools from ai_tools_schema.py.
+#:
+#: The extra tools are deliberately absent from TOOLS. The built-in
+#: chat sits inside the window, where File ▸ Save, Tools ▸ Solver and
+#: Tools ▸ Curve Fitting are a click away and the user is driving; an
+#: MCP client has no window and no menus, so those tools are the only
+#: way it can reach the same features. AiToolExecutor can run every
+#: name in either table.
+MCP_TOOLS = TOOLS + EXTRA_TOOLS
 
 
 # ── System prompt builder ──────────────────────────────────────────
@@ -751,26 +759,6 @@ font_family, font_size, font_color (hex), alignment \
 - You CAN write a small number of cells (e.g. headers for a column \
 the user is adding, or a single formula) — just not large blocks of \
 data to build entire spreadsheets from scratch.
-
-=== ANALYSIS TOOLS ===
-Prefer the purpose-built tools over reimplementing their maths:
-  * run_solver — Excel-style optimisation: drive a formula cell to a \
-minimum, maximum or target by changing other cells, with constraints.
-  * fit_trendline — regression over two columns (23 models), reporting \
-parameters and R²/RMSE/AIC/BIC, optionally writing the fitted curve.
-  * fit_peaks — lmfit peak fitting for spectra: a sum of peak shapes \
-over a Shirley/ALS/polynomial background, with per-parameter \
-uncertainties, optionally writing every component to the sheet.
-  * list_fit_models — the model and background names those two accept. \
-Call it rather than guessing a name.
-
-=== THE DOCUMENT ===
-  * get_document_info — which file is open, and whether it is modified.
-  * save_workbook — save (.ksheet keeps everything; .csv is values \
-only; .xlsx is an export). Ask before saving over someone's file.
-  * open_workbook / new_workbook — replace what is on screen. Both \
-refuse to discard unsaved changes unless you pass \
-discard_unsaved_changes; save instead of discarding.
 
 === FORMULAS & CHARTS ===
 - Use set_formula for calculated cells (formulas start with =). \

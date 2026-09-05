@@ -137,8 +137,9 @@ class McpBridge(QObject):
 
     def visible_tools(self) -> list:
         """The tool table as this access level sees it."""
-        from .ai_backend import TOOLS
-        return [t for t in TOOLS if tool_allowed(t["name"], self._access)]
+        from .ai_backend import MCP_TOOLS
+        return [t for t in MCP_TOOLS
+                if tool_allowed(t["name"], self._access)]
 
     def start(self, port: int = DEFAULT_PORT) -> bool:
         """Begin listening.  Returns False (with no side effects) if

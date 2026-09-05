@@ -5,20 +5,24 @@ assistants other than the built-in AI chat — Claude Desktop, Claude
 Code, Cursor, Zed, Continue, or anything else that speaks the Model
 Context Protocol — can read and edit an open workbook directly.
 
-The assistant gets the same tool set the built-in chat uses:
+An MCP client gets 28 tools — the 20 the built-in chat uses, plus
+eight it does not (marked * below). The chat sits inside the window,
+where File ▸ Save and the Tools menu are a click away and the user is
+driving; an MCP client has no window and no menus, so those eight are
+the only way it can reach the same features.
 
 - **The grid** — read and write cells, formulas and `=PY` Python
   cells, formatting, table styles, column widths, merges.
 - **Charts** — create, inspect, clone, restyle, delete.
-- **Analysis** — `run_solver` (Excel-style optimisation),
+- **Analysis*** — `run_solver` (Excel-style optimisation),
   `fit_trendline` (23 regression models with goodness-of-fit),
   `fit_peaks` (lmfit peak fitting over a Shirley/ALS/polynomial
   background). These run the same code the Solver and Curve Fitting
   dialogs run; they just do it without the dialog.
-- **The document** — `get_document_info`, `save_workbook`,
+- **The document*** — `get_document_info`, `save_workbook`,
   `open_workbook`, `new_workbook`.
 - **Discovery** — `search_functions`, `get_function_details` and
-  `list_fit_models`, so a client that has never seen KherveSheet can
+  `list_fit_models`*, so a client that has never seen KherveSheet can
   look up exact names instead of guessing.
 
 Everything a tool changes lands on the shared undo stack, so **Ctrl+Z
