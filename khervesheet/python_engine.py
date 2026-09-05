@@ -17,6 +17,7 @@ the Free Software Foundation, either version 3 of the License, or
 """
 
 import ast
+import os
 import re
 
 from PyQt5.QtCore import Qt, QSize, pyqtSignal
@@ -28,6 +29,10 @@ from PyQt5.QtWidgets import QPlainTextEdit, QDialog, QWidget
 # Marker that flags a cell as Python source.  Stored as the first line of
 # the cell text so Python cells round-trip through the existing formula
 # persistence (``_cell_formulas``) unchanged.
+#: Tri-state cache for ensure_ca_bundle(): unknown / done / not
+#: needed.  The probe touches the filesystem, so run it once.
+_CA_BUNDLE_READY = None
+
 PY_MARKER = "=PY"
 
 # Matches ks("A1"), cell('A1:B10'), ks("Sheet1!A1") inside source so the
@@ -229,11 +234,52 @@ class PythonRuntime:
         #: to disable.
         self.timeout = 30.0
 
+def ensure_ca_bundle() -> bool:
+    """Make HTTPS verification work when the interpreter has no CAs.
+
+    A python.org framework build whose *Install Certificates* step was
+    never run — and a frozen build on a machine without one — ships an
+    empty trust store, so every ``urlopen`` of an https URL dies with
+    CERTIFICATE_VERIFY_FAILED.  That reads like a blocked network and
+    sends people down the wrong path.
+
+    When (and only when) the default context has no CA certificates and
+    certifi is installed, point the default at certifi's bundle.  This
+    still verifies; it does not weaken anything that already worked.
+    Returns True when a bundle was installed.
+    """
+    global _CA_BUNDLE_READY
+    if _CA_BUNDLE_READY is not None:
+        return _CA_BUNDLE_READY
+    _CA_BUNDLE_READY = False
+    try:
+        import ssl
+        if ssl.create_default_context().cert_store_stats()["x509_ca"]:
+            return _CA_BUNDLE_READY          # the platform store is fine
+        import certifi
+        cafile = certifi.where()
+
+        def _https_context(purpose=ssl.Purpose.SERVER_AUTH, **kw):
+            kw.pop("cafile", None)
+            return ssl.create_default_context(purpose, cafile=cafile, **kw)
+
+        ssl._create_default_https_context = _https_context
+        os.environ.setdefault("SSL_CERT_FILE", cafile)
+        os.environ.setdefault("REQUESTS_CA_BUNDLE", cafile)
+        _CA_BUNDLE_READY = True
+    except Exception:
+        pass
+    return _CA_BUNDLE_READY
+
+
     # ── namespace ────────────────────────────────────────────────────
     def _ensure_globals(self):
         if self._globals is not None:
             return self._globals
         g = {"__builtins__": __builtins__}
+        # =PY cells are documented as being able to call web APIs, so
+        # make sure HTTPS actually verifies before the first one runs.
+        ensure_ca_bundle()
         import math
         g["math"] = math
         try:

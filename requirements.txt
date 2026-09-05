@@ -12,3 +12,4 @@ anthropic>=0.39
 openai>=1.0
 mistralai>=1.0,<2  # 2.x changed the client API (from mistralai import Mistral)
 ollama>=0.3
+certifi>=2023.7  # CA bundle for =PY network calls on hosts without one
