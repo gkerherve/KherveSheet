@@ -345,6 +345,15 @@ def test_a_raising_tool_closes_its_macro_and_answers(live_bridge):
 
 def test_the_bridge_lists_the_apps_real_tool_table(live_bridge):
     bridge, _win, app = live_bridge
-    reply = _ask(bridge, app, "list_tools")
-    names = [t["name"] for t in reply["result"]]
-    assert "read_cells" in names and "set_python_cell" in names
+    names = [t["name"] for t in _ask(bridge, app, "list_tools")["result"]]
+    assert {"read_cells", "write_cells", "run_solver",
+            "save_workbook"} <= set(names)
+    # Default access is "edit", which withholds code execution.
+    assert "set_python_cell" not in names
+
+
+def test_full_access_publishes_the_python_tool(live_bridge):
+    bridge, _win, app = live_bridge
+    bridge.set_access("full")
+    names = [t["name"] for t in _ask(bridge, app, "list_tools")["result"]]
+    assert "set_python_cell" in names

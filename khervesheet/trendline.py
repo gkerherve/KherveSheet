@@ -322,6 +322,74 @@ def _smart_p0(model_name, x, y):
     return p0_map.get(model_name, [1.0] * len(MODELS.get(model_name, {}).get("params", [])))
 
 
+def fit_series(x, y, model_name: str, poly_order: int = 4,
+               ma_period: int = 2) -> dict:
+    """Fit one model to (x, y) and report the result.
+
+    Free of Qt and of the chart, so the same fit can be run from the
+    Trendline dialog, a script, or the AI / MCP tool layer.  Returns a
+    dict with *params*, *errors*, *gof*, *equation* and a callable
+    *predict*; on failure the dict carries only *error*.
+    """
+    from scipy.optimize import curve_fit
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    mask = np.isfinite(x) & np.isfinite(y)
+    x, y = x[mask], y[mask]
+    if len(x) < 2:
+        return {"error": "Not enough data points (need at least 2)."}
+
+    if model_name == MOVING_AVERAGE_KEY:
+        if ma_period > len(y):
+            return {"error": f"Period {ma_period} is larger than the "
+                             f"data length ({len(y)})."}
+        kernel = np.ones(ma_period) / ma_period
+        y_ma = np.convolve(y, kernel, mode="valid")
+        x_ma = x[ma_period - 1:]
+        y_fit = np.interp(x, x_ma, y_ma)
+        return {"model": model_name, "params": {"period": ma_period},
+                "errors": {}, "gof": _compute_gof(y, y_fit, ma_period),
+                "equation": f"Moving Average (period={ma_period})",
+                "predict": lambda xs: np.interp(xs, x_ma, y_ma)}
+
+    if model_name == "Polynomial":
+        if poly_order >= len(x):
+            return {"error": f"Polynomial order {poly_order} needs at "
+                             f"least {poly_order + 1} points "
+                             f"(have {len(x)})."}
+        coeffs = np.polyfit(x, y, poly_order)
+        _, names, eq_template = _build_poly_func(poly_order)
+        params = dict(zip(names, (float(c) for c in coeffs)))
+        return {"model": f"Polynomial (order {poly_order})",
+                "params": params, "errors": {},
+                "gof": _compute_gof(y, np.polyval(coeffs, x),
+                                    poly_order + 1),
+                "equation": eq_template.format(**params),
+                "predict": lambda xs: np.polyval(coeffs, xs)}
+
+    model = MODELS.get(model_name)
+    if model is None:
+        return {"error": f"Unknown model {model_name!r}."}
+    func = model["func"]
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            popt, pcov = curve_fit(
+                func, x, y, p0=_smart_p0(model_name, x, y), maxfev=50000)
+        perr = np.sqrt(np.diag(pcov))
+    except Exception as exc:
+        return {"error": f"Fit failed for {model_name}: {exc}"}
+
+    names = model["params"]
+    params = dict(zip(names, (float(v) for v in popt)))
+    return {"model": model_name, "params": params,
+            "errors": dict(zip(names, (float(e) for e in perr))),
+            "gof": _compute_gof(y, func(x, *popt), len(popt)),
+            "equation": model["eq"].format(**params),
+            "predict": lambda xs: func(xs, *popt)}
+
+
 # ── Trendline data class ────────────────────────────────────────────
 
 class TrendlineInfo:
@@ -522,8 +590,6 @@ class TrendlineDialog(QDialog):
     # ── Perform fit ─────────────────────────────────────────────────
 
     def _do_fit(self):
-        from scipy.optimize import curve_fit
-
         idx = self._series_combo.currentData()
         if idx is None or idx >= len(self._chart._series):
             return
@@ -560,34 +626,22 @@ class TrendlineDialog(QDialog):
             info.poly_order = order
             self._fit_polynomial(x, y, order, info)
         else:
-            model = MODELS[model_name]
-            func = model["func"]
-            p0 = _smart_p0(model_name, x, y)
-            param_names = model["params"]
-            try:
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    popt, pcov = curve_fit(
-                        func, x, y, p0=p0, maxfev=50000)
-                perr = np.sqrt(np.diag(pcov))
-            except Exception as exc:
+            fit = fit_series(x, y, model_name)
+            if "error" in fit:
                 self._report.setPlainText(
-                    f"Fit failed for {model_name}:\n{exc}\n\n"
+                    f"{fit['error']}\n\n"
                     f"Try different initial data or another model.")
                 return
 
-            params = dict(zip(param_names, popt))
-            errors = dict(zip(param_names, perr))
-            y_fit = func(x, *popt)
-            gof = _compute_gof(y, y_fit, len(popt))
-
-            info.params = {k: float(v) for k, v in params.items()}
-            info.equation = model["eq"].format(**params)
+            params, errors, gof = (fit["params"], fit["errors"],
+                                   fit["gof"])
+            info.params = dict(params)
+            info.equation = fit["equation"]
             info.gof = gof
 
             x_smooth = np.linspace(np.nanmin(x), np.nanmax(x), 300)
             try:
-                y_smooth = func(x_smooth, *popt)
+                y_smooth = fit["predict"](x_smooth)
             except Exception:
                 y_smooth = np.full_like(x_smooth, np.nan)
             label = f"{info.model_name} fit"

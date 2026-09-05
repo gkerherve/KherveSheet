@@ -17,7 +17,6 @@ the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 """
 
-import re
 from typing import Optional
 
 import numpy as np
@@ -39,6 +38,7 @@ from .sheet import SheetWidget, col_index_to_letter
 from . import icons
 from .solver import _PickLineEdit, _parse_range, _selection_ref_str
 from . import fit_models as fm
+from . import peakfit
 
 
 def _range_to_col_rows(text: str):
@@ -50,16 +50,6 @@ def _range_to_col_rows(text: str):
     cols = sorted({c for _, c in cells})
     rows = sorted({r for r, _ in cells})
     return cols[0], rows[0], rows[-1]
-
-
-def _expand_expr(expr: str, param_name: str) -> str:
-    """Expand a bare peak reference in a constraint expression to the
-    parameter on the same row.  In the 'center' row, ``p0`` means
-    ``p0_center``; ``0.5*p1`` on the amplitude row means
-    ``0.5*p1_amplitude``.  Fully-qualified names (``p0_sigma``) are left
-    untouched."""
-    return re.sub(r"\bp(\d+)(?!\w)",
-                  lambda m: f"p{m.group(1)}_{param_name}", expr)
 
 
 def _fmt_bound(v):
@@ -617,47 +607,8 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
     def _initial_params(self, func, prefix):
         """Build the editable parameter dict for a new function, seeding
         values from lmfit's own guess when the data is available."""
-        model = func.make_model(prefix)
-        pars = model.make_params()
         x, y = self._read_xy(silent=True)
-        if x is not None:
-            mask = np.isfinite(x) & np.isfinite(y)
-            if mask.sum() >= 3:
-                # Never set a value on a constrained (derived) parameter —
-                # lmfit's set(value=) silently drops the expression, which
-                # would free parameters like a Voigt's gamma/fwhm/height
-                # and break the model.
-                if func.guesser is not None:
-                    try:
-                        for k, v in func.guesser(x[mask], y[mask]).items():
-                            full = prefix + k
-                            if full in pars and not pars[full].expr:
-                                pars[full].set(value=v)
-                    except Exception:
-                        pass
-                else:
-                    try:
-                        g = model.guess(y[mask], x=x[mask])
-                        for k in pars:
-                            if k in g and not pars[k].expr:
-                                pars[k].set(value=g[k].value)
-                    except Exception:
-                        pass
-        out = {}
-        for full, par in pars.items():
-            # Skip derived parameters (lmfit exposes e.g. a Gaussian's
-            # fwhm/height as constrained expressions) — they are computed
-            # from the free ones and must not be edited directly.
-            if par.expr:
-                continue
-            name = full[len(prefix):]
-            val = par.value
-            if val is None or not np.isfinite(val):
-                val = 1.0
-            out[name] = {"value": float(val), "min": par.min,
-                         "max": par.max, "vary": bool(par.vary),
-                         "expr": ""}
-        return out
+        return peakfit.initial_params(func, prefix, x, y)
 
     def _delete_peak(self):
         row = self._peak_list.currentRow()
@@ -808,70 +759,19 @@ centre and amplitude referencing peak&nbsp;1, and leave peak&nbsp;1 free.</p>
         x, y = x_full[mask], y_full[mask]
 
         bg_key = self._bg_combo.currentData()
-        is_data = fm.is_data_background(bg_key)
-        is_active = fm.is_active_background(bg_key)
-        reverse = bg_key.endswith("_rev")
-
-        # Build composite model and parameter set.
-        comp = None
-        for pk in self._peaks:
-            m = pk["func"].make_model(pk["prefix"])
-            comp = m if comp is None else comp + m
-        deg = fm.background_degree(bg_key)
-        if deg is not None and deg >= 0:
-            from lmfit.models import PolynomialModel
-            comp = comp + PolynomialModel(degree=deg, prefix="bg_")
-
-        params = comp.make_params()
-        for pk in self._peaks:
-            for name, spec in pk["params"].items():
-                full = pk["prefix"] + name
-                if full not in params:
-                    continue
-                expr = spec.get("expr", "").strip()
-                if expr:
-                    # Tie this parameter to others (inter-peak constraint).
-                    # A bare peak reference (p0) expands to this row's
-                    # parameter on that peak (p0_center on the centre row).
-                    params[full].set(
-                        value=spec["value"],
-                        expr=_expand_expr(expr, name))
-                else:
-                    params[full].set(
-                        value=spec["value"], min=spec["min"],
-                        max=spec["max"], vary=spec["vary"], expr="")
-        if deg is not None and deg >= 0:
-            params["bg_c0"].set(value=float(np.nanmin(y)))
-            for d in range(1, deg + 1):
-                params[f"bg_c{d}"].set(value=0.0)
 
         self._data_bg_full = None
         try:
-            if is_data:
-                bg = fm.data_background(bg_key, x, y)
-                if is_active:
-                    # Refine the Shirley from the fitted peak model until
-                    # the background stops changing (or 12 passes).
-                    tol = 1e-4 * (float(np.ptp(y)) + 1e-9)
-                    for _ in range(12):
-                        result = comp.fit(y - bg, params, x=x)
-                        params = result.params
-                        new_bg = fm.active_shirley_background(
-                            x, y, result.best_fit, reverse=reverse)
-                        done = np.max(np.abs(new_bg - bg)) <= tol
-                        bg = new_bg
-                        if done:
-                            break
-                result = comp.fit(y - bg, params, x=x)
-                bg_full = np.full(len(x_full), np.nan)
-                bg_full[mask] = bg
-                self._data_bg_full = bg_full
-            else:
-                result = comp.fit(y, params, x=x)
+            out = peakfit.run_fit(x, y, self._peaks, bg_key)
         except Exception as exc:
             QMessageBox.critical(self, "Curve Fitting",
                                  f"Fit failed:\n{exc}")
             return
+        result = out["result"]
+        if out["background"] is not None:
+            bg_full = np.full(len(x_full), np.nan)
+            bg_full[mask] = out["background"]
+            self._data_bg_full = bg_full
 
         self._result = result
         # Write fitted values back into the editor so the user sees them.

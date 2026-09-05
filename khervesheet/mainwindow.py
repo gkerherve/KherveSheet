@@ -4395,8 +4395,13 @@ class MainWindow(QMainWindow):
     def mcp_bridge(self):
         """The MCP bridge for this window, created on first use."""
         if getattr(self, "_mcp_bridge", None) is None:
-            from .mcp_bridge import McpBridge
+            from PyQt5.QtCore import QSettings
+            from .mcp_bridge import ACCESS_LEVELS, DEFAULT_ACCESS, McpBridge
             self._mcp_bridge = McpBridge(self)
+            level = QSettings("KherveSheet", "KherveSheet").value(
+                "mcp/access", DEFAULT_ACCESS)
+            self._mcp_bridge.set_access(
+                level if level in ACCESS_LEVELS else DEFAULT_ACCESS)
             self._mcp_bridge.tool_invoked.connect(
                 lambda name, _s: self._status_msg(f"MCP: {name}", 3000))
         return self._mcp_bridge

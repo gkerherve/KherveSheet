@@ -18,14 +18,24 @@ import json
 import os
 import sys
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-    QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout,
+    QGroupBox, QHBoxLayout, QLabel, QListWidget, QPlainTextEdit,
+    QPushButton, QVBoxLayout,
 )
 
+from .mcp_bridge import ACCESS_LEVELS
 from .mcp_server import SERVER_NAME, endpoint_path
+
+#: Access level → (label, what it means).  Order matches ACCESS_LEVELS.
+_ACCESS_LABELS = [
+    ("Read only", "Inspect the workbook; no changes."),
+    ("Edit (recommended)",
+     "Read, write, format, chart, fit, save — but no Python."),
+    ("Full", "Everything, including running Python inside KherveSheet."),
+]
 
 
 def launch_command() -> list:
@@ -76,6 +86,7 @@ class McpServerDialog(QDialog):
         # lambda would outlive it and fire on a deleted widget.
         bridge.started.connect(self._on_bridge_started)
         bridge.stopped.connect(self._refresh)
+        bridge.tool_invoked.connect(self._on_tool_invoked)
 
     # ── UI ───────────────────────────────────────────────────────────
 
@@ -97,6 +108,21 @@ class McpServerDialog(QDialog):
         self._status = QLabel()
         self._status.setTextInteractionFlags(Qt.TextSelectableByMouse)
         lay.addWidget(self._status)
+
+        acc_row = QHBoxLayout()
+        acc_row.addWidget(QLabel("Clients may:"))
+        self._access = QComboBox()
+        for label, tip in _ACCESS_LABELS:
+            self._access.addItem(label)
+            self._access.setItemData(self._access.count() - 1, tip,
+                                     Qt.ToolTipRole)
+        self._access.currentIndexChanged.connect(self._on_access_changed)
+        acc_row.addWidget(self._access, 1)
+        lay.addLayout(acc_row)
+
+        self._access_hint = QLabel()
+        self._access_hint.setWordWrap(True)
+        lay.addWidget(self._access_hint)
 
         row = QHBoxLayout()
         row.addWidget(QLabel("Configuration for:"))
@@ -127,6 +153,13 @@ class McpServerDialog(QDialog):
         hint.setWordWrap(True)
         lay.addWidget(hint)
 
+        act_box = QGroupBox("Recent activity")
+        act_lay = QVBoxLayout(act_box)
+        self._activity = QListWidget()
+        self._activity.setMaximumHeight(110)
+        act_lay.addWidget(self._activity)
+        lay.addWidget(act_box)
+
         btns = QDialogButtonBox(QDialogButtonBox.Close)
         copy = QPushButton("Copy")
         copy.clicked.connect(self._copy)
@@ -138,6 +171,18 @@ class McpServerDialog(QDialog):
 
     def _on_bridge_started(self, _port: int):
         self._refresh()
+
+    def _on_tool_invoked(self, name: str, outcome: str):
+        self._activity.insertItem(0, f"{name} — {outcome}")
+        while self._activity.count() > 50:
+            self._activity.takeItem(self._activity.count() - 1)
+
+    def _on_access_changed(self, index: int):
+        level = ACCESS_LEVELS[index]
+        self._bridge.set_access(level)
+        QSettings("KherveSheet", "KherveSheet").setValue(
+            "mcp/access", level)
+        self._refresh_access_hint()
 
     def _on_toggled(self, on: bool):
         if on:
@@ -153,15 +198,32 @@ class McpServerDialog(QDialog):
         self._refresh()
 
     def _save_pref(self, on: bool):
-        from PyQt5.QtCore import QSettings
         QSettings("KherveSheet", "KherveSheet").setValue(
             "mcp/enabled", bool(on))
+
+    def _refresh_access_hint(self):
+        idx = self._access.currentIndex()
+        text = _ACCESS_LABELS[idx][1]
+        if ACCESS_LEVELS[idx] == "full":
+            text += (" A connected assistant can then execute arbitrary "
+                     "Python in this process — grant it only to hosts "
+                     "you trust.")
+        self._access_hint.setText(text)
 
     def _refresh(self):
         running = self._bridge.is_running()
         self._enable.blockSignals(True)
         self._enable.setChecked(running)
         self._enable.blockSignals(False)
+        self._access.blockSignals(True)
+        self._access.setCurrentIndex(
+            ACCESS_LEVELS.index(self._bridge.access()))
+        self._access.blockSignals(False)
+        self._refresh_access_hint()
+        self._activity.clear()
+        for entry in reversed(self._bridge.log):
+            self._activity.addItem(
+                f"{entry['time']}  {entry['tool']} — {entry['outcome']}")
         if running:
             self._status.setText(
                 f"<b style='color:#2e7d32'>Listening</b> on "

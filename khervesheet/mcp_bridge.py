@@ -29,6 +29,8 @@ from __future__ import annotations
 import json
 import os
 import secrets
+import time
+from collections import deque
 from typing import Dict, Optional
 
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -49,7 +51,45 @@ _READ_ONLY_TOOLS = frozenset({
     "get_sheet_info", "read_cells", "read_selection",
     "search_functions", "get_function_details",
     "list_charts", "get_chart_details",
+    "get_document_info", "list_fit_models",
 })
+
+#: Tools that must run *outside* an undo macro.
+#:
+#: The document ones manipulate the stack themselves — saving marks it
+#: clean, opening clears it — and Qt refuses both mid-macro, which
+#: silently leaves a saved workbook still flagged as modified.  The
+#: analysis ones each push exactly one bulk command already, so a
+#: wrapper would only add an entry (an empty one when the caller asked
+#: for a report and no output_cell).
+_NO_MACRO_TOOLS = _READ_ONLY_TOOLS | {
+    "save_workbook", "open_workbook", "new_workbook",
+    "run_solver", "fit_trendline", "fit_peaks",
+}
+
+#: Tools that execute code the client wrote, in this process.
+_CODE_TOOLS = frozenset({"set_python_cell"})
+
+#: What a connected client is allowed to do, weakest first.  "edit" is
+#: the default: an MCP client can change the workbook, but running
+#: arbitrary Python in the app's own process is a separate, explicit
+#: decision the user makes in Tools ▸ MCP Server.
+ACCESS_LEVELS = ("read", "edit", "full")
+DEFAULT_ACCESS = "edit"
+
+#: How many recent calls the dialog's activity log shows.
+_LOG_LEN = 200
+
+
+def tool_allowed(name: str, access: str) -> bool:
+    """Is *name* callable at this access level?"""
+    if access == "full":
+        return True
+    if name in _CODE_TOOLS:
+        return False
+    if access == "edit":
+        return True
+    return name in _READ_ONLY_TOOLS
 
 
 class McpBridge(QObject):
@@ -66,6 +106,9 @@ class McpBridge(QObject):
         self._buffers: Dict[QTcpSocket, bytes] = {}
         self._token = ""
         self._executor = None
+        self._access = DEFAULT_ACCESS
+        self._busy = False
+        self.log: deque = deque(maxlen=_LOG_LEN)
 
     # ── Lifecycle ───────────────────────────────────────────────
 
@@ -77,6 +120,25 @@ class McpBridge(QObject):
 
     def token(self) -> str:
         return self._token
+
+    def access(self) -> str:
+        return self._access
+
+    def set_access(self, level: str):
+        """Change what connected clients may do, effective immediately.
+
+        Hosts cache ``tools/list`` from their startup, so tightening
+        this mid-session shows up as a refusal rather than a shorter
+        tool list until they reconnect.
+        """
+        if level not in ACCESS_LEVELS:
+            raise ValueError(f"Unknown access level {level!r}")
+        self._access = level
+
+    def visible_tools(self) -> list:
+        """The tool table as this access level sees it."""
+        from .ai_backend import TOOLS
+        return [t for t in TOOLS if tool_allowed(t["name"], self._access)]
 
     def start(self, port: int = DEFAULT_PORT) -> bool:
         """Begin listening.  Returns False (with no side effects) if
@@ -177,8 +239,7 @@ class McpBridge(QObject):
             if method == "get_status":
                 self._reply(sock, req_id, result=self._status())
             elif method == "list_tools":
-                from .ai_backend import TOOLS
-                self._reply(sock, req_id, result=list(TOOLS))
+                self._reply(sock, req_id, result=self.visible_tools())
             elif method == "call_tool":
                 self._reply(sock, req_id,
                             result=self._call_tool(params))
@@ -211,13 +272,37 @@ class McpBridge(QObject):
             "app": "KherveSheet",
             "version": __version__,
             "pid": os.getpid(),
+            "access": self._access,
             "sheets": [wb.name_of_sheet(s) for s in wb.all_sheets()],
         }
+
+    def _record(self, name: str, outcome: str):
+        self.log.append({"time": time.strftime("%H:%M:%S"),
+                         "tool": name, "outcome": outcome})
+        self.tool_invoked.emit(name, outcome)
 
     def _call_tool(self, params: dict) -> dict:
         name = params.get("name")
         if not name:
             return {"error": "Missing tool name."}
+        if not tool_allowed(name, self._access):
+            reason = (
+                f"{name} runs code the client supplies inside "
+                f"KherveSheet, which needs MCP access set to 'Full'."
+                if name in _CODE_TOOLS else
+                f"{name} would change the workbook, and MCP access is "
+                f"set to 'Read only'.")
+            self._record(str(name), "refused")
+            return {"error": f"Refused: {reason} The user can change "
+                             f"this in Tools \u25b8 MCP Server."}
+        # The Solver and the fitting tools pump the Qt event loop while
+        # they run, which can deliver a second request into this same
+        # handler.  Two tool calls interleaving on one workbook would
+        # corrupt both, so make the second wait its turn by failing.
+        if self._busy:
+            self._record(str(name), "busy")
+            return {"error": "KherveSheet is still running the previous "
+                             "tool call. Retry when it finishes."}
         tool_input = params.get("input") or {}
         if self._executor is None:
             from .ai_tools import AiToolExecutor
@@ -225,15 +310,17 @@ class McpBridge(QObject):
         # One macro per mutating call keeps the app's undo promise: a
         # single Ctrl+Z reverts whatever the remote agent just did.
         stack = self._mw._undo_stack
-        macro = name not in _READ_ONLY_TOOLS
+        macro = name not in _NO_MACRO_TOOLS
         if macro:
             stack.beginMacro(f"MCP: {name}")
+        self._busy = True
         try:
             result = self._executor.execute(name, tool_input)
         finally:
+            self._busy = False
             if macro:
                 stack.endMacro()
         summary = (result.get("error") if isinstance(result, dict)
                    and "error" in result else "ok")
-        self.tool_invoked.emit(str(name), str(summary))
+        self._record(str(name), str(summary))
         return result

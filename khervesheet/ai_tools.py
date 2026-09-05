@@ -104,6 +104,13 @@ def _range_label(r1: int, c1: int, r2: int, c2: int) -> str:
 
 _MAX_READ_ROWS = 500  # cap read_cells to avoid blowing context window
 
+#: Ceiling on a single write_cells call.  The built-in chat is told in
+#: its system prompt not to build whole workbooks cell by cell; an MCP
+#: client has no such prompt, so the limit is enforced here instead —
+#: generous enough for real edits, low enough to stop a model pouring a
+#: whole dataset through the tool channel.
+MAX_WRITE_CELLS = 5000
+
 
 class AiToolExecutor:
     """Executes AI tool calls by manipulating the spreadsheet.
@@ -138,6 +145,10 @@ class AiToolExecutor:
             "merge_cells": self.tool_merge_cells,
             "auto_fit_columns": self.tool_auto_fit_columns,
         }
+        # Document I/O + Solver/fitting live in their own module to keep
+        # both files near the 1500-line ceiling.
+        from .ai_tools_extra import build_dispatch
+        self._dispatch.update(build_dispatch(self))
 
     # ── Dispatcher ──────────────────────────────────────────────
 
@@ -263,6 +274,15 @@ class AiToolExecutor:
     def tool_write_cells(self, inp: dict) -> dict:
         sheet = self._sheet(inp["sheet_name"])
         values: List[List[str]] = inp["values"]
+        n_cells = sum(len(r) if isinstance(r, list) else 1
+                      for r in values)
+        if n_cells > MAX_WRITE_CELLS:
+            return {"error": (
+                f"Refusing to write {n_cells} cells in one call "
+                f"(limit {MAX_WRITE_CELLS}). Building large blocks of "
+                f"data this way is slow and unreliable — write a =PY "
+                f"cell that computes the block instead, or split the "
+                f"write across several calls.")}
         r1, c1, _, _ = parse_range(inp["range"])
         # Normalise: if the model sends a flat list of scalars (1-D)
         # instead of a 2-D array, wrap each element into its own row.

@@ -34,7 +34,7 @@ import json
 import os
 import socket
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 
 
 # ── Protocol constants ─────────────────────────────────────────────
@@ -102,6 +102,37 @@ _NOT_RUNNING = (
 
 class BridgeError(RuntimeError):
     """Raised when the running application cannot be reached."""
+
+
+#: Sent to the client on initialize.  The host writes its own system
+#: prompt, so anything a model must know before touching someone's
+#: open workbook has to travel with the connection.
+_INSTRUCTIONS = """\
+These tools drive a LIVE KherveSheet window — a scientific spreadsheet \
+with formulas, Python (=PY) cells, charts, curve fitting and a solver. \
+Everything you do lands in the workbook the user has open in front of \
+them, immediately.
+
+Working rules:
+- Call get_sheet_info first to learn the sheet names, and read_cells \
+before overwriting anything. Do not assume a layout.
+- Change only what was asked for. Leave existing data, formatting and \
+charts alone otherwise.
+- Do not build whole workbooks cell by cell. write_cells refuses very \
+large blocks: compute the data in a =PY cell instead, which is faster \
+and keeps the logic visible in the sheet.
+- Prefer the purpose-built tools over reimplementing their maths: \
+run_solver for optimisation, fit_trendline for regression, fit_peaks \
+for spectra. Call list_fit_models before guessing a model name, and \
+search_functions before assuming a formula function does not exist.
+- The user's edits and yours share one undo stack, so every change you \
+make is revertible with Ctrl+Z — but their unsaved work is real. \
+open_workbook and new_workbook refuse to discard it unless you pass \
+discard_unsaved_changes, and you should save instead of discarding.
+- The user controls what you may do (Tools > MCP Server). A refusal \
+naming an access level is their setting, not a bug — tell them what \
+you needed rather than working around it.
+"""
 
 
 # ── Bridge client ──────────────────────────────────────────────────
@@ -288,15 +319,7 @@ class McpServer:
                 "title": "KherveSheet",
                 "version": app_version,
             },
-            "instructions": (
-                "These tools drive a live KherveSheet window — a "
-                "scientific spreadsheet with formulas, Python (=PY) "
-                "cells, charts, curve fitting and a solver. Changes "
-                "appear immediately in the open workbook and are "
-                "undoable there with Ctrl+Z. Call get_sheet_info "
-                "first to learn the sheet names, and read_cells "
-                "before overwriting anything."
-            ),
+            "instructions": _INSTRUCTIONS,
         }
 
     def _list_tools(self) -> List[dict]:

@@ -40,8 +40,10 @@ into a new module and import.
   - `formula_engine.py` — cell formula parser & evaluator.
   - `undo_commands.py` — QUndoCommand classes.
   - `insert_ops.py`  — Insert menu ops: checkbox, dropdown, link, comment/note, emoji, transpose, spell-check.
-  - `solver.py`     — `SolverDialog` (Excel-style optimisation: min/max/target via scipy).
-  - `trendline.py`  — `TrendlineDialog` (curve fitting: 23+ models via scipy, goodness-of-fit report).
+  - `solver.py`     — `SolverDialog` (Excel-style optimisation: min/max/target via scipy);
+    `solve_headless()` runs the same dialog with no window for scripted/MCP callers.
+  - `trendline.py`  — `TrendlineDialog` (curve fitting: 23+ models via scipy, goodness-of-fit report);
+    `fit_series()` is the Qt-free fit behind both the dialog and the tool layer.
   - `fit_models.py` — `FitFunction` registry wrapping every built-in lmfit model plus a custom-function builder (compiles an expression in `x` into an lmfit model); linear/poly/Shirley/Tougaard backgrounds.
   - `fitting.py`    — `FittingDialog` (KherveFitting-style lmfit peak fitting: add any lmfit/custom function, per-peak parameter editor with value/min/max/vary, pick background, live plot + fit report, write components back to sheet).
   - `icons.py`      — qtawesome icon factory (themed MDI + custom QPainter plot glyphs).
@@ -58,8 +60,16 @@ into a new module and import.
   - `mcp_bridge.py`  — `McpBridge`, the in-app half: a token-authenticated
     127.0.0.1 listener that runs `AiToolExecutor` tools on the GUI thread,
     one undo macro per mutating call.
-  - `mcp_dialog.py`  — `McpServerDialog` (enable the bridge, copy the
-    host config snippet). See `docs/MCP.md`.
+  - `mcp_dialog.py`  — `McpServerDialog` (enable the bridge, choose the
+    access level, copy the host config snippet). See `docs/MCP.md`.
+  - `ai_tools_extra.py` — document I/O (open/save/new) and analysis
+    (`run_solver`, `fit_trendline`, `fit_peaks`) tools, registered into
+    `AiToolExecutor` at construction.
+  - `ai_tools_schema.py` — input schemas for those tools; appended to
+    `ai_backend.TOOLS`. An MCP host writes its own system prompt, so
+    anything an agent must know belongs in these descriptions.
+  - `peakfit.py`     — Qt-free lmfit peak-fitting core shared by
+    `FittingDialog` and the tool layer.
 - `requirements.txt`, `LICENSE` (GPL-3.0).
 - Packaging — one PyInstaller spec, two platform tails:
   - `KherveSheet.spec` — shared Analysis; branches on `sys.platform` for
@@ -84,6 +94,14 @@ into a new module and import.
 - **Number formats**: General, Number (0.0 through 0.0000), Scientific,
   Percentage, Currency, Date, Time, Text.
 - **Window style**: Fusion as default.
+
+## Tool layer (AI chat + MCP)
+
+The tools in `ai_tools.py` / `ai_tools_extra.py` are reachable two
+ways: the built-in chat (which supplies a system prompt) and any MCP
+client (which does not — the host writes its own). **Any constraint
+that matters must therefore be enforced in the executor or stated in
+the tool's schema description, never only in the chat prompt.**
 
 ## Undo / redo policy
 

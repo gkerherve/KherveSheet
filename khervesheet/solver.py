@@ -254,7 +254,8 @@ class SolverDialog(QDialog):
 
     METHODS = ["GRG Nonlinear", "LP Simplex", "Evolutionary"]
 
-    def __init__(self, sheet: SheetWidget, parent=None):
+    def __init__(self, sheet: SheetWidget, parent=None,
+                 headless: bool = False):
         super().__init__(parent)
         self.setWindowTitle("Solver Parameters")
         self.setWindowModality(Qt.NonModal)
@@ -265,6 +266,11 @@ class SolverDialog(QDialog):
 
         self._cancelled = False
         self._solving = False
+        # Headless runs (scripted, or driven over MCP) must never block
+        # on a modal box: outcomes land in _report_log instead and any
+        # question takes its default answer.
+        self._headless = headless
+        self._report_log: List[dict] = []
 
         self._build_ui()
 
@@ -279,6 +285,29 @@ class SolverDialog(QDialog):
         # Listen to sheet selection changes
         self._sheet.table.itemSelectionChanged.connect(
             self._on_sheet_selection)
+
+    # ── Reporting ───────────────────────────────────────────────────
+
+    def _report(self, level: str, title: str, text: str,
+                question: bool = False, default: bool = True) -> bool:
+        """Tell the user how the solve went, and return their answer.
+
+        Every outcome is recorded in *_report_log* whether or not a box
+        is shown, so a headless caller can report the same thing the
+        dialog would have said.
+        """
+        self._report_log.append({"level": level, "text": text})
+        if self._headless:
+            return default
+        if question:
+            reply = QMessageBox.warning(
+                self, title, text,
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            return reply == QMessageBox.Yes
+        {"critical": QMessageBox.critical,
+         "warning": QMessageBox.warning,
+         "info": QMessageBox.information}[level](self, title, text)
+        return default
 
     # ── Cell-pick machinery ─────────────────────────────────────────
 
@@ -606,8 +635,8 @@ class SolverDialog(QDialog):
         try:
             from scipy import optimize as opt
         except ImportError:
-            QMessageBox.critical(
-                self, "Missing Dependency",
+            self._report(
+                "critical", "Missing Dependency",
                 "scipy is required for the Solver.\n"
                 "Install it with:  pip install scipy")
             return
@@ -615,7 +644,7 @@ class SolverDialog(QDialog):
         # Parse objective cell
         obj_rc = _parse_ref(self._obj_edit.text())
         if obj_rc is None:
-            QMessageBox.warning(self, "Solver", "Invalid objective cell.")
+            self._report("warning", "Solver", "Invalid objective cell.")
             return
 
         # Parse variable cells (may span several comma-separated ranges).
@@ -624,8 +653,8 @@ class SolverDialog(QDialog):
         parsed = _parse_range(self._var_edit.text())
         var_cells = list(dict.fromkeys(parsed))
         if not var_cells:
-            QMessageBox.warning(self, "Solver",
-                                "Invalid variable cell range.")
+            self._report("warning", "Solver",
+                         "Invalid variable cell range.")
             return
 
         # Save original values for undo
@@ -650,8 +679,8 @@ class SolverDialog(QDialog):
             sense = "value"
             target = self._resolve_value(self._target_edit.text())
             if target is None:
-                QMessageBox.warning(self, "Solver",
-                                    "Invalid target value.")
+                self._report("warning", "Solver",
+                             "Invalid target value.")
                 return
 
         # Bounds (unchanged from the original engine: the only box bounds
@@ -725,8 +754,8 @@ class SolverDialog(QDialog):
         for con in self._constraints:
             con_rc = _parse_ref(con.cell_ref)
             if con_rc is None:
-                QMessageBox.warning(
-                    self, "Solver",
+                self._report(
+                    "warning", "Solver",
                     f"Invalid constraint reference: {con.cell_ref}")
                 # Restore originals
                 for (r, c), txt in original.items():
@@ -735,8 +764,8 @@ class SolverDialog(QDialog):
 
             rhs_val = self._resolve_value(con.rhs)
             if rhs_val is None:
-                QMessageBox.warning(
-                    self, "Solver",
+                self._report(
+                    "warning", "Solver",
                     f"Invalid constraint value: {con.rhs}")
                 for (r, c), txt in original.items():
                     self._sheet._set_cell_quiet(r, c, txt)
@@ -926,8 +955,8 @@ class SolverDialog(QDialog):
         except Exception as exc:
             for (r, c), txt in original.items():
                 self._sheet._set_cell_quiet(r, c, txt)
-            QMessageBox.critical(
-                self, "Solver Error", f"Solver failed:\n{exc}")
+            self._report("critical", "Solver Error",
+                         f"Solver failed:\n{exc}")
             return
         finally:
             self._sheet._suppress_recalc_signals = False
@@ -943,8 +972,8 @@ class SolverDialog(QDialog):
                 self._sheet._set_cell_quiet(r, c, txt)
             for r, c in var_cells:
                 self._sheet._recalc_dependents(r, c)
-            QMessageBox.information(
-                self, "Solver",
+            self._report(
+                "info", "Solver",
                 "Solver stopped before finding a solution."
                 if cancelled else "Solver could not find a solution.")
             return
@@ -970,14 +999,13 @@ class SolverDialog(QDialog):
             # Still write the best result found, but warn user.
             # Use normal precision for final display formatting.
             _set_vars(result.x, full_prec=False)
-            reply = QMessageBox.warning(
-                self, "Solver",
+            keep = self._report(
+                "warning", "Solver",
                 f"Solver could not find a solution.\n"
                 f"Reason: {result.message}\n\n"
                 f"Keep the best values found, or restore originals?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes)
-            if reply == QMessageBox.No:
+                question=True, default=True)
+            if not keep:
                 for (r, c), txt in original.items():
                     self._sheet._set_cell_quiet(r, c, txt)
                 for r, c in var_cells:
@@ -1005,8 +1033,82 @@ class SolverDialog(QDialog):
             obj_display = f"{float(obj_val):g}"
         except (ValueError, TypeError):
             obj_display = obj_val
-        QMessageBox.information(
-            self, "Solver",
+        self._report(
+            "info", "Solver",
             (f"Search stopped — keeping the best result found.\n"
              if cancelled else "Solver found a solution.\n")
             + f"Objective cell value: {obj_display}")
+
+
+# ── Headless entry point ────────────────────────────────────────────
+
+def solve_headless(sheet: SheetWidget, spec: dict) -> dict:
+    """Run a solve from a plain dict, with no dialog on screen.
+
+    Used by the AI / MCP tool layer.  The dialog is still what does the
+    work — it is built but never shown — so a scripted solve and a
+    hand-driven one take exactly the same numerical path, and there is
+    no second optimiser to keep in step with this one.
+    """
+    dlg = SolverDialog(sheet, headless=True)
+    try:
+        dlg._obj_edit.setText(str(spec.get("objective_cell", "")))
+        dlg._var_edit.setText(str(spec.get("variable_cells", "")))
+
+        goal = str(spec.get("goal", "min")).lower()
+        dlg._radio_max.setChecked(goal == "max")
+        dlg._radio_min.setChecked(goal == "min")
+        dlg._radio_val.setChecked(goal in ("value", "target"))
+        if spec.get("target_value") is not None:
+            dlg._target_edit.setText(str(spec["target_value"]))
+
+        dlg._nonneg_chk.setChecked(bool(spec.get("non_negative", False)))
+        # Multistart never terminates on its own — it runs until the
+        # user presses Stop, and there is nobody to press it here.
+        dlg._keep_chk.setChecked(False)
+
+        method = spec.get("method")
+        if method:
+            if method not in SolverDialog.METHODS:
+                return {"error": f"Unknown method {method!r}. "
+                                 f"Choose from {SolverDialog.METHODS}."}
+            dlg._method_combo.setCurrentText(method)
+
+        dlg._constraints = []
+        for con in spec.get("constraints") or []:
+            op = str(con.get("op", "<="))
+            if op not in ("<=", ">=", "="):
+                return {"error": f"Unknown constraint operator {op!r}. "
+                                 "Use '<=', '>=' or '='."}
+            dlg._constraints.append(
+                Constraint(str(con.get("cell", "")), op,
+                           str(con.get("value", ""))))
+
+        var_cells = list(dict.fromkeys(_parse_range(dlg._var_edit.text())))
+        before = {rc: sheet.cell_text(*rc) for rc in var_cells}
+
+        dlg._solve()
+
+        obj_rc = _parse_ref(dlg._obj_edit.text())
+        after = {_ref_str(*rc): sheet.cell_text(*rc) for rc in var_cells}
+        changed = any(sheet.cell_text(*rc) != before[rc]
+                      for rc in var_cells)
+        messages = [m["text"] for m in dlg._report_log]
+        failed = any(m["level"] in ("warning", "critical")
+                     for m in dlg._report_log)
+        result = {
+            "solved": bool(changed and not failed),
+            "method": dlg._method_combo.currentText(),
+            "goal": goal,
+            "variables": after,
+            "messages": messages,
+        }
+        if obj_rc is not None:
+            result["objective_cell"] = _ref_str(*obj_rc)
+            result["objective_value"] = sheet.cell_text(*obj_rc)
+        if failed and not changed:
+            result["error"] = "; ".join(messages) or "Solve failed."
+        return result
+    finally:
+        dlg._disconnect_sheet()
+        dlg.deleteLater()
