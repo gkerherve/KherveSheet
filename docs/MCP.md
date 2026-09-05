@@ -5,7 +5,7 @@ assistants other than the built-in AI chat — Claude Desktop, Claude
 Code, Cursor, Zed, Continue, or anything else that speaks the Model
 Context Protocol — can read and edit an open workbook directly.
 
-An MCP client gets 29 tools — the 21 the built-in chat uses, plus
+An MCP client gets 35 tools — the 27 the built-in chat uses, plus
 eight it does not (marked * below). The chat sits inside the window,
 where File ▸ Save and the Tools menu are a click away and the user is
 driving; an MCP client has no window and no menus, so those eight are
@@ -13,12 +13,21 @@ the only way it can reach the same features.
 
 - **The grid** — read and write cells, formulas and `=PY` Python
   cells, formatting, table styles, column widths, merges.
-- **Charts** — create, inspect, clone, restyle, delete.
+- **Charts** — the whole system, not just creation.
   `insert_chart` takes the title, axis labels, size and position in the
   same call and names each series after the header cell above its
-  column; `style_chart` then reaches every series (colour, line style,
-  marker, plot type), the legend, the fonts and a named preset
-  (`clean`, `minimal`, `publication`, `dark`).
+  column. `style_chart` reaches every series (colour, line style,
+  marker, plot type, area fill), the legend, the fonts and a named
+  preset (`clean`, `minimal`, `publication`, `dark`). `modify_chart`
+  covers axes, limits, geometry and layout. Beyond that:
+  `add_chart_series` / `remove_chart_series` grow and shrink a plot
+  without rebuilding it, `add_trendline` fits a curve onto the chart
+  with its equation and R², `configure_axis` exposes the full Axis
+  Properties surface (tick formats, minor ticks, both gridlines,
+  spines, the secondary label), `annotate_chart` places text, arrows
+  and lines at data coordinates, and `export_chart` writes PNG/SVG/PDF.
+  `list_charts`, `get_chart_details` and `clone_chart` inspect and
+  copy.
 - **Analysis*** — `run_solver` (Excel-style optimisation),
   `fit_trendline` (23 regression models with goodness-of-fit),
   `fit_peaks` (lmfit peak fitting over a Shirley/ALS/polynomial
@@ -62,7 +71,25 @@ Practical consequences:
 2. Tick **Enable MCP server**. The setting is remembered, so the
    bridge comes back automatically next launch.
 3. Choose what clients may do (see **Access levels** below).
-4. Pick your host from the dropdown and press **Copy**.
+4. Pick your host under **Connect a host** and press **Connect**.
+
+KherveSheet writes the entry into the host's own settings, so there is
+no config file to edit by hand — it knows its own executable path,
+which is the part a hand-edit usually gets wrong. Claude Desktop,
+Cursor and Windsurf are edited directly; Claude Code goes through the
+`claude` CLI, which owns the shape of `~/.claude.json`.
+
+Every write backs the file up first (`.khervesheet-<timestamp>.bak`
+beside it), replaces it atomically, and leaves your other servers and
+unrelated settings alone. A config file that will not parse is reported
+rather than overwritten.
+
+**Zed is the exception.** Its settings file allows comments, which
+rewriting would silently discard, so KherveSheet refuses to touch it —
+copy the snippet in by hand.
+
+Restart the host afterwards: hosts read their tool list once at
+startup, so a newly connected one shows no tools until it reconnects.
 
 The dialog also shows a running log of what connected clients have
 actually called.
@@ -90,9 +117,11 @@ refused if called anyway, with an error naming the setting. Hosts cache
 the tool list from startup, so *widening* access takes effect on their
 next reconnect; *narrowing* it takes effect immediately.
 
-### Claude Desktop / Cursor / Zed
+### Configuring by hand
 
-Paste into the host's config file (`claude_desktop_config.json` for
+The dialog still shows the snippet, for Zed, for a machine you are
+setting up remotely, or for a host KherveSheet does not know about.
+Paste it into the host's config file (`claude_desktop_config.json` for
 Claude Desktop) and restart it:
 
 ```json

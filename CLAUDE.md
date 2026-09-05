@@ -61,10 +61,16 @@ into a new module and import.
     127.0.0.1 listener that runs `AiToolExecutor` tools on the GUI thread,
     one undo macro per mutating call.
   - `mcp_dialog.py`  — `McpServerDialog` (enable the bridge, choose the
-    access level, copy the host config snippet). See `docs/MCP.md`.
+    access level, connect a host). See `docs/MCP.md`.
+  - `mcp_hosts.py`   — Qt-free config-file writer: detects Claude
+    Desktop / Claude Code / Cursor / Windsurf / Zed and merges
+    KherveSheet's entry in, with a backup and an atomic replace.
   - `ai_charts.py`   — chart tools for both tables: `insert_chart`,
     `modify_chart`, `style_chart`, with their schemas next to the code
-    that runs them (series styling, legend, fonts, named presets).
+    that runs them (series styling, fills, legend, fonts, presets).
+  - `ai_charts_extra.py` — the rest of the chart system as tools:
+    `add_chart_series`, `remove_chart_series`, `add_trendline`,
+    `configure_axis`, `annotate_chart`, `export_chart`.
   - `ai_tools_extra.py` — document I/O (open/save/new) and analysis
     (`run_solver`, `fit_trendline`, `fit_peaks`) tools, registered into
     `AiToolExecutor` at construction.
