@@ -204,6 +204,54 @@ TOOLS = [
         },
     },
     {
+        "name": "insert_control",
+        "description": (
+            "Turn cells into interactive controls the user can click: a "
+            "checkbox, or a dropdown of fixed options. Both are real "
+            "cell values, not decoration — a checkbox cell reads 'TRUE' "
+            "or 'FALSE' and a dropdown cell reads the selected option, "
+            "so a formula or a =PY cell can act on whichever the user "
+            "picked. Use this to give a sheet a control panel: a "
+            "checkbox that switches a calculation on, a dropdown that "
+            "chooses a model. TRUE and FALSE count as 1 and 0 in "
+            "arithmetic, so SUM over a column of checkboxes counts the "
+            "ticked ones."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sheet_name": {"type": "string"},
+                "range": {
+                    "type": "string",
+                    "description": ("Cell or range to convert, "
+                                    "e.g. 'B2' or 'B2:B10'."),
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["checkbox", "dropdown"],
+                },
+                "checked": {
+                    "type": "boolean",
+                    "description": ("Starting state for a checkbox. "
+                                    "Default false."),
+                },
+                "items": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Dropdown options. Required for a "
+                                   "dropdown.",
+                },
+                "default": {
+                    "type": "string",
+                    "description": ("Option selected initially; must be "
+                                    "one of items. Defaults to the "
+                                    "first."),
+                },
+            },
+            "required": ["sheet_name", "range", "kind"],
+        },
+    },
+    {
         "name": "format_cells",
         "description": "Apply visual formatting to a range of cells.",
         "input_schema": {

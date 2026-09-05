@@ -339,8 +339,67 @@ def build_dispatch(ex) -> Dict[str, Callable[[dict], dict]]:
         "fit_trendline": lambda i: tool_fit_trendline(ex, i),
         "fit_peaks": lambda i: tool_fit_peaks(ex, i),
         "list_fit_models": lambda i: tool_list_fit_models(ex, i),
+        "insert_control": lambda i: tool_insert_control(ex, i),
     }
 
 
 #: Tools that only inspect; used by the bridge's read-only access level.
 READ_ONLY = frozenset({"get_document_info", "list_fit_models"})
+
+
+# ── Interactive cells ──────────────────────────────────────────────
+
+def tool_insert_control(ex, inp: dict) -> dict:
+    """Turn cells into checkboxes or dropdowns.
+
+    Both are ordinary cells whose *value* is text — "TRUE"/"FALSE" for
+    a checkbox, the chosen option for a dropdown — so a formula or a
+    =PY cell reads them like any other cell.  That is what makes them
+    usable as controls rather than decoration.
+    """
+    from .ai_tools import parse_range
+    from .insert_ops import insert_checkbox, mark_dropdown_cell
+
+    sheet = ex._sheet(inp["sheet_name"])
+    kind = inp.get("kind")
+    if kind not in ("checkbox", "dropdown"):
+        return {"error": "kind must be 'checkbox' or 'dropdown'."}
+    r1, c1, r2, c2 = parse_range(inp["range"])
+    cells = [(r, c) for r in range(r1, r2 + 1)
+             for c in range(c1, c2 + 1)]
+    if len(cells) > 500:
+        return {"error": f"{len(cells)} cells is too many for one call "
+                         "(limit 500)."}
+
+    if kind == "checkbox":
+        checked = bool(inp.get("checked", False))
+        for r, c in cells:
+            insert_checkbox(sheet, r, c, checked=checked)
+        return {"created": "checkbox", "cells": len(cells),
+                "value": "TRUE" if checked else "FALSE",
+                "note": ("The cell reads 'TRUE' or 'FALSE'. Reference it "
+                         "from a formula or with ks() in a =PY cell.")}
+
+    items = [str(i) for i in (inp.get("items") or []) if str(i).strip()]
+    if not items:
+        return {"error": "A dropdown needs at least one entry in 'items'."}
+    if not hasattr(sheet, "_cell_dropdowns"):
+        sheet._cell_dropdowns = {}
+    default = inp.get("default")
+    if default is not None and default not in items:
+        return {"error": f"default {default!r} is not one of {items}."}
+    default = default if default is not None else items[0]
+    from PyQt5.QtWidgets import QTableWidgetItem
+    for r, c in cells:
+        sheet._cell_dropdowns[(r, c)] = items
+        it = sheet.table.item(r, c)
+        if it is None:
+            it = QTableWidgetItem(default)
+            sheet.table.setItem(r, c, it)
+        elif not it.text():
+            it.setText(default)
+        sheet._shadow[(r, c)] = it.text()
+        mark_dropdown_cell(sheet, r, c)
+    return {"created": "dropdown", "cells": len(cells), "items": items,
+            "default": default,
+            "note": ("The cell reads whichever option is selected.")}

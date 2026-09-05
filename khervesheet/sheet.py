@@ -2056,6 +2056,16 @@ class SheetWidget(QWidget):
 
     def _on_cell_changed_impl(self, row, col):
         it = self.table.item(row, col)
+        # A checkbox click changes CheckStateRole, not the text, so the
+        # cell's value has to be mirrored across before anything reads
+        # it.  Without this a checkbox is decoration: formulas and =PY
+        # cells both see an empty cell however it is ticked.
+        if it is not None and it.data(Qt.CheckStateRole) is not None:
+            want = "TRUE" if it.checkState() == Qt.Checked else "FALSE"
+            if it.text() != want:
+                self.table.blockSignals(True)
+                it.setText(want)
+                self.table.blockSignals(False)
         new_text = it.text() if it else ""
         old_text = self._shadow.get((row, col), "")
 
@@ -5733,13 +5743,19 @@ class SheetWidget(QWidget):
         return True
 
     # ── Compiled-formula runtime helpers ─────────────────────────────
+    #: Boolean cell text → its numeric value, as Excel coerces them.
+    _BOOL_VALUES = {"TRUE": 1.0, "FALSE": 0.0}
+
     def _cell_val(self, r, c):
         it = self.table.item(r, c)
         if it and it.text():
+            t = it.text()
             try:
-                return float(it.text())
+                return float(t)
             except ValueError:
-                return 0.0
+                # TRUE/FALSE are values, not stray text: a checkbox
+                # cell holds one, and =IF(A1,…) over it has to work.
+                return self._BOOL_VALUES.get(t.strip().upper(), 0.0)
         return 0.0
 
     def _cell_raw(self, r, c):
@@ -5782,10 +5798,15 @@ class SheetWidget(QWidget):
             for r in range(r1, r2 + 1):
                 it = tbl.item(r, c)
                 if it and it.text():
+                    t = it.text()
                     try:
-                        vals.append(float(it.text()))
+                        vals.append(float(t))
                     except ValueError:
-                        pass
+                        # A boolean is a value here too, so SUM over a
+                        # column of checkboxes counts the ticked ones.
+                        b = self._BOOL_VALUES.get(t.strip().upper())
+                        if b is not None:
+                            vals.append(b)
         return vals
 
     def _range_values_2d(self, c1, r1, c2, r2):
@@ -6509,6 +6530,11 @@ class SheetWidget(QWidget):
                                 it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
                                 it.setCheckState(
                                     Qt.Checked if dm["checkbox"] else Qt.Unchecked)
+                                # Files written before checkboxes had a
+                                # readable value carry empty text.
+                                val = "TRUE" if dm["checkbox"] else "FALSE"
+                                it.setText(val)
+                                self._shadow[(r, c)] = val
                             if "dropdown" in dm:
                                 self._cell_dropdowns[(r, c)] = dm["dropdown"]
                                 it.setFlags(

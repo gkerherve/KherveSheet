@@ -24,22 +24,29 @@ from PyQt5.QtWidgets import (
 
 
 # ── Checkbox ────────────────────────────────────────────────────────
-def insert_checkbox(sheet):
-    """Insert a toggleable checkbox (TRUE/FALSE) in the current cell."""
-    row = sheet.table.currentRow()
-    col = sheet.table.currentColumn()
+def insert_checkbox(sheet, row=None, col=None, checked=False):
+    """Insert a toggleable checkbox (TRUE/FALSE) in a cell.
+
+    The cell's *value* is the string "TRUE" or "FALSE", so formulas and
+    =PY cells can read it; the tick is how it is drawn and clicked.
+    Defaults to the current cell when no coordinates are given.
+    """
+    if row is None:
+        row = sheet.table.currentRow()
+    if col is None:
+        col = sheet.table.currentColumn()
     if row < 0 or col < 0:
         return
     it = sheet.table.item(row, col)
     old = it.text() if it else ""
-    new_val = ""
+    new_val = "TRUE" if checked else "FALSE"
     if it is None:
         it = QTableWidgetItem(new_val)
         sheet.table.setItem(row, col, it)
     else:
         it.setText(new_val)
     it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
-    it.setCheckState(Qt.Unchecked)
+    it.setCheckState(Qt.Checked if checked else Qt.Unchecked)
     sheet._shadow[(row, col)] = new_val
     if sheet._undo_stack is not None:
         from .sheet import CellEditCmd
@@ -48,14 +55,16 @@ def insert_checkbox(sheet):
 
 
 def toggle_checkbox(sheet, row, col):
-    """Toggle a checkbox cell between checked and unchecked."""
+    """Toggle a checkbox cell between checked and unchecked.
+
+    Setting the check state is enough: cellChanged carries the new
+    value into the cell text, which is what formulas read.
+    """
     it = sheet.table.item(row, col)
-    if it is None:
+    if it is None or it.data(Qt.CheckStateRole) is None:
         return
-    if it.checkState() == Qt.Checked:
-        it.setCheckState(Qt.Unchecked)
-    else:
-        it.setCheckState(Qt.Checked)
+    it.setCheckState(Qt.Unchecked if it.checkState() == Qt.Checked
+                     else Qt.Checked)
 
 
 # ── Dropdown (data validation) ──────────────────────────────────────
@@ -980,6 +989,18 @@ def save_insert_data(sheet):
     sp = getattr(sheet, '_cell_sparklines', {})
     if sp:
         d['sparklines'] = {f"{r},{c}": v for (r, c), v in sp.items()}
+    # Checkboxes live only as Qt check state, so scan for them.  A real
+    # checkbox has CheckStateRole set; the ItemIsUserCheckable flag is
+    # on by default for every item and must not be used to detect one.
+    boxes = {}
+    tbl = sheet.table
+    for r in range(tbl.rowCount()):
+        for c in range(tbl.columnCount()):
+            it = tbl.item(r, c)
+            if it is not None and it.data(Qt.CheckStateRole) is not None:
+                boxes[f"{r},{c}"] = (it.checkState() == Qt.Checked)
+    if boxes:
+        d['checkboxes'] = boxes
     return json.dumps(d) if d else ""
 
 
@@ -988,6 +1009,21 @@ def load_insert_data(sheet, json_str):
     if not json_str:
         return
     d = json.loads(json_str)
+    if 'checkboxes' in d:
+        for k, checked in d['checkboxes'].items():
+            r, c = map(int, k.split(","))
+            it = sheet.table.item(r, c)
+            if it is None:
+                it = QTableWidgetItem("")
+                sheet.table.setItem(r, c, it)
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+            # Workbooks written before a checkbox had a readable value
+            # carry empty text; rebuild it from the saved state.
+            val = "TRUE" if checked else "FALSE"
+            if it.text() not in ("TRUE", "FALSE"):
+                it.setText(val)
+            sheet._shadow[(r, c)] = it.text()
     if 'notes' in d:
         sheet._cell_notes.clear()
         for k, v in d['notes'].items():
