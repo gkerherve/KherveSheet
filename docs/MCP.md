@@ -5,7 +5,7 @@ assistants other than the built-in AI chat — Claude Desktop, Claude
 Code, Cursor, Zed, Continue, or anything else that speaks the Model
 Context Protocol — can read and edit an open workbook directly.
 
-An MCP client gets 35 tools — the 27 the built-in chat uses, plus
+An MCP client gets 36 tools — the 28 the built-in chat uses, plus
 eight it does not (marked * below). The chat sits inside the window,
 where File ▸ Save and the Tools menu are a click away and the user is
 driving; an MCP client has no window and no menus, so those eight are
@@ -13,6 +13,11 @@ the only way it can reach the same features.
 
 - **The grid** — read and write cells, formulas and `=PY` Python
   cells, formatting, table styles, column widths, merges.
+- **Interactive cells** — `insert_control` makes checkboxes and
+  dropdowns. Their values are ordinary cell text (`TRUE`/`FALSE`, or
+  the chosen option), so a formula or a `=PY` cell can act on whatever
+  the user clicks — a checkbox that triggers a refit, a dropdown that
+  picks a model.
 - **Charts** — the whole system, not just creation.
   `insert_chart` takes the title, axis labels, size and position in the
   same call and names each series after the header cell above its
