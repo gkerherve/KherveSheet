@@ -220,20 +220,6 @@ def badge_for(value) -> str:
     return f"▮ {type(value).__name__}"
 
 
-class PythonRuntime:
-    """Owns the shared namespace for every ``=PY`` cell in a workbook."""
-
-    def __init__(self):
-        self._globals = None
-        self._sheet = None      # sheet bound to the current run (for xl())
-        self._cur_cell = None   # (row, col) of the running cell (for ks_set)
-        self._written = None    # cells written via ks_set during a run
-        self._last_writes = set()  # cells written by the most recent run
-        #: Max seconds a single =PY cell may run before it is aborted.
-        #: Guards against infinite loops freezing the app.  Set to 0/None
-        #: to disable.
-        self.timeout = 30.0
-
 def ensure_ca_bundle() -> bool:
     """Make HTTPS verification work when the interpreter has no CAs.
 
@@ -271,6 +257,20 @@ def ensure_ca_bundle() -> bool:
         pass
     return _CA_BUNDLE_READY
 
+
+class PythonRuntime:
+    """Owns the shared namespace for every ``=PY`` cell in a workbook."""
+
+    def __init__(self):
+        self._globals = None
+        self._sheet = None      # sheet bound to the current run (for xl())
+        self._cur_cell = None   # (row, col) of the running cell (for ks_set)
+        self._written = None    # cells written via ks_set during a run
+        self._last_writes = set()  # cells written by the most recent run
+        #: Max seconds a single =PY cell may run before it is aborted.
+        #: Guards against infinite loops freezing the app.  Set to 0/None
+        #: to disable.
+        self.timeout = 30.0
 
     # ── namespace ────────────────────────────────────────────────────
     def _ensure_globals(self):
