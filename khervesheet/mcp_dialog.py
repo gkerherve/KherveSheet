@@ -4,30 +4,30 @@
 
 """Control panel for the MCP (Model Context Protocol) bridge.
 
-Shows whether the bridge is listening and, more usefully, hands the
-user a ready-made configuration block for their MCP host — Claude
-Desktop, Claude Code, Cursor and friends all take the same
-``command``/``args`` shape, so one snippet plus a Copy button covers
-the lot.  Getting that snippet right by hand (the interpreter path in
-particular) is the step people trip on.
+Shows whether the bridge is listening and connects MCP hosts to it.
+
+Editing ``claude_desktop_config.json`` by hand is the step that stops
+people using the bridge at all, so the dialog detects the hosts on this
+machine and writes the entry itself (see ``mcp_hosts``).  The snippet
+and its Copy button stay for the hosts we refuse to rewrite and for
+anyone configuring a machine by hand.
 """
 
 from __future__ import annotations
 
-import json
-import os
 import sys
 
 from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-    QGroupBox, QHBoxLayout, QLabel, QListWidget, QPlainTextEdit,
-    QPushButton, QVBoxLayout,
+    QGroupBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout,
 )
 
 from .mcp_bridge import ACCESS_LEVELS
-from .mcp_server import SERVER_NAME, endpoint_path
+from .mcp_hosts import HOSTS, cli_command, host_config
+from .mcp_server import endpoint_path
 
 #: Access level → (label, what it means).  Order matches ACCESS_LEVELS.
 _ACCESS_LABELS = [
@@ -36,52 +36,6 @@ _ACCESS_LABELS = [
      "Read, write, format, chart, fit, save — but no Python."),
     ("Full", "Everything, including running Python inside KherveSheet."),
 ]
-
-
-def launch_command() -> list:
-    """Argv an MCP host should run to reach this installation.
-
-    A frozen build re-executes itself with ``--mcp-server``; a source
-    checkout runs the module under the same interpreter, from the
-    package's parent directory so the import resolves.
-    """
-    if getattr(sys, "frozen", False):
-        return [sys.executable, "--mcp-server"]
-    return [sys.executable, "-m", "khervesheet.mcp_server"]
-
-
-def checkout_root() -> str:
-    """Directory containing the ``khervesheet`` package."""
-    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-
-def host_config(indent_key: bool = True) -> str:
-    """JSON snippet for an MCP host's config file."""
-    argv = launch_command()
-    entry = {"command": argv[0], "args": argv[1:]}
-    if not getattr(sys, "frozen", False):
-        # `-m khervesheet.mcp_server` only resolves if the checkout is
-        # importable, and the host picks the working directory.  A
-        # "cwd" key does not travel -- Claude Code drops it -- so the
-        # server died with ModuleNotFoundError before it could answer
-        # initialize, which the host reports as "Server disconnected".
-        # PYTHONPATH is passed through by every host, so use that.
-        entry["env"] = {"PYTHONPATH": checkout_root()}
-    block = {"mcpServers": {SERVER_NAME: entry}}
-    return json.dumps(block, indent=2)
-
-
-def cli_command() -> str:
-    """One-liner for `claude mcp add`."""
-    argv = launch_command()
-    quoted = " ".join(
-        f'"{a}"' if " " in a else a for a in argv)
-    env = ""
-    if not getattr(sys, "frozen", False):
-        # Same reason as host_config(): the module has to be importable
-        # from whatever directory the host launches us in.
-        env = f'-e PYTHONPATH="{checkout_root()}" '
-    return f"claude mcp add {SERVER_NAME} {env}-- {quoted}"
 
 
 class McpServerDialog(QDialog):
@@ -137,8 +91,32 @@ class McpServerDialog(QDialog):
         self._access_hint.setWordWrap(True)
         lay.addWidget(self._access_hint)
 
+        host_box = QGroupBox("Connect a host")
+        host_lay = QVBoxLayout(host_box)
+        host_lay.addWidget(QLabel(
+            "KherveSheet can write its entry into these applications' "
+            "own settings — no config file to edit by hand."))
+        self._hosts = QListWidget()
+        self._hosts.setMaximumHeight(120)
+        self._hosts.currentRowChanged.connect(self._refresh_host_buttons)
+        host_lay.addWidget(self._hosts)
+        hrow = QHBoxLayout()
+        self._connect_btn = QPushButton("Connect")
+        self._connect_btn.clicked.connect(self._on_connect)
+        self._disconnect_btn = QPushButton("Disconnect")
+        self._disconnect_btn.clicked.connect(self._on_disconnect)
+        hrow.addWidget(self._connect_btn)
+        hrow.addWidget(self._disconnect_btn)
+        hrow.addStretch(1)
+        host_lay.addLayout(hrow)
+        self._host_hint = QLabel()
+        self._host_hint.setWordWrap(True)
+        self._host_hint.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        host_lay.addWidget(self._host_hint)
+        lay.addWidget(host_box)
+
         row = QHBoxLayout()
-        row.addWidget(QLabel("Configuration for:"))
+        row.addWidget(QLabel("Or configure by hand:"))
         self._flavour = QComboBox()
         self._flavour.addItems([
             "Claude Desktop / Cursor / Zed (JSON)",
@@ -159,10 +137,9 @@ class McpServerDialog(QDialog):
         lay.addWidget(self._snippet)
 
         hint = QLabel(
-            "Paste the JSON into your host's config file (Claude "
-            "Desktop: <i>claude_desktop_config.json</i>), then restart "
-            "it. KherveSheet must be running with this box ticked for "
-            "the tools to work.")
+            "KherveSheet must be running with the box above ticked for "
+            "the tools to work. Hosts read their tool list once at "
+            "startup, so restart the host after connecting.")
         hint.setWordWrap(True)
         lay.addWidget(hint)
 
@@ -247,6 +224,94 @@ class McpServerDialog(QDialog):
                 "<b style='color:#b71c1c'>Stopped</b> — MCP clients "
                 "cannot reach this workbook.")
         self._refresh_snippet()
+        self._refresh_hosts()
+
+    # ── Host wiring ──────────────────────────────────────────────────
+
+    def _selected_host(self):
+        row = self._hosts.currentRow()
+        return HOSTS[row] if 0 <= row < len(HOSTS) else None
+
+    def _refresh_hosts(self):
+        """Rebuild the host list, keeping the current selection."""
+        row = max(self._hosts.currentRow(), 0)
+        self._hosts.blockSignals(True)
+        self._hosts.clear()
+        for host in HOSTS:
+            status = host.status()
+            item = QListWidgetItem(f"{host.label} — {status}")
+            if status.startswith("connected"):
+                item.setForeground(Qt.darkGreen)
+            elif status == "not installed":
+                item.setForeground(Qt.gray)
+            self._hosts.addItem(item)
+        self._hosts.setCurrentRow(min(row, len(HOSTS) - 1))
+        self._hosts.blockSignals(False)
+        self._refresh_host_buttons()
+
+    def _refresh_host_buttons(self):
+        host = self._selected_host()
+        if host is None:
+            self._connect_btn.setEnabled(False)
+            self._disconnect_btn.setEnabled(False)
+            self._host_hint.clear()
+            return
+        connected = host.connected()
+        self._connect_btn.setEnabled(not host.manual)
+        self._connect_btn.setText(
+            "Update entry" if connected and not host.up_to_date()
+            else "Connect")
+        self._disconnect_btn.setEnabled(connected and not host.manual)
+        bits = []
+        if host.manual:
+            bits.append("Cannot be edited automatically.")
+        bits.append(host.note)
+        path = host.path()
+        if path:
+            bits.append(f"<i>{path}</i>")
+        self._host_hint.setText("  ".join(b for b in bits if b))
+
+    def _report(self, result: dict):
+        """Show what a connect/disconnect actually did."""
+        host = result.get("host", "host")
+        if not result.get("ok"):
+            QMessageBox.warning(self, "MCP host", result.get(
+                "error", f"Could not configure {host}."))
+            self._refresh_hosts()
+            return
+        lines = [f"{host}: KherveSheet {result.get('action', 'updated')}.",
+                 f"File: {result.get('path', '')}"]
+        if result.get("backup"):
+            lines.append(f"Previous version saved as "
+                         f"{result['backup']}")
+        if result.get("restart"):
+            lines.append(f"\nRestart {host} for it to take effect.")
+        QMessageBox.information(self, "MCP host", "\n".join(lines))
+        self._refresh_hosts()
+
+    def _on_connect(self):
+        host = self._selected_host()
+        if host is None:
+            return
+        if not self._bridge.is_running():
+            QMessageBox.information(
+                self, "MCP host",
+                "Tick 'Enable MCP server' first — the entry is only "
+                "useful while KherveSheet is serving.")
+            return
+        self._report(host.connect())
+
+    def _on_disconnect(self):
+        host = self._selected_host()
+        if host is None:
+            return
+        if QMessageBox.question(
+                self, "MCP host",
+                f"Remove KherveSheet from {host.label}'s configuration?\n"
+                "Other servers are left untouched.",
+                QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+        self._report(host.disconnect())
 
     def _refresh_snippet(self):
         if self._flavour.currentIndex() == 0:
