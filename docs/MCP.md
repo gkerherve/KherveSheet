@@ -92,11 +92,17 @@ Claude Desktop) and restart it:
     "khervesheet": {
       "command": "/path/to/python",
       "args": ["-m", "khervesheet.mcp_server"],
-      "cwd": "/path/to/KherveSheet"
+      "env": {"PYTHONPATH": "/path/to/KherveSheet"}
     }
   }
 }
 ```
+
+`PYTHONPATH` — not `cwd` — is what makes `-m khervesheet.mcp_server`
+resolve. The host chooses the working directory and is free to ignore a
+`cwd` key (Claude Code does), and without an importable checkout the
+process exits before it can answer `initialize`, which the host reports
+as *Server disconnected*.
 
 An installed (frozen) build serves as its own MCP server, so the entry
 is just the executable:
@@ -118,7 +124,7 @@ speaks protocol on stdout and never opens a window.
 ### Claude Code
 
 ```
-claude mcp add khervesheet -- /path/to/python -m khervesheet.mcp_server
+claude mcp add khervesheet -e PYTHONPATH="/path/to/KherveSheet" -- /path/to/python -m khervesheet.mcp_server
 ```
 
 ## Security

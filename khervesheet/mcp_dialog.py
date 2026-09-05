@@ -50,15 +50,23 @@ def launch_command() -> list:
     return [sys.executable, "-m", "khervesheet.mcp_server"]
 
 
+def checkout_root() -> str:
+    """Directory containing the ``khervesheet`` package."""
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
 def host_config(indent_key: bool = True) -> str:
     """JSON snippet for an MCP host's config file."""
     argv = launch_command()
     entry = {"command": argv[0], "args": argv[1:]}
     if not getattr(sys, "frozen", False):
-        # Run from the checkout so `-m khervesheet.mcp_server` resolves
-        # regardless of where the host launches the process.
-        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        entry["cwd"] = root
+        # `-m khervesheet.mcp_server` only resolves if the checkout is
+        # importable, and the host picks the working directory.  A
+        # "cwd" key does not travel -- Claude Code drops it -- so the
+        # server died with ModuleNotFoundError before it could answer
+        # initialize, which the host reports as "Server disconnected".
+        # PYTHONPATH is passed through by every host, so use that.
+        entry["env"] = {"PYTHONPATH": checkout_root()}
     block = {"mcpServers": {SERVER_NAME: entry}}
     return json.dumps(block, indent=2)
 
@@ -68,7 +76,12 @@ def cli_command() -> str:
     argv = launch_command()
     quoted = " ".join(
         f'"{a}"' if " " in a else a for a in argv)
-    return f"claude mcp add {SERVER_NAME} -- {quoted}"
+    env = ""
+    if not getattr(sys, "frozen", False):
+        # Same reason as host_config(): the module has to be importable
+        # from whatever directory the host launches us in.
+        env = f'-e PYTHONPATH="{checkout_root()}" '
+    return f"claude mcp add {SERVER_NAME} {env}-- {quoted}"
 
 
 class McpServerDialog(QDialog):
