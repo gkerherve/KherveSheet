@@ -480,3 +480,37 @@ class ClearFormatCmd(QUndoCommand):
             if fmt is not None:
                 self.sheet._cell_formats[(r, c)] = fmt
         self.sheet.table.viewport().update()
+
+
+class InsertButtonCmd(QUndoCommand):
+    """Undoable creation of a cell button."""
+
+    def __init__(self, sheet, row, col, old_text, spec):
+        super().__init__(f"Insert Button {spec.get('label', '')}".strip())
+        self.sheet = sheet
+        self.row = row
+        self.col = col
+        self._old_text = old_text
+        self._spec = dict(spec)
+        self._first = True
+
+    def redo(self):
+        if self._first:
+            self._first = False    # already applied by the caller
+            return
+        from .cell_buttons import insert_button
+        # Push nothing: this command *is* the undo entry.
+        stack, self.sheet._undo_stack = self.sheet._undo_stack, None
+        try:
+            insert_button(self.sheet, self.row, self.col, self._spec)
+        finally:
+            self.sheet._undo_stack = stack
+
+    def undo(self):
+        from .cell_buttons import remove_button
+        remove_button(self.sheet, self.row, self.col)
+        it = self.sheet.table.item(self.row, self.col)
+        if it is not None:
+            it.setText(self._old_text)
+        self.sheet._shadow[(self.row, self.col)] = self._old_text
+        self.sheet.table.viewport().update()

@@ -13,11 +13,13 @@ the only way it can reach the same features.
 
 - **The grid** — read and write cells, formulas and `=PY` Python
   cells, formatting, table styles, column widths, merges.
-- **Interactive cells** — `insert_control` makes checkboxes and
-  dropdowns. Their values are ordinary cell text (`TRUE`/`FALSE`, or
-  the chosen option), so a formula or a `=PY` cell can act on whatever
-  the user clicks — a checkbox that triggers a refit, a dropdown that
-  picks a model.
+- **Interactive cells** — `insert_control` makes checkboxes,
+  dropdowns and buttons. Their values are ordinary cell text
+  (`TRUE`/`FALSE`, or the chosen option), so a formula or a `=PY` cell
+  can act on whatever the user picks. A checkbox says what a setting
+  *is*; a button says *do this now* — clicking one writes a value into
+  another cell, re-runs a `=PY` cell, or both, which is how a sheet
+  gets a working control panel.
 - **Charts** — the whole system, not just creation.
   `insert_chart` takes the title, axis labels, size and position in the
   same call and names each series after the header cell above its

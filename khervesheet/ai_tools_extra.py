@@ -362,8 +362,9 @@ def tool_insert_control(ex, inp: dict) -> dict:
 
     sheet = ex._sheet(inp["sheet_name"])
     kind = inp.get("kind")
-    if kind not in ("checkbox", "dropdown"):
-        return {"error": "kind must be 'checkbox' or 'dropdown'."}
+    if kind not in ("checkbox", "dropdown", "button"):
+        return {"error": "kind must be 'checkbox', 'dropdown' or "
+                         "'button'."}
     r1, c1, r2, c2 = parse_range(inp["range"])
     cells = [(r, c) for r in range(r1, r2 + 1)
              for c in range(c1, c2 + 1)]
@@ -379,6 +380,22 @@ def tool_insert_control(ex, inp: dict) -> dict:
                 "value": "TRUE" if checked else "FALSE",
                 "note": ("The cell reads 'TRUE' or 'FALSE'. Reference it "
                          "from a formula or with ks() in a =PY cell.")}
+
+    if kind == "button":
+        from .cell_buttons import insert_button
+        spec = {k: inp[k] for k in
+                ("label", "mode", "target", "value", "reset", "run",
+                 "color") if k in inp}
+        try:
+            for r, c in cells:
+                stored = insert_button(sheet, r, c, spec)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        return {"created": "button", "cells": len(cells),
+                "spec": stored,
+                "note": ("Clicking it runs the action. A 'pulse' button "
+                         "writes the value, re-runs the =PY cell, then "
+                         "resets — so the same click can be made again.")}
 
     items = [str(i) for i in (inp.get("items") or []) if str(i).strip()]
     if not items:

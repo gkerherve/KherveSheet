@@ -207,15 +207,21 @@ TOOLS = [
         "name": "insert_control",
         "description": (
             "Turn cells into interactive controls the user can click: a "
-            "checkbox, or a dropdown of fixed options. Both are real "
-            "cell values, not decoration — a checkbox cell reads 'TRUE' "
-            "or 'FALSE' and a dropdown cell reads the selected option, "
-            "so a formula or a =PY cell can act on whichever the user "
-            "picked. Use this to give a sheet a control panel: a "
-            "checkbox that switches a calculation on, a dropdown that "
-            "chooses a model. TRUE and FALSE count as 1 and 0 in "
-            "arithmetic, so SUM over a column of checkboxes counts the "
-            "ticked ones."
+            "checkbox, a dropdown of fixed options, or a button. These "
+            "are real cell values, not decoration — a checkbox cell "
+            "reads 'TRUE' or 'FALSE' and a dropdown cell reads the "
+            "selected option, so a formula or a =PY cell can act on "
+            "whichever the user picked. TRUE and FALSE count as 1 and 0 "
+            "in arithmetic, so SUM over a column of checkboxes counts "
+            "the ticked ones.\n"
+            "A checkbox says what a setting IS; a button says DO THIS "
+            "NOW. Clicking a button writes a value into another cell, "
+            "re-runs a =PY cell, or both — which is how you give a "
+            "sheet a working control panel ('Refit', 'Fetch data', "
+            "'Reset'). Prefer mode 'pulse' for an action button: it "
+            "writes the value, runs, then resets the target, so the "
+            "same button can be pressed again. Use 'toggle' for an "
+            "on/off switch and 'set' to stamp a fixed value."
         ),
         "input_schema": {
             "type": "object",
@@ -228,8 +234,41 @@ TOOLS = [
                 },
                 "kind": {
                     "type": "string",
-                    "enum": ["checkbox", "dropdown"],
+                    "enum": ["checkbox", "dropdown", "button"],
                 },
+                "label": {"type": "string",
+                          "description": "Button text, e.g. 'Refit'."},
+                "mode": {
+                    "type": "string",
+                    "enum": ["toggle", "set", "pulse"],
+                    "description": ("What a button click does to its "
+                                    "target: flip TRUE/FALSE, write "
+                                    "'value', or write-run-reset. "
+                                    "Default 'toggle'."),
+                },
+                "target": {
+                    "type": "string",
+                    "description": ("Cell a button writes to, e.g. "
+                                    "'B2'. Omit to only run a =PY cell."),
+                },
+                "value": {
+                    "type": "string",
+                    "description": ("Value written by 'set' and "
+                                    "'pulse'. Default 'TRUE'."),
+                },
+                "reset": {
+                    "type": "string",
+                    "description": ("Value restored after a 'pulse'. "
+                                    "Default 'FALSE'."),
+                },
+                "run": {
+                    "type": "string",
+                    "description": ("=PY cell to re-run after the write, "
+                                    "e.g. 'E5', or 'all' for every =PY "
+                                    "cell on the sheet."),
+                },
+                "color": {"type": "string",
+                          "description": "Button face colour, hex."},
                 "checked": {
                     "type": "boolean",
                     "description": ("Starting state for a checkbox. "

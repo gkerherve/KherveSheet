@@ -1484,6 +1484,10 @@ class SheetWidget(QWidget):
         self._py_loop_timer = None       # QTimer ticking due loop cells
         self._py_loop_running = False     # guard against overlapping runs
         self._fmt_delegate._py_loops = self._py_loops
+        # Cell buttons: {(row, col): spec}.  Shared by reference so the
+        # delegate paints whatever is in it without a copy step.
+        self._cell_buttons: dict = {}
+        self._fmt_delegate._buttons = self._cell_buttons
         self._dependents: dict = {}      # (row, col) → set of (r, c) that depend on it
         self._xref_cells: set = set()    # formula cells using Sheet!ref
         self._col_formats: dict = {}     # col → format string
@@ -1592,6 +1596,7 @@ class SheetWidget(QWidget):
         self._py_stdout.clear()
         self._py_figures.clear()
         self._py_loops.clear()
+        self._cell_buttons.clear()
         self._py_loop_last.clear()
         self._stop_py_loops()
         self._dependents.clear()
@@ -1937,6 +1942,10 @@ class SheetWidget(QWidget):
             self._py_dialog.insert_ref(ref)
             self._py_dialog.end_pick()
             self._py_pick_active = False
+            return
+        if (row, col) in self._cell_buttons:
+            from .cell_buttons import click_button
+            click_button(self, row, col)
             return
         if (row, col) not in self._cell_dropdowns:
             return

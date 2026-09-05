@@ -324,6 +324,8 @@ class MainWindow(QMainWindow):
         insert_menu.addAction(
             icons.checkbox_icon(20), "Checkbox", self._insert_checkbox)
         insert_menu.addAction(
+            icons.checkbox_icon(20), "Button\u2026", self._insert_button)
+        insert_menu.addAction(
             icons.dropdown_icon(20), "Dropdown\u2026", self._insert_dropdown)
 
         # Emoji submenu.
@@ -765,6 +767,8 @@ class MainWindow(QMainWindow):
         ins_menu = QMenu(self._insert_btn)
         ins_menu.addAction(
             icons.checkbox_icon(20), "Checkbox", self._insert_checkbox)
+        ins_menu.addAction(
+            icons.checkbox_icon(20), "Button\u2026", self._insert_button)
         ins_menu.addAction(
             icons.dropdown_icon(20), "Dropdown\u2026", self._insert_dropdown)
         # Emoji submenu
@@ -3536,6 +3540,25 @@ class MainWindow(QMainWindow):
         if s:
             from . import insert_ops
             insert_ops.insert_dropdown(s, self)
+
+    def _insert_button(self):
+        """Turn the current cell into a clickable button."""
+        s = self._active_sheet()
+        if not s:
+            return
+        row, col = s.table.currentRow(), s.table.currentColumn()
+        if row < 0 or col < 0:
+            return
+        from .cell_buttons import ButtonDialog, insert_button
+        existing = s._cell_buttons.get((row, col))
+        dlg = ButtonDialog(self, existing)
+        if dlg.exec_() != dlg.Accepted:
+            return
+        try:
+            insert_button(s, row, col, dlg.spec())
+        except ValueError as exc:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Button", str(exc))
 
     def _insert_link(self):
         s = self._active_sheet()

@@ -1001,6 +1001,9 @@ def save_insert_data(sheet):
                 boxes[f"{r},{c}"] = (it.checkState() == Qt.Checked)
     if boxes:
         d['checkboxes'] = boxes
+    btns = getattr(sheet, '_cell_buttons', {})
+    if btns:
+        d['buttons'] = {f"{r},{c}": v for (r, c), v in btns.items()}
     return json.dumps(d) if d else ""
 
 
@@ -1009,6 +1012,17 @@ def load_insert_data(sheet, json_str):
     if not json_str:
         return
     d = json.loads(json_str)
+    if 'buttons' in d:
+        sheet._cell_buttons.clear()
+        for k, spec in d['buttons'].items():
+            r, c = map(int, k.split(","))
+            sheet._cell_buttons[(r, c)] = spec
+            it = sheet.table.item(r, c)
+            if it is None:
+                it = QTableWidgetItem(spec.get("label", "Button"))
+                sheet.table.setItem(r, c, it)
+            it.setFlags(it.flags() & ~Qt.ItemIsEditable)
+            it.setTextAlignment(Qt.AlignCenter)
     if 'checkboxes' in d:
         for k, checked in d['checkboxes'].items():
             r, c = map(int, k.split(","))

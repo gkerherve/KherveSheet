@@ -40,6 +40,11 @@ into a new module and import.
   - `formula_engine.py` — cell formula parser & evaluator.
   - `undo_commands.py` — QUndoCommand classes.
   - `insert_ops.py`  — Insert menu ops: checkbox, dropdown, link, comment/note, emoji, transpose, spell-check.
+  - `cell_buttons.py` — clickable cell buttons: a cell that writes a
+    value into a target and/or re-runs a `=PY` cell. Modes `toggle`,
+    `set`, `pulse`; painted by `CellFormatDelegate`, saved with the
+    other insert-ops metadata, created from Insert ▸ Button or the
+    `insert_control` tool.
   - `solver.py`     — `SolverDialog` (Excel-style optimisation: min/max/target via scipy);
     `solve_headless()` runs the same dialog with no window for scripted/MCP callers.
   - `trendline.py`  — `TrendlineDialog` (curve fitting: 23+ models via scipy, goodness-of-fit report);

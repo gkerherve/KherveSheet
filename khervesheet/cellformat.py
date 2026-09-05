@@ -187,6 +187,9 @@ class CellFormatDelegate(QStyledItemDelegate):
         self._notes: Dict[Tuple[int, int], str] = {}
         # Dropdowns: {(row, col): list[str]} — pointer set by SheetWidget
         self._dropdowns: Dict[Tuple[int, int], list] = {}
+        # Cell buttons: {(row, col): spec} — pointer set by SheetWidget.
+        # The face is painted here; the label is the cell's own text.
+        self._buttons: Dict[Tuple[int, int], dict] = {}
         # Cell formulas: {(row, col): "=..."} — pointer set by SheetWidget.
         # Used to give Python (=PY) cells a tint and a "PY" badge.
         self._cell_formulas: Dict[Tuple[int, int], str] = {}
@@ -196,6 +199,14 @@ class CellFormatDelegate(QStyledItemDelegate):
         # Live spell-check: when True, misspelled words get a red wavy
         # underline.  Toggled from the Tools menu.
         self._spell_enabled: bool = False
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        # A checkbox cell holds "TRUE"/"FALSE" so formulas and =PY cells
+        # can read it, but the tick already says which — drawing the
+        # word next to the box is noise.  Hide the text, keep the value.
+        if index.data(Qt.CheckStateRole) is not None:
+            option.text = ""
 
     def paint(self, painter: QPainter,
               option: QStyleOptionViewItem,
@@ -235,6 +246,27 @@ class CellFormatDelegate(QStyledItemDelegate):
         # the text/icon on top.  A 10 % translucent tint replaces the
         # opaque fill.  The selection border is drawn by a viewport
         # overlay (_SelectionOverlay).
+        btn = self._buttons.get(key)
+        if btn is not None:
+            from .cell_buttons import paint_button, label_color
+            paint_button(painter, option.rect, btn)
+            # Hand the base class a palette whose text colour reads
+            # against the face, and no selection styling to fight with.
+            opt_b = QStyleOptionViewItem(option)
+            opt_b.state &= ~(QStyle.State_Selected | QStyle.State_HasFocus)
+            pal = QPalette(opt_b.palette)
+            col = label_color(btn)
+            pal.setBrush(QPalette.Text, col)
+            pal.setBrush(QPalette.HighlightedText, col)
+            pal.setBrush(QPalette.Highlight, QColor(0, 0, 0, 0))
+            opt_b.palette = pal
+            opt_b.backgroundBrush = QBrush(Qt.NoBrush)
+            super().paint(painter, opt_b, index)
+            cf_b = self._formats.get(key)
+            if cf_b is not None:
+                self._draw_borders(painter, option.rect, cf_b)
+            return
+
         selected = bool(option.state & QStyle.State_Selected)
         if selected:
             # 1) Fill the cell rect with the normal (unselected) bg.
