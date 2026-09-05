@@ -130,14 +130,12 @@ class AiToolExecutor:
             "set_formula": self.tool_set_formula,
             "set_python_cell": self.tool_set_python_cell,
             "format_cells": self.tool_format_cells,
-            "insert_chart": self.tool_insert_chart,
             "add_sheet": self.tool_add_sheet,
             "search_functions": self.tool_search_functions,
             "get_function_details": self.tool_get_function_details,
             "list_charts": self.tool_list_charts,
             "get_chart_details": self.tool_get_chart_details,
             "clone_chart": self.tool_clone_chart,
-            "modify_chart": self.tool_modify_chart,
             "delete_charts": self.tool_delete_charts,
             "apply_table_style": self.tool_apply_table_style,
             # save_as_template disabled — not ready yet
@@ -149,6 +147,9 @@ class AiToolExecutor:
         # both files near the 1500-line ceiling.
         from .ai_tools_extra import build_dispatch
         self._dispatch.update(build_dispatch(self))
+        # Charts likewise — schemas and code together in ai_charts.
+        from .ai_charts import build_dispatch as chart_dispatch
+        self._dispatch.update(chart_dispatch(self))
 
     # ── Dispatcher ──────────────────────────────────────────────
 
@@ -515,105 +516,6 @@ class AiToolExecutor:
         cmd._apply(new_fmts)
         return {"cells_formatted": len(new_fmts)}
 
-    def tool_insert_chart(self, inp: dict) -> dict:
-        sheet = self._sheet(inp["sheet_name"])
-        chart_type = inp["chart_type"]
-        valid_types = [
-            "Line", "Scatter", "Line+Symbol", "Bar", "Step",
-            "Stem", "Histogram", "Box", "Heatmap", "3D Surface",
-        ]
-        if chart_type not in valid_types:
-            return {"error": f"Invalid chart_type {chart_type!r}. "
-                    f"Valid: {valid_types}"}
-        import numpy as np
-        from .graph import parse_time_column
-        # Read X data — detect categorical (text) or time labels.
-        xr1, xc1, xr2, xc2 = parse_range(inp["x_range"])
-        x_vals = []
-        x_labels = []
-        for r in range(xr1, xr2 + 1):
-            t = sheet.cell_text(r, xc1)
-            x_labels.append(t)
-            try:
-                x_vals.append(float(t))
-            except (ValueError, TypeError):
-                x_vals.append(float('nan'))
-        x = np.array(x_vals)
-        nan_count = int(np.isnan(x).sum())
-        cat_labels = None
-        is_time = False
-        if nan_count > len(x) / 2 and len(x) > 0:
-            # Try time parsing first.
-            t_hours, _ = parse_time_column(x_labels)
-            if t_hours is not None:
-                x = t_hours
-                is_time = True
-            else:
-                # Categorical X — use integer positions.
-                cat_labels = x_labels
-                x = np.arange(len(x_labels), dtype=float)
-        if len(x) == 0:
-            return {"error": "No X data found."}
-
-        # Build list of (row_start, col, row_end) for each Y series.
-        # Supports: single column "D5:D14", multi-column "D5:H14",
-        # or comma-separated "D5:D14,E5:E14,F5:F14".
-        y_range_str = inp["y_range"]
-        y_columns = []  # list of (row_start, col_index, row_end)
-        for part in y_range_str.split(","):
-            part = part.strip()
-            if not part:
-                continue
-            yr1, yc1, yr2, yc2 = parse_range(part)
-            for c in range(yc1, yc2 + 1):
-                y_columns.append((yr1, c, yr2))
-        if not y_columns:
-            return {"error": "No Y range specified."}
-
-        from .graph import EmbeddedChart
-        viewport = sheet.table.viewport()
-        chart = None
-        series_count = 0
-
-        for yr1, yc, yr2 in y_columns:
-            y_vals = []
-            for r in range(yr1, yr2 + 1):
-                t = sheet.cell_text(r, yc)
-                try:
-                    y_vals.append(float(t))
-                except (ValueError, TypeError):
-                    y_vals.append(float('nan'))
-            y = np.array(y_vals)
-            if len(y) == 0:
-                continue
-            label = col_index_to_letter(yc)
-            if chart is None:
-                chart = EmbeddedChart(
-                    x, y, label, chart_type, sheet, viewport,
-                    x_col=xc1, y_col=yc,
-                    row_start=xr1, row_end=xr2)
-            else:
-                chart.add_series(
-                    x, y, label, chart_type,
-                    x_col=xc1, y_col=yc,
-                    row_start=xr1, row_end=xr2)
-            series_count += 1
-
-        if chart is None:
-            return {"error": "No numeric Y data found in the specified ranges."}
-        if is_time:
-            chart._apply_time_x()
-            chart._canvas.draw_idle()
-        elif cat_labels is not None:
-            chart._apply_categorical_x(cat_labels)
-            chart._canvas.draw_idle()
-        offset = len(sheet._charts) * 30
-        chart.move(40 + offset, 40 + offset)
-        sheet._charts.append(chart)
-        sheet.data_changed.connect(chart._on_data_changed)
-        return {"chart_created": True, "chart_type": chart_type,
-                "series_count": series_count}
-
     def tool_add_sheet(self, inp: dict) -> dict:
         name = inp["name"]
         wb = self._mw._workbook
@@ -737,33 +639,6 @@ class AiToolExecutor:
         target._charts.append(chart)
         return {"cloned": True, "target_sheet": target_name,
                 "spec": self._chart_spec(target, chart)}
-
-    def tool_modify_chart(self, inp: dict) -> dict:
-        """Edit a chart's axes/labels in place: invert axes, set scales,
-        title, axis labels, gridlines."""
-        sheet = self._sheet(inp["sheet_name"])
-        charts = getattr(sheet, "_charts", []) or []
-        idx = int(inp.get("chart_index", 0))
-        if idx < 0 or idx >= len(charts):
-            return {"error": f"Chart index {idx} out of range "
-                    f"(sheet has {len(charts)} chart(s))."}
-        chart = charts[idx]
-        kwargs = {}
-        for key in ("invert_x", "invert_y", "grid"):
-            if key in inp:
-                kwargs[key] = bool(inp[key])
-        for key in ("x_scale", "y_scale", "title", "x_label", "y_label"):
-            if key in inp:
-                kwargs[key] = inp[key]
-        if not kwargs:
-            return {"error": "No changes specified. Provide at least one "
-                    "of: invert_x, invert_y, x_scale, y_scale, title, "
-                    "x_label, y_label, grid."}
-        try:
-            applied = chart.set_axis_options(**kwargs)
-        except ValueError as exc:
-            return {"error": f"Invalid value: {exc}"}
-        return {"modified": True, "index": idx, "applied": applied}
 
     def tool_delete_charts(self, inp: dict) -> dict:
         """Delete charts from a sheet by index list or 'all'."""

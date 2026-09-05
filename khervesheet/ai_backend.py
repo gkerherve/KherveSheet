@@ -23,6 +23,7 @@ from PyQt5.QtCore import (
 from PyQt5.QtWidgets import QApplication
 
 from . import ai_memory
+from .ai_charts import CHART_TOOLS
 from .ai_tools_schema import EXTRA_TOOLS
 
 # ── Optional dependency guard ──────────────────────────────────────
@@ -234,46 +235,6 @@ TOOLS = [
         },
     },
     {
-        "name": "insert_chart",
-        "description": "Create an embedded chart from data in the sheet.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "sheet_name": {
-                    "type": "string",
-                    "description": "Sheet containing the data.",
-                },
-                "chart_type": {
-                    "type": "string",
-                    "enum": [
-                        "Line", "Scatter", "Line+Symbol", "Bar",
-                        "Step", "Stem", "Histogram", "Box",
-                        "Heatmap", "3D Surface",
-                    ],
-                },
-                "x_range": {
-                    "type": "string",
-                    "description": (
-                        "A1-notation range for X data, "
-                        "e.g. 'A2:A20'."
-                    ),
-                },
-                "y_range": {
-                    "type": "string",
-                    "description": (
-                        "A1-notation range for Y data. "
-                        "Use a multi-column range like 'D5:H14' to "
-                        "plot one series per column. "
-                        "Or comma-separated: 'D5:D14,F5:F14'."
-                    ),
-                },
-            },
-            "required": [
-                "sheet_name", "chart_type", "x_range", "y_range",
-            ],
-        },
-    },
-    {
         "name": "add_sheet",
         "description": "Add a new sheet tab to the workbook.",
         "input_schema": {
@@ -441,47 +402,6 @@ TOOLS = [
         },
     },
     {
-        "name": "modify_chart",
-        "description": (
-            "Edit an existing chart's axes and labels in place: invert "
-            "(reverse) the X or Y axis, set axis scales (linear/log), set "
-            "the title or axis labels, or toggle gridlines. Use this when "
-            "the user asks to flip/reverse an axis, use a log scale, or "
-            "rename a chart's title/axes."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "sheet_name": {"type": "string"},
-                "chart_index": {
-                    "type": "integer",
-                    "description": "0-based index (see list_charts).",
-                },
-                "invert_x": {
-                    "type": "boolean",
-                    "description": "True reverses the X axis (high→low).",
-                },
-                "invert_y": {
-                    "type": "boolean",
-                    "description": "True reverses the Y axis.",
-                },
-                "x_scale": {
-                    "type": "string",
-                    "enum": ["linear", "log", "symlog", "logit"],
-                },
-                "y_scale": {
-                    "type": "string",
-                    "enum": ["linear", "log", "symlog", "logit"],
-                },
-                "title": {"type": "string"},
-                "x_label": {"type": "string"},
-                "y_label": {"type": "string"},
-                "grid": {"type": "boolean"},
-            },
-            "required": ["sheet_name", "chart_index"],
-        },
-    },
-    {
         "name": "apply_table_style",
         "description": (
             "Apply a built-in table design style (header colours, banded "
@@ -594,7 +514,7 @@ TOOLS = [
             "required": ["sheet_name"],
         },
     },
-]
+] + CHART_TOOLS
 
 #: What an MCP client is offered: the chat's tools plus document I/O
 #: and the Solver/fitting tools from ai_tools_schema.py.
