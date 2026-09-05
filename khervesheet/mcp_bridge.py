@@ -70,6 +70,26 @@ _NO_MACRO_TOOLS = _READ_ONLY_TOOLS | {
 #: Tools that execute code the client wrote, in this process.
 _CODE_TOOLS = frozenset({"set_python_cell"})
 
+#: Tools that write cell text.  A cell whose text starts with "=PY"
+#: runs Python exactly as set_python_cell does, so these are a back
+#: door into _CODE_TOOLS and have to be screened at the same gate.
+_TEXT_WRITE_TOOLS = frozenset({"write_cells", "set_formula"})
+
+
+def _smuggles_python(name: str, tool_input: dict) -> bool:
+    """True if a text-writing call would create a =PY cell."""
+    if name not in _TEXT_WRITE_TOOLS:
+        return False
+    from .python_engine import is_python_source
+    if name == "set_formula":
+        return is_python_source(tool_input.get("formula"))
+    for row in tool_input.get("values") or []:
+        if not isinstance(row, (list, tuple)):
+            continue
+        if any(is_python_source(v) for v in row):
+            return True
+    return False
+
 #: What a connected client is allowed to do, weakest first.  "edit" is
 #: the default: an MCP client can change the workbook, but running
 #: arbitrary Python in the app's own process is a separate, explicit
@@ -300,11 +320,20 @@ class McpBridge(QObject):
         # they run, which can deliver a second request into this same
         # handler.  Two tool calls interleaving on one workbook would
         # corrupt both, so make the second wait its turn by failing.
+        tool_input = params.get("input") or {}
+        if (self._access != "full"
+                and _smuggles_python(name, tool_input)):
+            self._record(str(name), "refused")
+            return {"error": (
+                "Refused: that cell text starts with '=PY', which runs "
+                "Python inside KherveSheet. Writing one needs MCP "
+                "access set to 'Full', and set_python_cell is the tool "
+                "for it. The user can change this in Tools \u25b8 MCP "
+                "Server.")}
         if self._busy:
             self._record(str(name), "busy")
             return {"error": "KherveSheet is still running the previous "
                              "tool call. Retry when it finishes."}
-        tool_input = params.get("input") or {}
         if self._executor is None:
             from .ai_tools import AiToolExecutor
             self._executor = AiToolExecutor(self._mw)
