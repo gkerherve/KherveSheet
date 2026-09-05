@@ -82,7 +82,10 @@ TOOLS = [
         "description": (
             "Write values to a rectangular range.  The values array is "
             "row-major: [[row1_values], [row2_values], ...]. "
-            "Use '=FORMULA' syntax for formulas."
+            "Use '=FORMULA' syntax for formulas. This tool will not "
+            "write Python: a cell starting with '=PY' belongs to "
+            "set_python_cell. Very large blocks are refused — compute "
+            "them in a =PY cell instead."
         ),
         "input_schema": {
             "type": "object",
@@ -116,8 +119,9 @@ TOOLS = [
     {
         "name": "set_formula",
         "description": (
-            "Set a formula in a single cell. "
-            "The formula must start with '='."
+            "Set a formula in a single cell. The formula must start "
+            "with '='. Not for Python — a '=PY' cell goes through "
+            "set_python_cell."
         ),
         "input_schema": {
             "type": "object",
@@ -144,18 +148,34 @@ TOOLS = [
     {
         "name": "set_python_cell",
         "description": (
-            "Write a Python program into a cell (a '=PY' cell). The code "
-            "runs real Python in a workbook-wide shared namespace, so a "
-            "function or variable defined in one cell is visible to later "
-            "cells. The value of the LAST line (if it is an expression) "
-            "becomes the cell's result. Read grid values inside the code "
-            "with ks(\"A1\") for one cell or ks(\"A1:B10\") for a range "
-            "(returns a NumPy array). Return a list to spill values into "
-            "the grid; return a NumPy array / object to keep it live in the "
-            "cell (re-read it elsewhere with ks); build a matplotlib figure "
-            "to embed a plot. numpy (np), matplotlib.pyplot (plt) and "
-            "pandas (pd) are available. Use this for tasks that are easier "
-            "as code than as spreadsheet formulas."
+            "Write a Python program into a cell (a '=PY' cell). The cell "
+            "holds a NORMAL MULTI-LINE SCRIPT — imports, assignments, "
+            "def, loops, try — not a single expression, and there is no "
+            "'=PY(expression)' call syntax. Pass the code alone; the "
+            "tool adds the marker.\n"
+            "The value of the LAST line, when it is an expression, "
+            "becomes the cell's result: a number or string displays, a "
+            "list spills down the column, a 2-D list or array spills "
+            "into a block, a matplotlib Figure embeds the plot, and any "
+            "other object stays live in the cell for another =PY cell to "
+            "read back.\n"
+            "Read the grid with ks(\"A1\") for one cell or "
+            "ks(\"A1:B10\") for a range (a NumPy array); write back "
+            "with ks_set(\"C1\", value) — a list goes down a column, a "
+            "2-D array fills a block. ks_set cannot cross sheets.\n"
+            "Every =PY cell in the workbook shares one namespace, so a "
+            "function defined in one cell is callable from later cells "
+            "and from ordinary formulas. numpy (np), matplotlib.pyplot "
+            "(plt), pandas (pd), scipy and the standard library are "
+            "available; network access works and HTTPS verification is "
+            "set up, so urllib.request.urlopen is fine for a quick API "
+            "call. The code runs on the GUI thread and is aborted after "
+            "30 s, so no sleep loops or long downloads.\n"
+            "Use this for anything easier as code than as formulas, and "
+            "for plots that are not a chart over grid columns "
+            "(insert_chart makes those). Read the cell back afterwards: "
+            "a failure shows as #PYERR and read_cells returns the "
+            "traceback."
         ),
         "input_schema": {
             "type": "object",
@@ -171,10 +191,11 @@ TOOLS = [
                 "code": {
                     "type": "string",
                     "description": (
-                        "Python source. May be multi-line. Do NOT include "
-                        "the '=PY' marker — just the code. End with a bare "
-                        "expression to set the cell's value, e.g. a number, "
-                        "a list (spills), or plt.gcf() for a plot."
+                        "Python source, usually several lines. Do NOT "
+                        "include the '=PY' marker. End with a bare "
+                        "expression to set the cell's value — a number, "
+                        "a list (spills), or a matplotlib Figure (embeds "
+                        "the plot)."
                     ),
                 },
             },

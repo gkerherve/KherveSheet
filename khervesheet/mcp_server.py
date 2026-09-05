@@ -132,6 +132,48 @@ discard_unsaved_changes, and you should save instead of discarding.
 - The user controls what you may do (Tools > MCP Server). A refusal \
 naming an access level is their setting, not a bug — tell them what \
 you needed rather than working around it.
+
+Python cells (=PY) — read this before writing one:
+- A =PY cell holds a NORMAL MULTI-LINE PYTHON SCRIPT, not a single \
+expression. Write it with set_python_cell and pass the code alone; the \
+tool adds the "=PY" marker. Statements, imports, def, for, try all \
+work. There is no "=PY(expression)" call syntax — a cell whose text \
+reads "=PY(...)" is just a script that happens to be one parenthesised \
+expression, which is why multi-statement attempts in that shape fail.
+- The value of the LAST line, if it is an expression, becomes the \
+cell's result: a number or string displays; a list spills down the \
+column and a 2-D list or array spills into a block; a matplotlib \
+Figure embeds the plot in the cell; any other object stays live in the \
+cell for another =PY cell to read back.
+- ks("B6") reads one cell, ks("B6:C21") reads a range as a NumPy \
+array, and ks_set("J1", value_or_array) writes back — a list goes down \
+a column, a 2-D array fills a block. ks_set cannot cross sheets.
+- Every =PY cell in the workbook shares ONE namespace, so a function \
+defined in one cell is callable from the next, and from ordinary \
+formulas by name.
+- np, plt, pd, scipy, math and the whole standard library are already \
+imported or importable. Network access is allowed and HTTPS \
+verification is set up, so urllib.request.urlopen works for a quick \
+API call. The code runs on the GUI thread: no sleep loops, no long \
+downloads, 30 s and it is aborted.
+- After writing a =PY cell, read it back. A failure shows as #PYERR \
+and read_cells returns the traceback.
+- set_python_cell needs MCP access set to "Full". At the default \
+"Edit" it is withheld, and write_cells and set_formula refuse =PY text \
+rather than running it behind the user's back — ask them to raise the \
+level instead of looking for another route.
+
+Plots — two different things, pick the right one:
+- insert_chart makes an EMBEDDED CHART: a live object bound to grid \
+columns that redraws when the user edits the data, and that they can \
+then move, resize and edit through the app's own dialogs. Use it for \
+anything that is a chart over columns. Title and label it in the same \
+call, then style_chart for colours, markers, legend and a preset look. \
+list_charts and get_chart_details tell you what is already there; \
+charts float over the grid, so pass a position clear of the data.
+- A =PY cell returning a matplotlib Figure draws ANYTHING ELSE: \
+subplots, images, maps, annotated or computed graphics. It is a \
+picture, not a live chart — it re-runs when the cell re-runs.
 """
 
 
