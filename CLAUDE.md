@@ -62,6 +62,9 @@ into a new module and import.
     one undo macro per mutating call.
   - `mcp_dialog.py`  — `McpServerDialog` (enable the bridge, choose the
     access level, copy the host config snippet). See `docs/MCP.md`.
+  - `ai_charts.py`   — chart tools for both tables: `insert_chart`,
+    `modify_chart`, `style_chart`, with their schemas next to the code
+    that runs them (series styling, legend, fonts, named presets).
   - `ai_tools_extra.py` — document I/O (open/save/new) and analysis
     (`run_solver`, `fit_trendline`, `fit_peaks`) tools, registered into
     `AiToolExecutor` at construction.

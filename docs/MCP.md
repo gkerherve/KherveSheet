@@ -5,7 +5,7 @@ assistants other than the built-in AI chat — Claude Desktop, Claude
 Code, Cursor, Zed, Continue, or anything else that speaks the Model
 Context Protocol — can read and edit an open workbook directly.
 
-An MCP client gets 28 tools — the 20 the built-in chat uses, plus
+An MCP client gets 29 tools — the 21 the built-in chat uses, plus
 eight it does not (marked * below). The chat sits inside the window,
 where File ▸ Save and the Tools menu are a click away and the user is
 driving; an MCP client has no window and no menus, so those eight are
@@ -14,6 +14,11 @@ the only way it can reach the same features.
 - **The grid** — read and write cells, formulas and `=PY` Python
   cells, formatting, table styles, column widths, merges.
 - **Charts** — create, inspect, clone, restyle, delete.
+  `insert_chart` takes the title, axis labels, size and position in the
+  same call and names each series after the header cell above its
+  column; `style_chart` then reaches every series (colour, line style,
+  marker, plot type), the legend, the fonts and a named preset
+  (`clean`, `minimal`, `publication`, `dark`).
 - **Analysis*** — `run_solver` (Excel-style optimisation),
   `fit_trendline` (23 regression models with goodness-of-fit),
   `fit_peaks` (lmfit peak fitting over a Shirley/ALS/polynomial
@@ -75,6 +80,10 @@ the filesystem and network reach of the application. That is why it
 sits behind its own level rather than coming with edit access: granting
 **Full** gives the connected assistant the same code-execution reach as
 the built-in chat, so grant it only to hosts you trust.
+
+Cell *text* starting with `=PY` runs exactly the same way, so
+`write_cells` and `set_formula` refuse it below **Full** too — a client
+cannot reach Python by writing the marker into a cell instead.
 
 Tools above the current level are withheld from `tools/list` and
 refused if called anyway, with an error naming the setting. Hosts cache
@@ -152,6 +161,8 @@ to write and run `=PY` cells, which execute real Python.
 | Host shows no tools | The host caches `tools/list` from startup; restart the host once with KherveSheet already running. |
 | "Refused: … access is set to …" | The access level in Tools ▸ MCP Server is below what the tool needs. |
 | "still running the previous tool call" | A solve or fit is in progress. One call runs at a time; retry when it finishes. |
+| "Refused: that cell text starts with '=PY'" | Running Python needs **Full** access, and `set_python_cell` is the tool for it. |
+| A `=PY` cell returns `#PYERR` on a `=PY(...)` one-liner | Not a sandbox limit. A `=PY` cell is a plain multi-line script; there is no call syntax, so anything with a statement in it is a `SyntaxError`. |
 | Saving reports success but the title still shows a modified document | Should not happen — file it. Document tools deliberately run outside the undo macro so `setClean()` takes effect. |
 | "Could not open a local port" | Another process is holding the port. Toggle off and on to pick a fresh one. |
 
