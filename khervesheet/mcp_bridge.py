@@ -65,6 +65,7 @@ _READ_ONLY_TOOLS = frozenset({
 _NO_MACRO_TOOLS = _READ_ONLY_TOOLS | {
     "save_workbook", "open_workbook", "new_workbook",
     "run_solver", "fit_trendline", "fit_peaks",
+    "export_chart",
 }
 
 #: Tools that execute code the client wrote, in this process.

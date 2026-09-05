@@ -24,6 +24,7 @@ from PyQt5.QtWidgets import QApplication
 
 from . import ai_memory
 from .ai_charts import CHART_TOOLS
+from .ai_charts_extra import CHART_TOOLS_EXTRA
 from .ai_tools_schema import EXTRA_TOOLS
 
 # ── Optional dependency guard ──────────────────────────────────────
@@ -535,7 +536,7 @@ TOOLS = [
             "required": ["sheet_name"],
         },
     },
-] + CHART_TOOLS
+] + CHART_TOOLS + CHART_TOOLS_EXTRA
 
 #: What an MCP client is offered: the chat's tools plus document I/O
 #: and the Solver/fitting tools from ai_tools_schema.py.

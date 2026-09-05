@@ -56,6 +56,18 @@ _SERIES_STYLE = {
         "plot_type": {"type": "string", "enum": CHART_TYPES,
                       "description": "Redraw this series as another type."},
         "visible": {"type": "boolean"},
+        "fill_mode": {
+            "type": "string", "enum": ["none", "zero", "series"],
+            "description": ("Shade the area under the curve ('zero') or "
+                            "between it and another series ('series', "
+                            "which needs fill_target)."),
+        },
+        "fill_target": {"type": "integer",
+                        "description": "Series index to fill against, "
+                                       "when fill_mode is 'series'."},
+        "fill_color": {"type": "string", "description": "Hex."},
+        "fill_alpha": {"type": "number",
+                       "description": "0-1. Default 0.3."},
     },
     "required": ["index"],
 }
@@ -203,6 +215,23 @@ CHART_TOOLS = [
                 "position": {"type": "string",
                              "description": ("Top-left cell to move the "
                                              "chart over, e.g. 'H2'.")},
+                "tight_layout": {
+                    "type": "boolean",
+                    "description": ("Let matplotlib fit the labels to "
+                                    "the canvas. Turn it off to control "
+                                    "the margins yourself."),
+                },
+                "margins": {
+                    "type": "object",
+                    "description": ("Plot-area edges as fractions of the "
+                                    "canvas, when tight_layout is off."),
+                    "properties": {
+                        "left": {"type": "number"},
+                        "right": {"type": "number"},
+                        "top": {"type": "number"},
+                        "bottom": {"type": "number"},
+                    },
+                },
             },
             "required": ["sheet_name", "chart_index"],
         },
@@ -429,6 +458,7 @@ def _style_one_series(chart, idx: int, spec: dict) -> dict:
             for patch in artist.patches:
                 patch.set_facecolor(spec["color"])
             applied["color"] = spec["color"]
+        _apply_fill(chart, idx, spec, applied)
         return applied
 
     if isinstance(artist, PathCollection):     # Scatter
@@ -448,6 +478,7 @@ def _style_one_series(chart, idx: int, spec: dict) -> dict:
                 [mk.get_path().transformed(mk.get_transform())])
             s["marker"] = spec["marker"]
             applied["marker"] = spec["marker"]
+        _apply_fill(chart, idx, spec, applied)
         return applied
 
     # Line2D and friends.
@@ -467,7 +498,33 @@ def _style_one_series(chart, idx: int, spec: dict) -> dict:
         mk = spec["marker"]
         artist.set_marker("" if mk == "None" else mk)
         applied["marker"] = mk
+    _apply_fill(chart, idx, spec, applied)
     return applied
+
+
+def _apply_fill(chart, idx: int, spec: dict, applied: dict):
+    """Shade under a curve, or between it and another series."""
+    if "fill_mode" not in spec:
+        return
+    mode = spec["fill_mode"]
+    if mode not in ("none", "zero", "series"):
+        raise ValueError(f"fill_mode must be 'none', 'zero' or "
+                         f"'series', not {mode!r}.")
+    target = int(spec.get("fill_target", 0))
+    if mode == "series" and not (0 <= target < len(chart._series)):
+        raise ValueError(f"fill_target {target} is not a series index "
+                         f"(chart has {len(chart._series)}).")
+    default = "#1f77b4"
+    artist = chart._series[idx].get("artist")
+    if artist is not None and hasattr(artist, "get_color"):
+        try:
+            default = artist.get_color()
+        except Exception:
+            pass
+    chart.apply_fill(idx, mode, target,
+                     spec.get("fill_color", default),
+                     float(spec.get("fill_alpha", 0.3)))
+    applied["fill_mode"] = mode
 
 
 # ── Tools ──────────────────────────────────────────────────────────
@@ -594,6 +651,10 @@ def tool_insert_chart(ex, inp: dict) -> dict:
     sheet._charts.append(chart)
     sheet.data_changed.connect(chart._on_data_changed)
     chart._canvas.draw_idle()
+    # The project's undo promise covers charts too: the command no-ops
+    # on its first redo, since the chart is already on the sheet.
+    from .undo_commands import InsertChartCmd
+    ex._undo.push(InsertChartCmd(sheet, chart))
     return {"chart_created": True, "chart_type": chart_type,
             "chart_index": len(sheet._charts) - 1,
             "series_count": len(chart._series),
@@ -636,11 +697,32 @@ def tool_modify_chart(ex, inp: dict) -> dict:
         _move_to_cell(sheet, chart, inp["position"])
         applied["position"] = inp["position"]
 
+    if "tight_layout" in inp:
+        chart._tight_layout = bool(inp["tight_layout"])
+        if not chart._tight_layout:
+            try:
+                chart._figure.set_layout_engine("none")
+            except Exception:
+                pass
+        applied["tight_layout"] = chart._tight_layout
+    if inp.get("margins"):
+        allowed = ("left", "right", "top", "bottom")
+        margins = {k: float(v) for k, v in inp["margins"].items()
+                   if k in allowed}
+        if margins:
+            try:
+                chart._figure.set_layout_engine("none")
+            except Exception:
+                pass
+            chart._tight_layout = False
+            chart._figure.subplots_adjust(**margins)
+            applied["margins"] = margins
+
     if not applied:
         return {"error": "No changes specified. Provide at least one of: "
                 "invert_x, invert_y, x_scale, y_scale, title, x_label, "
                 "y_label, grid, x_min, x_max, y_min, y_max, width, "
-                "height, position."}
+                "height, position, tight_layout, margins."}
     chart._canvas.draw_idle()
     return {"modified": True, "index": int(inp.get("chart_index", 0)),
             "applied": applied}

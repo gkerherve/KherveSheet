@@ -150,6 +150,8 @@ class AiToolExecutor:
         # Charts likewise — schemas and code together in ai_charts.
         from .ai_charts import build_dispatch as chart_dispatch
         self._dispatch.update(chart_dispatch(self))
+        from .ai_charts_extra import build_dispatch as chart_extra
+        self._dispatch.update(chart_extra(self))
 
     # ── Dispatcher ──────────────────────────────────────────────
 
@@ -659,15 +661,12 @@ class AiToolExecutor:
                 return {"error": f"Chart index {idx} out of range "
                         f"(sheet has {len(charts)} chart(s))."}
         # Delete in reverse order so indices stay valid.
+        # DeleteChartCmd does the removal itself, so hand it the chart
+        # while it is still on the sheet rather than popping it here.
+        from .undo_commands import DeleteChartCmd
         deleted = 0
         for idx in sorted(set(to_delete), reverse=True):
-            ch = charts.pop(idx)
-            try:
-                sheet.data_changed.disconnect(ch._on_data_changed)
-            except (TypeError, RuntimeError):
-                pass
-            ch.setParent(None)
-            ch.deleteLater()
+            self._undo.push(DeleteChartCmd(sheet, charts[idx]))
             deleted += 1
         return {"deleted": deleted}
 
