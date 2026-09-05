@@ -318,8 +318,27 @@ def _apply_legend(chart, spec: dict):
         kw["frameon"] = bool(spec["frame"])
     if spec.get("title"):
         kw["title"] = spec["title"]
-    chart._install_legend(ax, **kw)
+    leg = chart._install_legend(ax, **kw)
+    if leg is not None:
+        _match_legend_to_axes(ax, leg)
     return {k: v for k, v in spec.items()}
+
+
+def _match_legend_to_axes(ax, leg):
+    """Keep the legend readable over a dark plot area."""
+    from matplotlib.colors import to_rgb
+    r, g, b = to_rgb(ax.get_facecolor())
+    if 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5:
+        return                              # light background, leave it
+    frame = leg.get_frame()
+    if frame is not None:
+        frame.set_facecolor(ax.get_facecolor())
+        frame.set_edgecolor("#888888")
+    for text in leg.get_texts():
+        text.set_color("#eeeeee")
+    title = leg.get_title()
+    if title is not None:
+        title.set_color("#eeeeee")
 
 
 def _apply_preset(chart, name: str):
@@ -351,7 +370,8 @@ def _apply_preset(chart, name: str):
         ax.tick_params(direction="in", top=True, right=True, labelsize=9)
         for side in ("top", "right", "bottom", "left"):
             ax.spines[side].set_linewidth(1.0)
-        for lbl in (ax.title, ax.xaxis.label, ax.yaxis.label):
+        for lbl in (ax.title, ax.xaxis.label, ax.yaxis.label,
+                    *ax.get_xticklabels(), *ax.get_yticklabels()):
             lbl.set_fontfamily("serif")
         fig.set_facecolor("white")
         ax.set_facecolor("white")
