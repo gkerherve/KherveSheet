@@ -51,6 +51,15 @@ into a new module and import.
     detached batch helper. Windows + frozen builds only.
   - `git_backend.py` — per-document Git repo: auto-commit, push, pull, history, branches (pygit2).
   - `history_dialog.py` — `HistoryDialog` commit browser with DAG graph, diff view, restore.
+  - `mcp_server.py`  — stdio MCP server an external host (Claude Desktop,
+    Claude Code, Cursor, Zed) launches. Pure stdlib, no Qt: it forwards
+    JSON-RPC `tools/call` over a loopback socket. Also reachable as
+    `KherveSheet.exe --mcp-server`.
+  - `mcp_bridge.py`  — `McpBridge`, the in-app half: a token-authenticated
+    127.0.0.1 listener that runs `AiToolExecutor` tools on the GUI thread,
+    one undo macro per mutating call.
+  - `mcp_dialog.py`  — `McpServerDialog` (enable the bridge, copy the
+    host config snippet). See `docs/MCP.md`.
 - `requirements.txt`, `LICENSE` (GPL-3.0).
 - Packaging — one PyInstaller spec, two platform tails:
   - `KherveSheet.spec` — shared Analysis; branches on `sys.platform` for

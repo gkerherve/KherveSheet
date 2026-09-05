@@ -769,6 +769,14 @@ class _FileOpenFilter(QObject):
 
 
 def main():
+    # An MCP host launches us as a plain stdio subprocess: no GUI, no
+    # QApplication, nothing on stdout but the protocol.  Check before
+    # anything else so a frozen build can serve as its own MCP server.
+    if "--mcp-server" in sys.argv[1:]:
+        from .mcp_server import main as mcp_main
+        args = [a for a in sys.argv[1:] if a != "--mcp-server"]
+        sys.exit(mcp_main(args))
+
     _enable_crash_logging()
 
     os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
@@ -835,6 +843,10 @@ def main():
     # whatever arrived while the window was still being built.
     if open_filter is not None:
         open_filter.attach(w)
+
+    # Re-open the MCP bridge if the user left it enabled, so an MCP
+    # host reconnects without a trip through the Tools menu.
+    w.start_mcp_if_enabled()
 
     # Silent update check — self-throttled, and only ever does anything
     # for an installed Windows build.

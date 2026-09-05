@@ -436,6 +436,9 @@ class MainWindow(QMainWindow):
             "AI Chat\u2026",
             lambda: self._ai_chat_act.toggle())
         ai_act.setIcon(icons.themed_icon("mdi.robot"))
+        mcp_act = tools_menu.addAction("MCP Server\u2026",
+                                       self._open_mcp_dialog)
+        mcp_act.setIcon(icons.themed_icon("mdi.lan-connect"))
 
         # ── Examples (its own top-level menu, before Help) ───────────
         examples_menu = mb.addMenu("&Examples")
@@ -1278,6 +1281,8 @@ class MainWindow(QMainWindow):
             return
         if hasattr(self, '_ai_dock'):
             self._ai_dock._backend.shutdown()
+        if getattr(self, "_mcp_bridge", None) is not None:
+            self._mcp_bridge.stop()
         event.accept()
 
     # ── Drag-and-drop file opening ───────────────────────────────────
@@ -4382,6 +4387,31 @@ class MainWindow(QMainWindow):
             return
         from .solver import SolverDialog
         dlg = SolverDialog(s, self)
+        dlg.setAttribute(Qt.WA_DeleteOnClose)
+        dlg.show()
+
+    # ── MCP (Model Context Protocol) ─────────────────────────────────
+
+    def mcp_bridge(self):
+        """The MCP bridge for this window, created on first use."""
+        if getattr(self, "_mcp_bridge", None) is None:
+            from .mcp_bridge import McpBridge
+            self._mcp_bridge = McpBridge(self)
+            self._mcp_bridge.tool_invoked.connect(
+                lambda name, _s: self._status_msg(f"MCP: {name}", 3000))
+        return self._mcp_bridge
+
+    def start_mcp_if_enabled(self):
+        """Re-open the bridge when the user left it on last session."""
+        from PyQt5.QtCore import QSettings
+        settings = QSettings("KherveSheet", "KherveSheet")
+        if settings.value("mcp/enabled", False, type=bool):
+            self.mcp_bridge().start()
+
+    def _open_mcp_dialog(self):
+        """Open the MCP server control panel (non-modal)."""
+        from .mcp_dialog import McpServerDialog
+        dlg = McpServerDialog(self.mcp_bridge(), self)
         dlg.setAttribute(Qt.WA_DeleteOnClose)
         dlg.show()
 
