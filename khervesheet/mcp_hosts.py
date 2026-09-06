@@ -91,15 +91,42 @@ class Host:
     """
 
     def __init__(self, key, label, paths, note="", manual=False,
-                 cli=None):
+                 cli=None, shape="mcpServers", entry_extra=None):
         self.key = key
         self.label = label
         self._paths = paths
         self.note = note
         self.manual = manual
         self.cli = cli            # argv prefix, for CLI-managed hosts
+        #: Top-level key holding the server table.  Most clients copied
+        #: Claude Desktop's "mcpServers"; VS Code uses "servers".
+        self.shape = shape
+        #: Extra keys this client wants inside the entry itself.
+        self.entry_extra = entry_extra or {}
+        self._override_path = None
+
+    @classmethod
+    def for_file(cls, path: str, shape: str = "mcpServers"):
+        """A one-off host for a config file the user picked themselves.
+
+        The named entries below cannot cover every MCP client, and
+        guessing a path wrongly is worse than asking, so the dialog
+        offers this for anything not listed.
+        """
+        h = cls("custom", os.path.basename(path) or "config", {},
+                note="Restart the application to pick up the change.",
+                shape=shape)
+        h._override_path = os.path.abspath(os.path.expanduser(path))
+        return h
+
+    def entry(self) -> dict:
+        e = dict(server_entry())
+        e.update(self.entry_extra)
+        return e
 
     def path(self) -> Optional[str]:
+        if self._override_path:
+            return self._override_path
         for prefix, tail in self._paths.items():
             if sys.platform.startswith(prefix):
                 return os.path.expandvars(os.path.expanduser(tail))
@@ -118,15 +145,15 @@ class Host:
         doc = self._read()
         if doc is None:
             return False
-        return SERVER_NAME in (doc.get("mcpServers") or {})
+        return SERVER_NAME in (doc.get(self.shape) or {})
 
     def up_to_date(self) -> bool:
         """Is the entry present *and* pointing at this installation?"""
         doc = self._read()
         if doc is None:
             return False
-        return (doc.get("mcpServers") or {}).get(SERVER_NAME) == \
-            server_entry()
+        return (doc.get(self.shape) or {}).get(SERVER_NAME) == \
+            self.entry()
 
     def status(self) -> str:
         if not self.exists():
@@ -193,12 +220,12 @@ class Host:
                               "first — overwriting it would throw away "
                               "your other servers.")}
         doc = doc if doc is not None else {}
-        servers = doc.setdefault("mcpServers", {})
+        servers = doc.setdefault(self.shape, {})
         if not isinstance(servers, dict):
             return {"ok": False, "host": self.label, "path": p,
-                    "error": f"'mcpServers' in {p} is not an object."}
+                    "error": f"'{self.shape}' in {p} is not an object."}
         existed = SERVER_NAME in servers
-        servers[SERVER_NAME] = server_entry()
+        servers[SERVER_NAME] = self.entry()
         try:
             backup = self._write(doc)
         except OSError as exc:
@@ -217,7 +244,7 @@ class Host:
         if doc is None:
             return {"ok": False, "host": self.label,
                     "error": f"Could not read {p}."}
-        servers = doc.get("mcpServers")
+        servers = doc.get(self.shape)
         if not isinstance(servers, dict) or SERVER_NAME not in servers:
             return {"ok": True, "host": self.label, "path": p,
                     "action": "already absent"}
@@ -304,6 +331,25 @@ HOSTS = [
         "win": "~/.codeium/windsurf/mcp_config.json",
         "linux": "~/.codeium/windsurf/mcp_config.json",
     }, note="Restart Windsurf to pick up the change."),
+    Host("vscode", "VS Code (Copilot)", {
+        "darwin": "~/Library/Application Support/Code/User/mcp.json",
+        "win": "%APPDATA%/Code/User/mcp.json",
+        "linux": "~/.config/Code/User/mcp.json",
+    }, note="Restart VS Code, or run 'MCP: List Servers' to start it.",
+       shape="servers", entry_extra={"type": "stdio"}),
+    Host("cline", "Cline (VS Code)", {
+        "darwin": "~/Library/Application Support/Code/User/globalStorage/"
+                  "saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
+        "win": "%APPDATA%/Code/User/globalStorage/"
+               "saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
+        "linux": "~/.config/Code/User/globalStorage/"
+                 "saoudrizwan.claude-dev/settings/cline_mcp_settings.json",
+    }, note="Cline reloads its servers on its own."),
+    Host("lmstudio", "LM Studio", {
+        "darwin": "~/.lmstudio/mcp.json",
+        "win": "~/.lmstudio/mcp.json",
+        "linux": "~/.lmstudio/mcp.json",
+    }, note="Restart LM Studio to pick up the change."),
     Host("zed", "Zed", {
         "darwin": "~/.config/zed/settings.json",
         "win": "%APPDATA%/Zed/settings.json",

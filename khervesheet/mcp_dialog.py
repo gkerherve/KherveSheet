@@ -15,18 +15,20 @@ anyone configuring a machine by hand.
 
 from __future__ import annotations
 
+import json
 import sys
 
 from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
-    QGroupBox, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout,
+    QFileDialog, QGroupBox, QHBoxLayout, QLabel, QListWidget,
+    QListWidgetItem, QMessageBox, QPlainTextEdit, QPushButton,
+    QVBoxLayout,
 )
 
 from .mcp_bridge import ACCESS_LEVELS
-from .mcp_hosts import HOSTS, cli_command, host_config
+from .mcp_hosts import HOSTS, Host, cli_command, host_config
 from .mcp_server import endpoint_path
 
 #: Access level → (label, what it means).  Order matches ACCESS_LEVELS.
@@ -107,6 +109,12 @@ class McpServerDialog(QDialog):
         self._disconnect_btn.clicked.connect(self._on_disconnect)
         hrow.addWidget(self._connect_btn)
         hrow.addWidget(self._disconnect_btn)
+        other = QPushButton("Other application\u2026")
+        other.setToolTip(
+            "Pick any MCP client's JSON config file and add KherveSheet "
+            "to it.")
+        other.clicked.connect(self._on_other_host)
+        hrow.addWidget(other)
         hrow.addStretch(1)
         host_lay.addLayout(hrow)
         self._host_hint = QLabel()
@@ -299,6 +307,40 @@ class McpServerDialog(QDialog):
                 "Tick 'Enable MCP server' first — the entry is only "
                 "useful while KherveSheet is serving.")
             return
+        self._report(host.connect())
+
+    def _on_other_host(self):
+        """Add KherveSheet to a config file the user points us at.
+
+        The named entries cannot cover every MCP client, and guessing a
+        path wrongly is worse than asking.
+        """
+        if not self._bridge.is_running():
+            QMessageBox.information(
+                self, "MCP host",
+                "Tick 'Enable MCP server' first — the entry is only "
+                "useful while KherveSheet is serving.")
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose the client's MCP config file", "",
+            "JSON config (*.json);;All files (*)")
+        if not path:
+            return
+        # Match the file's own convention rather than imposing ours:
+        # most clients copied Claude Desktop's "mcpServers", VS Code
+        # and its relatives use "servers".
+        shape = "mcpServers"
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                doc = json.load(fh)
+            if isinstance(doc, dict) and "servers" in doc \
+                    and "mcpServers" not in doc:
+                shape = "servers"
+        except Exception:
+            pass          # empty or unreadable: connect() reports it
+        host = Host.for_file(path, shape=shape)
+        if shape == "servers":
+            host.entry_extra = {"type": "stdio"}
         self._report(host.connect())
 
     def _on_disconnect(self):
