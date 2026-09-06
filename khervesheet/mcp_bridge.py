@@ -124,6 +124,7 @@ class McpBridge(QObject):
         super().__init__(mainwindow)
         self._mw = mainwindow
         self._server: Optional[QTcpServer] = None
+        self._http = None            # McpHttpServer, when listening
         self._buffers: Dict[QTcpSocket, bytes] = {}
         self._token = ""
         self._executor = None
@@ -174,11 +175,25 @@ class McpBridge(QObject):
         server.newConnection.connect(self._on_new_connection)
         self._server = server
         self._token = secrets.token_urlsafe(32)
+        # Second door for clients that only take a URL.  Same loopback
+        # binding, same token, same access level — a different skin on
+        # the same bridge, not a wider one.
+        from .mcp_http import McpHttpServer
+        self._http = McpHttpServer(self)
+        if not self._http.start():
+            self._http = None
         self._write_endpoint()
         self.started.emit(server.serverPort())
         return True
 
+    def http_url(self) -> str:
+        """The Streamable HTTP endpoint, or "" when it is not up."""
+        return self._http.url() if self._http is not None else ""
+
     def stop(self):
+        if self._http is not None:
+            self._http.stop()
+            self._http = None
         if self._server is not None:
             for sock in list(self._buffers):
                 sock.disconnectFromHost()
@@ -203,6 +218,7 @@ class McpBridge(QObject):
                 "token": self._token,
                 "pid": os.getpid(),
                 "version": __version__,
+                "http_url": self.http_url(),
             }
             with open(path, "w", encoding="utf-8") as fh:
                 json.dump(payload, fh, indent=2)

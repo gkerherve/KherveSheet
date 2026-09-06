@@ -51,11 +51,23 @@ in KherveSheet reverts a remote assistant's change** just like your own.
 
 ## How it fits together
 
+There are two doors into the same bridge:
+
 ```
  MCP host  ──stdio──▶  khervesheet.mcp_server  ──loopback TCP──▶  KherveSheet
 (Claude Desktop,       (short-lived process                       (your open
- Claude Code, …)        the host owns)                             workbook)
+ Cline, VS Code, …)     the host owns)                             workbook)
+
+ MCP host  ──HTTP POST──────────────────────────────────────────▶  KherveSheet
+(Open WebUI, n8n, …)   http://127.0.0.1:<port>/mcp                (same tools)
 ```
+
+Same tools, same access level, same undo macros — the HTTP endpoint is
+a second skin on the bridge, not a wider one. It binds to 127.0.0.1,
+requires the same bearer token, and validates `Origin` so a web page
+in your browser cannot drive the workbook (a local HTTP server needs no
+CORS preflight, which is the DNS-rebinding hole the MCP spec warns
+about). Copy URL and token from **Configuration for: URL only**.
 
 Spreadsheet tools have to touch live Qt widgets, so they run inside
 the application's GUI thread. MCP hosts, meanwhile, want to spawn and
@@ -123,6 +135,22 @@ Tools above the current level are withheld from `tools/list` and
 refused if called anyway, with an error naming the setting. Hosts cache
 the tool list from startup, so *widening* access takes effect on their
 next reconnect; *narrowing* it takes effect immediately.
+
+## Which clients work
+
+Any MCP client that runs **on your machine**, whatever model it drives.
+That matters more than it sounds: the model is not the constraint, the
+client is. Someone using GPT, Mistral or Grok reaches KherveSheet
+through Cline, VS Code, LM Studio or any other local client with their
+own API key.
+
+Cloud assistants are the exception, and it is a hard one. ChatGPT
+connectors, Mistral's custom connectors and Grok's Bring Your Own MCP
+all require a **publicly reachable HTTPS URL** and cannot spawn a local
+process. KherveSheet drives a live window on your desk, so there is
+nothing for them to reach without tunnelling your workbook to the
+internet — which would put a bridge that can run Python in this process
+behind a public URL. That is not supported, on purpose.
 
 ### Configuring by hand
 

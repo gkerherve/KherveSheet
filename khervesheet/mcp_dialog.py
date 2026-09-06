@@ -129,6 +129,7 @@ class McpServerDialog(QDialog):
         self._flavour.addItems([
             "Claude Desktop / Cursor / Zed (JSON)",
             "Claude Code (command line)",
+            "URL only (clients that take an HTTP endpoint)",
         ])
         self._flavour.currentIndexChanged.connect(self._refresh_snippet)
         row.addWidget(self._flavour, 1)
@@ -223,10 +224,12 @@ class McpServerDialog(QDialog):
             self._activity.addItem(
                 f"{entry['time']}  {entry['tool']} — {entry['outcome']}")
         if running:
+            http = self._bridge.http_url()
+            extra = f" &nbsp; HTTP: {http}" if http else ""
             self._status.setText(
                 f"<b style='color:#2e7d32'>Listening</b> on "
-                f"127.0.0.1:{self._bridge.port()} — endpoint file: "
-                f"{endpoint_path()}")
+                f"127.0.0.1:{self._bridge.port()}{extra}<br>"
+                f"endpoint file: {endpoint_path()}")
         else:
             self._status.setText(
                 "<b style='color:#b71c1c'>Stopped</b> — MCP clients "
@@ -356,10 +359,32 @@ class McpServerDialog(QDialog):
         self._report(host.disconnect())
 
     def _refresh_snippet(self):
-        if self._flavour.currentIndex() == 0:
+        idx = self._flavour.currentIndex()
+        if idx == 0:
             self._snippet.setPlainText(host_config())
-        else:
+        elif idx == 1:
             self._snippet.setPlainText(cli_command())
+        else:
+            self._snippet.setPlainText(self._http_snippet())
+
+    def _http_snippet(self) -> str:
+        """Endpoint and token for a client that only takes a URL."""
+        url = self._bridge.http_url()
+        if not url:
+            return ("The HTTP endpoint is not listening.\n"
+                    "Tick 'Enable MCP server' above.")
+        return (
+            f"URL      {url}\n"
+            f"Transport  Streamable HTTP (POST JSON-RPC)\n"
+            f"Header   Authorization: Bearer {self._bridge.token()}\n"
+            "\n"
+            "For clients that take an endpoint rather than a command —\n"
+            "Open WebUI, n8n, and some IDE setups. The token changes\n"
+            "every time the server is switched on, so re-copy it after\n"
+            "restarting KherveSheet.\n"
+            "\n"
+            "127.0.0.1 only: this is not reachable from another machine,\n"
+            "and cloud assistants (ChatGPT, Le Chat, Grok) cannot use it.")
 
     def _copy(self):
         QApplication.clipboard().setText(self._snippet.toPlainText())

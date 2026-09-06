@@ -68,8 +68,15 @@ into a new module and import.
   - `mcp_dialog.py`  — `McpServerDialog` (enable the bridge, choose the
     access level, connect a host). See `docs/MCP.md`.
   - `mcp_hosts.py`   — Qt-free config-file writer: detects Claude
-    Desktop / Claude Code / Cursor / Windsurf / Zed and merges
-    KherveSheet's entry in, with a backup and an atomic replace.
+    Desktop / Claude Code / Cursor / Windsurf / VS Code / Cline /
+    LM Studio / Zed and merges KherveSheet's entry in, with a
+    backup and an atomic replace. `Host.for_file()` handles any
+    other client the user points at. `shape` is the top-level key
+    (`mcpServers`, or `servers` for VS Code).
+  - `mcp_http.py`    — `McpHttpServer`: MCP over Streamable HTTP on
+    127.0.0.1 for clients that take a URL instead of a command.
+    Same bridge, same token, same access level; validates `Origin`
+    against DNS rebinding.
   - `ai_charts.py`   — chart tools for both tables: `insert_chart`,
     `modify_chart`, `style_chart`, with their schemas next to the code
     that runs them (series styling, fills, legend, fonts, presets).
