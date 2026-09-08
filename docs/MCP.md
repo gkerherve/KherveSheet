@@ -86,11 +86,14 @@ Practical consequences:
 
 ## Turning it on
 
-1. **Tools ▸ MCP Server…**
-2. Tick **Enable MCP server**. The setting is remembered, so the
-   bridge comes back automatically next launch.
-3. Choose what clients may do (see **Access levels** below).
-4. Pick your host under **Connect a host** and press **Connect**.
+1. **AI ▸ Connect to Claude (Simple)…**
+2. Tick **Let assistants connect to this workbook**. The setting is
+   remembered, so the bridge comes back automatically next launch.
+3. Leave the access level on **Full** — the recommended setting (see
+   **Access levels** below).
+4. Pick your application under **Connect an application** and press
+   **Connect**.
+5. Restart it, then **mention KherveSheet in the chat**.
 
 KherveSheet writes the entry into the host's own settings, so there is
 no config file to edit by hand — it knows its own executable path,
@@ -102,6 +105,21 @@ Every write backs the file up first (`.khervesheet-<timestamp>.bak`
 beside it), replaces it atomically, and leaves your other servers and
 unrelated settings alone. A config file that will not parse is reported
 rather than overwritten.
+
+## Then say "KherveSheet" in the chat
+
+This is the step with no visible cue, and the one that makes a correct
+setup look broken. Claude does not go looking for a spreadsheet on its
+own — the tools are there, but nothing points at them until the
+conversation does:
+
+> in KherveSheet, chart column B against column A
+
+From that first mention it keeps working in the workbook you have open,
+so the rest of the conversation is ordinary — *"fit a straight line
+to it"*, *"format the header row"*. If it answers with instructions
+instead of doing anything, it has not connected: check the box above is
+ticked and that the host was restarted.
 
 **Zed is the exception.** Its settings file allows comments, which
 rewriting would silently discard, so KherveSheet refuses to touch it —
@@ -118,14 +136,21 @@ actually called.
 | Level | A connected client can |
 | --- | --- |
 | **Read only** | Inspect the workbook. No changes at all. |
-| **Edit** (default) | Read, write, format, chart, fit, solve, save — but **not** run Python. |
-| **Full** | Everything, including `set_python_cell`. |
+| **Edit** | Read, write, format, chart, fit, solve, save — but **not** run Python. |
+| **Full** (default, recommended) | Everything, including `set_python_cell`. |
 
 `=PY` cells execute real Python inside KherveSheet's own process, with
-the filesystem and network reach of the application. That is why it
-sits behind its own level rather than coming with edit access: granting
+the filesystem and network reach of the application. Granting
 **Full** gives the connected assistant the same code-execution reach as
-the built-in chat, so grant it only to hosts you trust.
+the built-in chat, so connect only applications you trust.
+
+**Full is the default**, because a spreadsheet assistant that cannot
+run Python cannot do half of what people connect it for, and `=PY` is
+the app's own feature — the same code you run by typing it. Note
+this is a wider grant than the sibling apps make: in KherveCAD and
+KhervePaint the edit→full line is the filesystem, here it is code
+execution in this process. **Edit** is the level to pick on a shared
+machine, or for a client you are still sizing up.
 
 Cell *text* starting with `=PY` runs exactly the same way, so
 `write_cells` and `set_formula` refuse it below **Full** too — a client

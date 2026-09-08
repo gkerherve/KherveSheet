@@ -95,7 +95,7 @@ _NOT_RUNNING = (
     "The MCP server drives a live KherveSheet window, so the "
     "application must be running with its bridge enabled:\n"
     "  1. Start KherveSheet.\n"
-    "  2. Enable Tools ▸ MCP Server.\n"
+    "  2. Enable AI ▸ Connect to Claude (Simple).\n"
     "Then retry — no need to restart this MCP connection."
 )
 
@@ -129,7 +129,7 @@ search_functions before assuming a formula function does not exist.
 make is revertible with Ctrl+Z — but their unsaved work is real. \
 open_workbook and new_workbook refuse to discard it unless you pass \
 discard_unsaved_changes, and you should save instead of discarding.
-- The user controls what you may do (Tools > MCP Server). A refusal \
+- The user controls what you may do (AI > Connect to Claude). A refusal \
 naming an access level is their setting, not a bug — tell them what \
 you needed rather than working around it.
 

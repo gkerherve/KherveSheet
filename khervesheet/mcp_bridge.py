@@ -14,7 +14,7 @@ already-running window.  The socket is the seam between the two.
 Security posture: the listener binds to 127.0.0.1 only, and every
 request must carry the random token from the endpoint file, which is
 written user-readable only.  The bridge is off unless the user turns
-it on in Tools ▸ MCP Server.
+it on in AI ▸ Connect to Claude (Simple).
 
 Copyright (C) 2026 Gwilherm Kerherve
 
@@ -91,12 +91,19 @@ def _smuggles_python(name: str, tool_input: dict) -> bool:
             return True
     return False
 
-#: What a connected client is allowed to do, weakest first.  "edit" is
-#: the default: an MCP client can change the workbook, but running
-#: arbitrary Python in the app's own process is a separate, explicit
-#: decision the user makes in Tools ▸ MCP Server.
+#: What a connected client is allowed to do, weakest first.  "full" is
+#: the default: a spreadsheet assistant that cannot run Python cannot
+#: do the half of the job people connect it for, and =PY cells are the
+#: app's own feature -- the same code the user runs by typing it.  Note
+#: this is a wider grant than the sibling apps make: their edit->full
+#: line is the filesystem, ours is code execution in this process, so
+#: "edit" is the level to pick on a shared machine or for a client you
+#: are still sizing up.  The connection is loopback only,
+#: token-authenticated, off until the user turns it on, and joined to
+#: one application they named, so the trust decision is already made by
+#: the time a tool runs.
 ACCESS_LEVELS = ("read", "edit", "full")
-DEFAULT_ACCESS = "edit"
+DEFAULT_ACCESS = "full"
 
 #: How many recent calls the dialog's activity log shows.
 _LOG_LEN = 200
@@ -332,7 +339,7 @@ class McpBridge(QObject):
                 f"set to 'Read only'.")
             self._record(str(name), "refused")
             return {"error": f"Refused: {reason} The user can change "
-                             f"this in Tools \u25b8 MCP Server."}
+                             f"this in AI \u25b8 Connect to Claude (Simple)."}
         # The Solver and the fitting tools pump the Qt event loop while
         # they run, which can deliver a second request into this same
         # handler.  Two tool calls interleaving on one workbook would

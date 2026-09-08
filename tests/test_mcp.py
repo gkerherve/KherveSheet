@@ -184,7 +184,7 @@ def test_a_missing_endpoint_reports_how_to_fix_it(tmp_path):
         mcp_server.BridgeClient(str(tmp_path / "absent.json")))
     reply = _rpc(server, "tools/call", {"name": "read_cells"})
     assert reply["error"]["code"] == -32000
-    assert "Tools ▸ MCP Server" in reply["error"]["message"]
+    assert "Connect to Claude" in reply["error"]["message"]
 
 
 def test_initialize_still_succeeds_without_a_running_app(tmp_path):
@@ -348,7 +348,11 @@ def test_the_bridge_lists_the_apps_real_tool_table(live_bridge):
     names = [t["name"] for t in _ask(bridge, app, "list_tools")["result"]]
     assert {"read_cells", "write_cells", "run_solver",
             "save_workbook"} <= set(names)
-    # Default access is "edit", which withholds code execution.
+    # Default access is "full", so the code tools are on the table.
+    assert "set_python_cell" in names
+    # ...and step down to see them withheld again.
+    bridge.set_access("edit")
+    names = [t["name"] for t in _ask(bridge, app, "list_tools")["result"]]
     assert "set_python_cell" not in names
 
 

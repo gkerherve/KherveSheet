@@ -65,8 +65,12 @@ into a new module and import.
   - `mcp_bridge.py`  — `McpBridge`, the in-app half: a token-authenticated
     127.0.0.1 listener that runs `AiToolExecutor` tools on the GUI thread,
     one undo macro per mutating call.
-  - `mcp_dialog.py`  — `McpServerDialog` (enable the bridge, choose the
-    access level, connect a host). See `docs/MCP.md`.
+  - `mcp_dialog.py`  — `McpServerDialog`, opened from
+    **AI ▸ Connect to Claude (Simple)…** (enable the bridge, choose the
+    access level — **full** by default — connect an application). Says
+    nothing about MCP: it tells the user which application to connect,
+    to restart it, and to then mention KherveSheet in the chat, which is
+    the step with no visible cue. See `docs/MCP.md`.
   - `mcp_hosts.py`   — Qt-free config-file writer: detects Claude
     Desktop / Claude Code / Cursor / Windsurf / VS Code / Cline /
     LM Studio / Zed and merges KherveSheet's entry in, with a

@@ -79,9 +79,21 @@ class MainWindow(QMainWindow):
         self._init_ui()
         # Open files dropped onto the window (grid included).
         self.setAcceptDrops(True)
-        # Show the AI chat sidebar by default (respect saved preference).
+        # Hidden by default: the ChatBox needs the user's own API key,
+        # so it stays folded away until they ask for it (AI > ChatBox,
+        # Ctrl+Shift+A).
+        #
+        # The old default was "visible", and setChecked() below writes
+        # the value back through _toggle_ai_chat -- so every existing
+        # install holds ai/chat_visible=true whether or not anyone chose
+        # it, and honouring that would make the new default a no-op.
+        # Clear it once; from then on the user's own choice persists.
+        if not self._settings.value(
+                "ai/chat_default_migrated", False, type=bool):
+            self._settings.remove("ai/chat_visible")
+            self._settings.setValue("ai/chat_default_migrated", True)
         ai_visible = self._settings.value(
-            "ai/chat_visible", True, type=bool)
+            "ai/chat_visible", False, type=bool)
         self._ai_chat_act.setChecked(ai_visible)
 
     # ── UI setup ─────────────────────────────────────────────────────
@@ -232,14 +244,6 @@ class MainWindow(QMainWindow):
             act.triggered.connect(
                 lambda _, n=name: self._apply_theme(n))
 
-        view_menu.addSeparator()
-        self._ai_chat_act = view_menu.addAction("AI Chat Sidebar")
-        self._ai_chat_act.setCheckable(True)
-        self._ai_chat_act.setChecked(False)
-        self._ai_chat_act.setIcon(icons.themed_icon("mdi.robot"))
-        self._ai_chat_act.setShortcut("Ctrl+Shift+A")
-        self._ai_chat_act.setToolTip("Show/hide AI Chat sidebar (Ctrl+Shift+A)")
-        self._ai_chat_act.toggled.connect(self._toggle_ai_chat)
 
         # ── Insert ───────────────────────────────────────────────────
         insert_menu = mb.addMenu("&Insert")
@@ -433,14 +437,24 @@ class MainWindow(QMainWindow):
         tools_menu.addSeparator()
         tools_menu.addAction("Curve Fitting\u2026", self._open_fitting)
         tools_menu.addAction("Solver\u2026", self._open_solver)
-        tools_menu.addSeparator()
-        ai_act = tools_menu.addAction(
-            "AI Chat\u2026",
-            lambda: self._ai_chat_act.toggle())
-        ai_act.setIcon(icons.themed_icon("mdi.robot"))
-        mcp_act = tools_menu.addAction("MCP Server\u2026",
-                                       self._open_mcp_dialog)
+
+        # ── AI ───────────────────────────────────────────────────────
+        ai_menu = mb.addMenu("&AI")
+        mcp_act = ai_menu.addAction("Connect to Claude (Simple)\u2026",
+                                    self._open_mcp_dialog)
         mcp_act.setIcon(icons.themed_icon("mdi.lan-connect"))
+        mcp_act.setToolTip("Let Claude Desktop, Claude Code or another "
+                           "assistant work in this workbook \u2014 no API "
+                           "key, it uses the login you already have")
+        self._ai_chat_act = ai_menu.addAction("ChatBox (requires API key)")
+        self._ai_chat_act.setCheckable(True)
+        self._ai_chat_act.setChecked(False)
+        self._ai_chat_act.setIcon(icons.themed_icon("mdi.robot"))
+        self._ai_chat_act.setShortcut("Ctrl+Shift+A")
+        self._ai_chat_act.setToolTip(
+            "A chat box docked in the window; it needs your own API key "
+            "(Ctrl+Shift+A)")
+        self._ai_chat_act.toggled.connect(self._toggle_ai_chat)
 
         # ── Examples (its own top-level menu, before Help) ───────────
         examples_menu = mb.addMenu("&Examples")
