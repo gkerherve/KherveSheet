@@ -829,9 +829,18 @@ def main():
     icon = _make_app_icon()
     app.setWindowIcon(icon)
 
+    from .splash import Splash
+    splash = Splash()
+    splash.show()
+    splash.step("Loading the formula engine")
+
     from .mainwindow import MainWindow
+    splash.step("Building the window")
     w = MainWindow()
+    splash.step("Opening the workbook")
     w.show()
+    splash.step("Ready")
+    splash.finish(w)
 
     # Open a document passed on the command line (e.g. double-clicking a
     # .ksheet in the file explorer hands the path to the app as argv[1]).
