@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import os
 
-from .ai_charts import CHART_TYPES, _chart, _header_text
+from .ai_charts import (CHART_TYPES, _chart, _header_text,
+                        canonical_chart_type)
 from .sheet import col_index_to_letter
 
 #: Tick-label formats.  These are positional indices into
@@ -346,7 +347,8 @@ def tool_add_chart_series(ex, inp: dict) -> dict:
 
     label = (inp.get("label") or _header_text(sheet, yr1, yc1)
              or col_index_to_letter(yc1))
-    plot_type = inp.get("plot_type") or chart._series[0]["plot_type"]
+    plot_type = canonical_chart_type(
+        inp.get("plot_type") or chart._series[0]["plot_type"])
     if plot_type not in CHART_TYPES:
         return {"error": f"Invalid plot_type {plot_type!r}. "
                 f"Valid: {CHART_TYPES}"}
