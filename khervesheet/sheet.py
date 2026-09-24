@@ -502,14 +502,13 @@ class CellEditCmd(QUndoCommand):
         self.new = new_text
 
     def undo(self):
-        self.sheet._set_cell_quiet(self.row, self.col, self.old)
+        self.sheet._apply_cell_sources([(self.row, self.col, self.old)])
 
     def redo(self):
         if not getattr(self, "_first_redo_done", False):
             self._first_redo_done = True
-            self.sheet._shadow[(self.row, self.col)] = self.new
             return
-        self.sheet._set_cell_quiet(self.row, self.col, self.new)
+        self.sheet._apply_cell_sources([(self.row, self.col, self.new)])
 
 
 class BulkCellEditCmd(QUndoCommand):
@@ -521,10 +520,9 @@ class BulkCellEditCmd(QUndoCommand):
         self.changes = changes  # [(row, col, old, new), ...]
 
     def undo(self):
-        self.sheet.table.blockSignals(True)
-        for row, col, old, _new in reversed(self.changes):
-            self.sheet._set_cell_quiet(row, col, old)
-        self.sheet.table.blockSignals(False)
+        self.sheet._apply_cell_sources(
+            [(row, col, old) for row, col, old, _new
+             in reversed(self.changes)])
 
     def redo(self):
         if not getattr(self, "_first_redo_done", False):
@@ -532,10 +530,8 @@ class BulkCellEditCmd(QUndoCommand):
             for row, col, _old, new in self.changes:
                 self.sheet._shadow[(row, col)] = new
             return
-        self.sheet.table.blockSignals(True)
-        for row, col, _old, new in self.changes:
-            self.sheet._set_cell_quiet(row, col, new)
-        self.sheet.table.blockSignals(False)
+        self.sheet._apply_cell_sources(
+            [(row, col, new) for row, col, _old, new in self.changes])
 
 
 class FormatCellsCmd(QUndoCommand):
@@ -1359,6 +1355,9 @@ class SheetWidget(QWidget):
         # charts are not redrawn on every recalc (used by the Solver,
         # which recalculates the model hundreds of times).
         self._suppress_recalc_signals = False
+        # Set while undo/redo replays cells (see _apply_cell_sources).
+        self._replaying_undo = False
+        self._deferred_seeds = None
         # Formula evaluation cache: formula text → compiled code object
         # (or False if it failed to compile).  Compiled formulas read
         # live cell values at eval time via the _C/_AGG/_COL helpers, so
@@ -2077,6 +2076,8 @@ class SheetWidget(QWidget):
                 self.table.blockSignals(False)
         new_text = it.text() if it else ""
         old_text = self._shadow.get((row, col), "")
+        # Undo must restore the formula, not the number it last showed.
+        old_source = self._cell_formulas.get((row, col), old_text)
 
         # Detect formula
         dec = self._cell_decimals(row, col)
@@ -2170,10 +2171,16 @@ class SheetWidget(QWidget):
                 self.table.blockSignals(False)
 
         self._shadow[(row, col)] = new_text
+        new_source = self._cell_formulas.get((row, col), new_text)
 
-        if self._undo_stack is not None and old_text != new_text:
-            cmd = CellEditCmd(self, row, col, old_text, new_text)
+        if (self._undo_stack is not None and old_source != new_source
+                and not self._replaying_undo):
+            cmd = CellEditCmd(self, row, col, old_source, new_source)
             self._undo_stack.push(cmd)
+
+        if self._deferred_seeds is not None:
+            self._deferred_seeds.append((row, col))
+            return
 
         if not self._suppress_recalc_signals:
             self.data_changed.emit(col)
@@ -2323,6 +2330,44 @@ class SheetWidget(QWidget):
         if not self._suppress_recalc_signals:
             for c in changed_cols:
                 self.data_changed.emit(c)
+
+    def _apply_cell_sources(self, cells):
+        """Put each ``(row, col, source)`` back as if it had been typed.
+
+        Used by undo/redo: a formula is re-registered and evaluated, a
+        checkbox gets its tick back, and every dependent formula is
+        recalculated once at the end — none of which a quiet text write
+        does. No new undo step is recorded.
+        """
+        self._replaying_undo = True
+        self._deferred_seeds = []
+        try:
+            for row, col, text in cells:
+                text = "" if text is None else str(text)
+                it = self.table.item(row, col)
+                if it is None:
+                    self.table.blockSignals(True)
+                    it = QTableWidgetItem("")
+                    self.table.setItem(row, col, it)
+                    self.table.blockSignals(False)
+                self.table.blockSignals(True)
+                if it.data(Qt.CheckStateRole) is not None:
+                    it.setCheckState(Qt.Checked if text.upper() == "TRUE"
+                                     else Qt.Unchecked)
+                it.setText(text)
+                self.table.blockSignals(False)
+                self._on_cell_changed(row, col)
+            seeds = self._deferred_seeds
+        finally:
+            self._deferred_seeds = None
+            self._replaying_undo = False
+        if not seeds:
+            return
+        if not self._suppress_recalc_signals:
+            for col in sorted({c for _r, c in seeds}):
+                self.data_changed.emit(col)
+        self._recalc_from_seeds(seeds)
+        self._refresh_cross_sheet()
 
     def _set_cell_quiet(self, row, col, text):
         """Set cell text without triggering signals."""

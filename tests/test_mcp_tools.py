@@ -516,3 +516,19 @@ def test_argument_spelling_is_forgiving(ex):
     assert "style_name" in ex.execute(
         "apply_table_style", {"sheet_name": "Sheet1",
                               "range": "A1:B3"})["error"]
+
+
+def test_undo_restores_formulas_and_recalculates(ex, window):
+    sheet = window._workbook.sheet_by_name("Sheet1")
+    ex.execute("write_cells", {"sheet_name": "Sheet1", "range": "A1",
+                               "values": [[5]]})
+    ex.execute("set_formula", {"sheet_name": "Sheet1", "cell": "B1",
+                               "formula": "=A1*2"})
+    ex.execute("write_cells", {"sheet_name": "Sheet1", "range": "A1",
+                               "values": [[7]]})
+    window._undo_stack.undo()
+    assert float(sheet.cell_text(0, 1)) == 10
+    ex.execute("write_cells", {"sheet_name": "Sheet1", "range": "B1",
+                               "values": [[3]]})
+    window._undo_stack.undo()
+    assert sheet._cell_formulas.get((0, 1)) == "=A1*2"
