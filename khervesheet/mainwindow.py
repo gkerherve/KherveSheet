@@ -965,14 +965,27 @@ class MainWindow(QMainWindow):
             return True
         return False
 
+    def _replace_workbook(self, wb):
+        """Make *wb* the document, retiring the old one's =PY loops.
+
+        The old workbook is only deleted once control is back in the
+        event loop; until then a running simulation would keep ticking
+        (and redrawing figures) behind the new document.
+        """
+        old = getattr(self, "_workbook", None)
+        if old is not None:
+            for sheet in old.all_sheets():
+                sheet._stop_py_loops()
+        self.setCentralWidget(wb)
+        self._workbook = wb
+
     def _new_workbook(self):
         if not self._maybe_save_changes():
             return
         self._current_file = None
         # Reset workbook
         wb = WorkbookWidget()
-        self.setCentralWidget(wb)
-        self._workbook = wb
+        self._replace_workbook(wb)
         self._wire_undo_to_sheets()
         self._workbook.tabs.currentChanged.connect(
             lambda: self._wire_undo_to_sheets())
@@ -2411,8 +2424,7 @@ class MainWindow(QMainWindow):
                             sheet._fit_custom = dict(cfg["custom"])
 
                 wb.tabs.setCurrentIndex(0)
-                self.setCentralWidget(wb)
-                self._workbook = wb
+                self._replace_workbook(wb)
                 self._wire_undo_to_sheets()
                 self._workbook.tabs.currentChanged.connect(
                     lambda: self._wire_undo_to_sheets())
