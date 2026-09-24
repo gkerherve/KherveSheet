@@ -861,7 +861,8 @@ def _remove_trendline_series(chart, info: TrendlineInfo):
     # Refresh legend
     leg = chart._ax.legend(loc="best", framealpha=0.8, fontsize=8)
     if leg:
-        leg.set_draggable(True)
+        from .graph import set_draggable
+        set_draggable(leg)
     # Adjust fit_series_idx on remaining trendlines
     for t in getattr(chart, '_trendlines', []):
         if t is not info and t.fit_series_idx > fit_idx:
@@ -901,7 +902,8 @@ def _remove_all_trendlines(chart):
     if chart._series:
         leg = chart._ax.legend(loc="best", framealpha=0.8, fontsize=8)
         if leg:
-            leg.set_draggable(True)
+            from .graph import set_draggable
+            set_draggable(leg)
     chart._canvas.draw_idle()
 
 

@@ -2430,8 +2430,14 @@ class MainWindow(QMainWindow):
                     sheet._charts = []
                 viewport = sheet.table.viewport()
                 for cd in chart_dicts:
-                    chart = EmbeddedChart.from_dict(
-                        cd, sheet, viewport)
+                    # One bad chart must not cost the rest of the file.
+                    try:
+                        chart = EmbeddedChart.from_dict(
+                            cd, sheet, viewport)
+                    except Exception:
+                        import traceback
+                        traceback.print_exc()
+                        continue
                     sheet._charts.append(chart)
                 del sheet._deferred_charts
 
