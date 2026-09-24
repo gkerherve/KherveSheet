@@ -5301,16 +5301,32 @@ class SheetWidget(QWidget):
                 # Dynamic reference shifting is not supported; stub.
                 return ref
 
+            class _Pi(float):
+                """PI works both bare (=2*PI) and called (=PI())."""
+                def __call__(self):
+                    return float(self)
+
+            def _ROUND(x, n=0):
+                # Excel rounds halves away from zero; Python's round()
+                # rounds them to even (ROUND(2.5,0) would give 2).
+                from decimal import Decimal, ROUND_HALF_UP
+                q = Decimal(1).scaleb(-int(n))
+                return float(Decimal(repr(float(x))).quantize(
+                    q, rounding=ROUND_HALF_UP))
+
+            def _INT(x):
+                return math.floor(x)    # Excel INT rounds down: -2.5 -> -3
+
             ns = {"__builtins__": {}, "math": math, "np": np,
                   "abs": abs, "round": round, "int": int, "float": float,
                   "sum": _SUM, "min": _MINF, "max": _MAXF, "len": len,
                   "mean": _mean, "avg": _mean,
-                  "ABS": abs, "ROUND": round, "INT": int, "FLOAT": float,
+                  "ABS": abs, "ROUND": _ROUND, "INT": _INT, "FLOAT": float,
                   "SUM": _SUM, "MIN": _MINF, "MAX": _MAXF,
                   "MEAN": _mean, "AVG": _mean, "AVERAGE": _mean,
                   "COUNT": _COUNT, "COUNTA": _COUNTA,
                   "STDEV": _STDEV, "SUMSQ": _SUMSQ,
-                  "PI": math.pi, "pi": math.pi,
+                  "PI": _Pi(math.pi), "pi": math.pi,
                   "sqrt": math.sqrt, "SQRT": math.sqrt,
                   "log": math.log, "LOG": math.log,
                   "log10": math.log10, "LOG10": math.log10,
