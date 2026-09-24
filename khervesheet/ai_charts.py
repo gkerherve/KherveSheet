@@ -536,7 +536,10 @@ def tool_insert_chart(ex, inp: dict) -> dict:
     from .graph import EmbeddedChart, parse_time_column
 
     sheet = ex._sheet(inp["sheet_name"])
-    chart_type = inp["chart_type"]
+    # Callers (LLMs especially) write "scatter" as often as "Scatter".
+    chart_type = next((t for t in CHART_TYPES
+                       if t.lower() == str(inp["chart_type"]).lower()),
+                      inp["chart_type"])
     if chart_type not in CHART_TYPES:
         return {"error": f"Invalid chart_type {chart_type!r}. "
                 f"Valid: {CHART_TYPES}"}

@@ -27,6 +27,12 @@ from khervesheet import updater
 # Fixtures — a stand-in for the GitHub releases payload
 # ---------------------------------------------------------------------------
 
+@pytest.fixture(autouse=True)
+def _windows_assets(monkeypatch):
+    """Most tests describe the Windows .exe release; pin that choice."""
+    monkeypatch.setattr(updater, "_asset_platform", lambda: "win32")
+
+
 def _asset(name, size=1234, digest=None):
     return {
         "name": name,
@@ -385,3 +391,22 @@ def test_helper_script_waits_then_installs_and_restarts():
     # Relaunches the app and cleans itself up.
     assert r'start "" "C:\Program Files\KherveSheet\KherveSheet.exe"' in body
     assert 'del "%~f0"' in body
+
+
+def test_mac_picks_the_dmg_for_this_cpu(monkeypatch):
+    monkeypatch.setattr(updater, "_asset_platform", lambda: "darwin")
+    monkeypatch.setattr(updater, "_mac_arch", lambda: "x86_64")
+    entry = _entry("khervesheet-v0.2.0", [
+        _asset("Setup_KherveSheet_0.2.0.exe"),
+        _asset("KherveSheet-0.2.0-arm64.dmg"),
+        _asset("KherveSheet-0.2.0-x86_64.dmg"),
+    ])
+    assert updater._release_from_json(entry).asset_name == \
+        "KherveSheet-0.2.0-x86_64.dmg"
+
+
+def test_mac_release_without_a_dmg_is_ignored(monkeypatch):
+    monkeypatch.setattr(updater, "_asset_platform", lambda: "darwin")
+    entry = _entry("khervesheet-v0.2.0",
+                   [_asset("Setup_KherveSheet_0.2.0.exe")])
+    assert updater._release_from_json(entry) is None

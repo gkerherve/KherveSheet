@@ -153,6 +153,11 @@ def tool_save_workbook(ex, inp: dict) -> dict:
         return {"error": f"Directory does not exist: {parent}"}
     getattr(mw, writer)(path)
     if ext in _ADOPTS_PATH:
+        # Its Python cells already ran here; reopening must not re-ask.
+        trusted = getattr(mw, "_trusted_py_paths", None)
+        if trusted is None:
+            trusted = mw._trusted_py_paths = set()
+        trusted.add(path)
         mw._current_file = path
         mw._add_recent(path)
         mw._update_title()
@@ -175,13 +180,25 @@ def tool_open_workbook(ex, inp: dict) -> dict:
         return {"error": "The open workbook has unsaved changes. Save "
                          "it first, or call again with "
                          "discard_unsaved_changes=true to lose them."}
-    if not mw._open_path(path):
+    mw._headless_open = True
+    mw._python_left_unrun = False
+    try:
+        opened = mw._open_path(path)
+    finally:
+        mw._headless_open = False
+    if not opened:
         return {"error": f"Unrecognised file type: {path}. Open "
                          ".ksheet, .csv, .xlsx or .xlsm."}
     mw._undo_stack.clear()
-    return {"opened": path,
-            "sheets": [mw._workbook.name_of_sheet(s)
-                       for s in mw._workbook.all_sheets()]}
+    out = {"opened": path,
+           "sheets": [mw._workbook.name_of_sheet(s)
+                      for s in mw._workbook.all_sheets()]}
+    if mw._python_left_unrun:
+        out["python_cells_not_run"] = (
+            "This file has Python (=PY) cells and was not saved in this "
+            "session, so they were left unevaluated for safety. The user "
+            "can reopen it from File > Open to trust and run them.")
+    return out
 
 
 def tool_new_workbook(ex, inp: dict) -> dict:

@@ -137,7 +137,7 @@ def _release_from_json(entry) -> "Release | None":
     # Prefer the exactly-named installer; fall back to any installer in
     # the release so a filename typo doesn't strand every client.
     assets = entry.get("assets") or []
-    if sys.platform == "darwin":
+    if _asset_platform() == "darwin":
         arch = _mac_arch()
         wanted = f"KherveSheet-{version_text}-{arch}.dmg".lower()
 
@@ -172,6 +172,11 @@ def _release_from_json(entry) -> "Release | None":
         asset_size=int(chosen.get("size") or 0),
         digest=str(chosen.get("digest") or ""),
     )
+
+
+def _asset_platform() -> str:
+    """Which release asset to look for; a seam for the tests."""
+    return sys.platform
 
 
 def _mac_arch() -> str:

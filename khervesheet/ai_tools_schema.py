@@ -62,9 +62,10 @@ EXTRA_TOOLS = [
             "Open a .ksheet, .csv, .xlsx or .xlsm file, replacing the "
             "workbook currently on screen. Refuses when there are "
             "unsaved changes unless discard_unsaved_changes is true — "
-            "save first rather than discarding someone's work. Opening "
-            "a .ksheet that contains Python cells asks the user to "
-            "confirm, so the call may wait on them."
+            "save first rather than discarding someone's work. Python "
+            "(=PY) cells in a file not saved during this session are "
+            "left unevaluated for safety; the result then carries "
+            "'python_cells_not_run'."
         ),
         "input_schema": {
             "type": "object",

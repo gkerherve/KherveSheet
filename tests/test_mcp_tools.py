@@ -485,3 +485,34 @@ def test_the_executor_can_still_run_every_name_in_either_table(ex):
     missing = [t["name"] for t in MCP_TOOLS
                if t["name"] not in ex._dispatch]
     assert missing == []
+
+
+def test_opening_foreign_python_cells_never_blocks_on_a_dialog(
+        ex, window, tmp_path):
+    path = str(tmp_path / "py.ksheet")
+    ex.execute("set_python_cell",
+               {"sheet_name": "Sheet1", "cell": "A1", "code": "1+1"})
+    ex.execute("save_workbook", {"path": path})
+    window._trusted_py_paths.clear()      # as if authored elsewhere
+    ex.execute("new_workbook", {"discard_unsaved_changes": True})
+    result = ex.execute("open_workbook", {"path": path})
+    assert result["opened"] == path
+    assert "python_cells_not_run" in result
+
+
+def test_argument_spelling_is_forgiving(ex):
+    ex.execute("write_cells", {"sheet_name": "Sheet1", "range": "A1:B3",
+                               "values": [[1, 2], [2, 4], [3, 7]]})
+    chart = ex.execute("insert_chart", {
+        "sheet_name": "Sheet1", "chart_type": "scatter",
+        "x_range": "A1:A3", "y_range": "B1:B3"})
+    assert chart["chart_type"] == "Scatter"
+    assert ex.execute("delete_charts", {"sheet_name": "Sheet1",
+                                        "indices": [0]})["deleted"] == 1
+    fit = ex.execute("fit_trendline", {
+        "sheet_name": "Sheet1", "x_range": "A1:A3", "y_range": "B1:B3",
+        "model": "linear"})
+    assert fit["model"] == "Linear"
+    assert "style_name" in ex.execute(
+        "apply_table_style", {"sheet_name": "Sheet1",
+                              "range": "A1:B3"})["error"]

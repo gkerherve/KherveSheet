@@ -162,7 +162,10 @@ class AiToolExecutor:
         if fn is None:
             return {"error": f"Unknown tool: {tool_name!r}"}
         try:
-            return fn(tool_input)
+            return fn(tool_input or {})
+        except KeyError as exc:
+            # inp["x"] on an argument the caller left out — say which.
+            return {"error": f"Missing required argument {exc}."}
         except Exception as exc:
             return {"error": str(exc)}
 
@@ -646,7 +649,11 @@ class AiToolExecutor:
         """Delete charts from a sheet by index list or 'all'."""
         sheet = self._sheet(inp["sheet_name"])
         charts = getattr(sheet, "_charts", []) or []
-        indices_str = inp.get("indices", "all").strip()
+        indices = inp.get("indices", "all")
+        # Accept a JSON list / bare int as well as the documented "0,2".
+        if isinstance(indices, (list, tuple)):
+            indices = ",".join(str(i) for i in indices)
+        indices_str = str(indices).strip()
         if indices_str.lower() == "all":
             to_delete = list(range(len(charts)))
         else:

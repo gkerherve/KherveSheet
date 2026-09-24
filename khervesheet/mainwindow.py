@@ -1938,6 +1938,11 @@ class MainWindow(QMainWindow):
         ex_dir = self._examples_dir()
         if ex_dir and os.path.abspath(path).startswith(os.path.abspath(ex_dir)):
             return True
+        # A tool call (MCP / AI chat) must never block on a modal the
+        # user may not be watching: leave the cells unrun and say so.
+        if getattr(self, "_headless_open", False):
+            self._python_left_unrun = True
+            return False
         from PyQt5.QtWidgets import QMessageBox
         reply = QMessageBox.question(
             self, "Python in workbook",
