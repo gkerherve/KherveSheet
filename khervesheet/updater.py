@@ -14,7 +14,12 @@ The flow is deliberately quiet: the check and the download happen on
 background threads with no UI at all, and the user only ever sees a
 dialog once a verified installer is sitting on disk ready to run.
 
-Installing is a Windows-only affair — the shipped artefact is an Inno
+On macOS the artefact is ``KherveSheet-<version>-<arch>.dmg``; a
+detached shell helper mounts it, swaps the ``.app`` bundle in place with
+``ditto`` and relaunches.  No admin prompt as long as the bundle's folder
+is writable (the usual case for /Applications on a single-user Mac).
+
+On Windows the shipped artefact is an Inno
 Setup ``Setup_KherveSheet_<version>.exe``.  Because the app installs
 under Program Files, the installer must elevate, so exactly one UAC
 prompt is unavoidable; everything either side of it is silent.  The
@@ -51,6 +56,8 @@ RELEASES_PAGE = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases"
 TAG_PREFIX = "khervesheet-v"
 #: The asset we install from, e.g. ``Setup_KherveSheet_0.1.610.exe``.
 INSTALLER_RE = re.compile(r"^Setup_KherveSheet_([0-9][0-9.]*)\.exe$", re.I)
+#: The macOS disk image, e.g. ``KherveSheet-0.1.610-arm64.dmg``.
+DMG_RE = re.compile(r"^KherveSheet-([0-9][0-9.]*)-(arm64|x86_64)\.dmg$", re.I)
 
 NETWORK_TIMEOUT = 15          # seconds, per request
 CHECK_INTERVAL = 24 * 3600    # don't re-check more often than daily
@@ -130,11 +137,22 @@ def _release_from_json(entry) -> "Release | None":
     # Prefer the exactly-named installer; fall back to any installer in
     # the release so a filename typo doesn't strand every client.
     assets = entry.get("assets") or []
-    wanted = f"Setup_KherveSheet_{version_text}.exe".lower()
+    if sys.platform == "darwin":
+        arch = _mac_arch()
+        wanted = f"KherveSheet-{version_text}-{arch}.dmg".lower()
+
+        def ours(name):
+            m = DMG_RE.match(name)
+            return m is not None and m.group(2).lower() == arch
+    else:
+        wanted = f"Setup_KherveSheet_{version_text}.exe".lower()
+
+        def ours(name):
+            return INSTALLER_RE.match(name) is not None
     chosen = None
     for asset in assets:
         name = str(asset.get("name") or "")
-        if not INSTALLER_RE.match(name):
+        if not ours(name):
             continue
         if name.lower() == wanted:
             chosen = asset
@@ -154,6 +172,36 @@ def _release_from_json(entry) -> "Release | None":
         asset_size=int(chosen.get("size") or 0),
         digest=str(chosen.get("digest") or ""),
     )
+
+
+def _mac_arch() -> str:
+    """``arm64`` or ``x86_64`` — the DMG flavour this machine needs.
+
+    ``platform.machine()`` reports ``x86_64`` under Rosetta, which is
+    also the build that is actually running, so it is the right answer.
+    """
+    import platform
+    return "arm64" if platform.machine().lower() in ("arm64", "aarch64") \
+        else "x86_64"
+
+
+def can_self_update() -> bool:
+    """True for an installed build this module knows how to replace."""
+    if not is_frozen():
+        return False
+    if sys.platform.startswith("win"):
+        return True
+    return sys.platform == "darwin" and mac_app_bundle() is not None
+
+
+def mac_app_bundle() -> "str | None":
+    """Path of the running ``KherveSheet.app``, or None."""
+    path = os.path.abspath(sys.executable)
+    while path and path != os.path.dirname(path):
+        if path.endswith(".app"):
+            return path
+        path = os.path.dirname(path)
+    return None
 
 
 def _request(url):
@@ -203,11 +251,12 @@ def purge_stale_downloads():
         return
     for name in names:
         path = os.path.join(update_cache_dir(), name)
-        m = INSTALLER_RE.match(name)
+        m = INSTALLER_RE.match(name) or DMG_RE.match(name)
         stale = (m is not None and version_tuple(m.group(1)) <= current)
         # The batch helper deletes itself, but a declined UAC prompt or a
         # crash can strand it (and its log) — those are never useful later.
-        stale = stale or name in ("apply_update.bat", "install.log")
+        stale = stale or name in ("apply_update.bat", "apply_update.sh",
+                                  "install.log")
         if not stale:
             continue
         try:
@@ -344,13 +393,60 @@ def _powershell_command(installer_path: str, exe: str) -> list:
             "-WindowStyle", "Hidden", "-EncodedCommand", encoded]
 
 
+_HELPER_SH = """#!/bin/sh
+# Wait for KherveSheet to exit, swap in the new bundle, relaunch.
+exec >"$CACHE/install.log" 2>&1
+i=0
+while kill -0 {pid} 2>/dev/null && [ $i -lt 240 ]; do sleep 0.5; i=$((i+1)); done
+MNT="$(mktemp -d /tmp/khervesheet-update.XXXXXX)"
+if hdiutil attach -nobrowse -readonly -noautoopen -mountpoint "$MNT" "$DMG"; then
+  if [ -d "$MNT/KherveSheet.app" ]; then
+    rm -rf "$APP.new"
+    if ditto "$MNT/KherveSheet.app" "$APP.new"; then
+      rm -rf "$APP.old"
+      mv "$APP" "$APP.old" && mv "$APP.new" "$APP" && rm -rf "$APP.old"
+      [ -d "$APP" ] || mv "$APP.old" "$APP"
+      xattr -dr com.apple.quarantine "$APP" 2>/dev/null
+    fi
+  fi
+  hdiutil detach -quiet "$MNT"
+fi
+rmdir "$MNT" 2>/dev/null
+open "$APP"
+rm -f "$0"
+"""
+
+
+def _launch_mac_helper(dmg_path: str) -> bool:
+    """macOS half of :func:`launch_installer`."""
+    app = mac_app_bundle()
+    if app is None or not os.access(os.path.dirname(app), os.W_OK):
+        return False
+    cache = update_cache_dir()
+    script = os.path.join(cache, "apply_update.sh")
+    try:
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write(_HELPER_SH.format(pid=os.getpid()))
+        os.chmod(script, 0o755)
+        env = dict(os.environ, CACHE=cache, APP=app,
+                   DMG=os.path.abspath(dmg_path))
+        subprocess.Popen(["/bin/sh", script], cwd=cache, env=env,
+                         close_fds=True, start_new_session=True,
+                         stdin=subprocess.DEVNULL)
+    except OSError:
+        return False
+    return True
+
+
 def launch_installer(installer_path: str) -> bool:
     """Spawn the detached helper that installs the update and restarts us.
 
-    Returns False when this isn't a Windows install we can update in
-    place.  The caller is expected to quit immediately afterwards — the
-    helper polls for this PID to disappear before touching any files.
+    Returns False when this isn't an install we can update in place.
+    The caller is expected to quit immediately afterwards — the helper
+    polls for this PID to disappear before touching any files.
     """
+    if sys.platform == "darwin" and os.path.isfile(installer_path):
+        return _launch_mac_helper(installer_path)
     if not sys.platform.startswith("win"):
         return False
     if not os.path.isfile(installer_path):
@@ -472,9 +568,9 @@ class UpdateManager(QObject):
         """Kick off the silent check, if one is warranted.
 
         Skipped entirely for source checkouts (there is no installed copy
-        to replace) and for non-Windows, where no installer is published.
+        to replace) and platforms with no published installer.
         """
-        if not (is_frozen() and sys.platform.startswith("win")):
+        if not can_self_update():
             return
         purge_stale_downloads()
         if not self.auto_check_enabled() or not self._due_for_check():
@@ -529,7 +625,7 @@ class UpdateManager(QObject):
                 rel.version_text:
             return
 
-        if not (is_frozen() and sys.platform.startswith("win")):
+        if not can_self_update():
             self._offer_manual_download(rel)
             return
 
@@ -537,7 +633,7 @@ class UpdateManager(QObject):
         self._start_download(rel)
 
     def _offer_manual_download(self, rel):
-        """Source checkout / non-Windows: point at the release page."""
+        """Source checkout / unsupported install: point at the release page."""
         self._window._status_msg("Ready")
         box = QMessageBox(self._window)
         box.setIcon(QMessageBox.Information)
@@ -545,9 +641,9 @@ class UpdateManager(QObject):
         box.setText(f"{APP_NAME} {rel.version_text} is available "
                     f"(you have {__version__}).")
         box.setInformativeText(
-            "This copy runs from source, so it can't be updated "
-            "automatically. Pull the latest commits, or download the "
-            "installer from the release page.")
+            "This copy can't update itself (it runs from source, or its "
+            "folder isn't writable). Download the installer from the "
+            "release page, or pull the latest commits.")
         open_btn = box.addButton("Open Release Page",
                                  QMessageBox.AcceptRole)
         box.addButton("Close", QMessageBox.RejectRole)
