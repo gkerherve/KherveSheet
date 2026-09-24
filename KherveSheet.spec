@@ -60,7 +60,10 @@ if _version_file.is_file():
 binaries = []
 # QtNetwork backs the MCP bridge and is only reached through a
 # lazy import, so name it explicitly rather than trust analysis.
-hiddenimports = ["khervesheet", "PyQt5.QtNetwork"]
+hiddenimports = ["khervesheet", "PyQt5.QtNetwork",
+                 # =PY cells import it at run time, which analysis can't
+                 # see; two shipped examples need it.
+                 "pandas"]
 
 # Packages whose data files / submodules PyInstaller's built-in hooks may
 # miss.  numpy / scipy / pandas / matplotlib / PyQt5 have good built-in
