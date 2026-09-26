@@ -19,6 +19,7 @@ from .core.compiler import CELLREF_SKIP, compile_formula, evaluate_cell
 from .core.functions import build_namespace, lower_names
 from .core.numbers import format_number as _format_number  # noqa: F401
 from .core.numbers import format_value as _format_value
+from .core.numbers import general_display
 from .core.refs import (  # noqa: F401 - re-exported for other modules
     XREF_PATTERN as _XREF_PATTERN,
     col_index_to_letter,
@@ -1583,7 +1584,7 @@ class SheetWidget(CellValues, QWidget):
             self._undo_stack.push(UnmergeCellsCmd(self, unmerged))
 
     def _apply_cell_number_format(self, text: str, row: int,
-                                   col: int) -> str:
+                                   col: int, exact=None) -> str:
         """Apply per-cell number format to *text*.
 
         When no explicit format is set, numeric values default to 2
@@ -1597,10 +1598,9 @@ class SheetWidget(CellValues, QWidget):
         # Default: display numbers with 2 decimal places.
         if not nf or nf == "General":
             try:
-                val = float(text)
-                if abs(val) >= 1e15:
-                    return f"{val:.2E}"
-                return f"{val:.2f}"
+                val = (float(exact) if isinstance(exact, (int, float))
+                       and not isinstance(exact, bool) else float(text))
+                return general_display(val)
             except (ValueError, TypeError):
                 return text
         return _format_value(text, nf)
@@ -1970,7 +1970,7 @@ class SheetWidget(CellValues, QWidget):
             display = str(result)
             # Apply per-cell number format to the computed result.
             display = self._apply_cell_number_format(
-                display, row, col)
+                display, row, col, exact=self._last_raw)
             self.table.blockSignals(True)
             if it is None:
                 it = QTableWidgetItem(display)
@@ -2001,7 +2001,7 @@ class SheetWidget(CellValues, QWidget):
                     pass
             # Apply per-cell number format.
             new_text = self._apply_cell_number_format(
-                new_text, row, col)
+                new_text, row, col, exact=typed_number)
             if it and it.text() != new_text:
                 self.table.blockSignals(True)
                 it.setText(new_text)
@@ -2149,7 +2149,8 @@ class SheetWidget(CellValues, QWidget):
                 result = str(self._evaluate_formula(formula, dr, dc, dec))
             # Apply per-cell number format (skip during solver).
             if decimals is None and not is_python_source(formula):
-                result = self._apply_cell_number_format(result, dr, dc)
+                result = self._apply_cell_number_format(
+                    result, dr, dc, exact=self._last_raw)
             self.table.blockSignals(True)
             it = self.table.item(dr, dc)
             if it is None:
@@ -3118,7 +3119,8 @@ class SheetWidget(CellValues, QWidget):
             result = self._evaluate_python(formula, r, c, dec)
         else:
             result = self._apply_cell_number_format(
-                str(self._evaluate_formula(formula, r, c, dec)), r, c)
+                str(self._evaluate_formula(formula, r, c, dec)), r, c,
+                exact=self._last_raw)
         self._set_cell_quiet(r, c, result)
         if not is_python_source(formula):
             self._remember_value(r, c, result, self._last_raw)

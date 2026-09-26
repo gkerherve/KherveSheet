@@ -25,7 +25,11 @@ import random
 import time
 from typing import Dict, Optional
 
-from PyQt5.QtCore import QObject, QTimer, QUrl, pyqtSignal
+from dataclasses import dataclass, field
+from typing import Callable
+
+from PyQt5.QtCore import QByteArray, QObject, QTimer, QUrl, pyqtSignal
+from PyQt5.QtNetwork import QNetworkRequest
 from PyQt5.QtGui import QFont
 from PyQt5.QtWebSockets import QWebSocket
 from PyQt5.QtNetwork import QAbstractSocket
@@ -38,7 +42,7 @@ from pycrdt import (
 )
 
 from ..python_engine import is_python_source
-from . import model
+from . import hocuspocus, model
 
 FLUSH_DELAY_MS = 200
 POLL_MS = 1500
@@ -46,6 +50,7 @@ HEARTBEAT_S = 15
 PEER_TIMEOUT_S = 45
 RECONNECT_MS = 3000
 NOT_RUN = "⟨Python — not run⟩"
+SAVE_MS = 30000
 
 PEER_COLORS = ["#d9480f", "#1971c2", "#2f9e44", "#9c36b5",
                "#e67700", "#0c8599", "#c2255c", "#5f3dc4"]
@@ -64,6 +69,19 @@ def split_link(link: str):
     return server, room
 
 
+@dataclass
+class KherveDocLink:
+    """A spreadsheet on a KherveDOC server, reached through its
+    collaboration server (Hocuspocus) with the user's session."""
+
+    ws_url: str                    # …/collaboration/ws/?room=<document id>
+    document: str                  # the document id (the room)
+    page_url: str                  # where people open it in a browser
+    headers: Dict[str, str] = field(default_factory=dict)  # Cookie, Origin
+    initial_update: Optional[bytes] = None   # content saved on the server
+    save: Optional[Callable[[bytes], None]] = None
+
+
 class LiveSession(QObject):
     """One workbook shared in one room."""
 
@@ -72,14 +90,19 @@ class LiveSession(QObject):
     ended = pyqtSignal(str)
 
     def __init__(self, window, server: str, room: str, user: str,
-                 publish_local: bool, parent=None):
+                 publish_local: bool, parent=None,
+                 kherve_doc: Optional[KherveDocLink] = None):
         super().__init__(parent or window)
         self.window = window
         self.server = server
         self.room = room
         self.user = user or "Someone"
         self.publish_local = publish_local
-        self.link = room_url(server, room)
+        self.kherve_doc = kherve_doc
+        self.link = kherve_doc.page_url if kherve_doc else room_url(server, room)
+        #: The server lets us read but not edit (KherveDOC viewers).
+        self.read_only = False
+        self._dirty = False
 
         self._wb = window._workbook
         self._sheets: Dict[str, object] = {}
@@ -89,6 +112,10 @@ class LiveSession(QObject):
         self._last_widths: Dict[str, Dict] = {}
 
         self.doc = Doc()
+        if kherve_doc and kherve_doc.initial_update:
+            # What the server saved: the room may be empty until someone
+            # brings it, as KherveDOC's browsers do.
+            self.doc.apply_update(kherve_doc.initial_update)
         self.ysheets = self.doc.get(model.SHEETS, type=Map)
         self.ycells = self.doc.get(model.CELLS, type=Map)
         self.yformats = self.doc.get(model.FORMATS, type=Map)
@@ -126,6 +153,8 @@ class LiveSession(QObject):
         self._reconnect_timer = QTimer(self, singleShot=True,
                                        interval=RECONNECT_MS)
         self._reconnect_timer.timeout.connect(self._open)
+        self._save_timer = QTimer(self, interval=SAVE_MS)
+        self._save_timer.timeout.connect(self.save)
 
         self.ws = QWebSocket()
         self.ws.setParent(self)
@@ -139,18 +168,50 @@ class LiveSession(QObject):
         self.status_changed.emit("Connecting…")
         self._open()
 
+    @staticmethod
+    def _socket_url(url: str) -> QUrl:
+        """*url* with "localhost" as 127.0.0.1: Qt tries IPv6 (::1) only,
+        which Docker/Colima port forwarding may refuse."""
+        qurl = QUrl(url)
+        if qurl.host() == "localhost":
+            qurl.setHost("127.0.0.1")
+        return qurl
+
     def _open(self):
-        if not self._stopped:
-            self.ws.open(QUrl(self.link))
+        if self._stopped:
+            return
+        if self.kherve_doc:
+            request = QNetworkRequest(self._socket_url(self.kherve_doc.ws_url))
+            for name, value in self.kherve_doc.headers.items():
+                request.setRawHeader(QByteArray(name.encode()),
+                                     QByteArray(value.encode()))
+            self.ws.open(request)
+        else:
+            self.ws.open(self._socket_url(self.link))
+
+    def save(self):
+        """Store the workbook on KherveDOC if this window changed it (the
+        collaboration server keeps nothing itself)."""
+        link = self.kherve_doc
+        if link and link.save and self._dirty and self._synced \
+                and not self.read_only:
+            self._dirty = False
+            try:
+                link.save(self.doc.get_update())
+            except Exception as exc:  # network down: try again later
+                self._dirty = True
+                self.status_changed.emit(f"Could not save to KherveDOC: {exc}")
 
     def stop(self, reason: str = "Stopped sharing"):
         if self._stopped:
             return
         if self._synced:
             self._flush_local()
+            self.save()
         self._stopped = True
         for timer in (self._flush_timer, self._poll_timer,
-                      self._apply_timer, self._reconnect_timer):
+                      self._apply_timer, self._reconnect_timer,
+                      self._save_timer):
             timer.stop()
         try:
             self.window._undo_stack.indexChanged.disconnect(
@@ -171,6 +232,11 @@ class LiveSession(QObject):
 
     def _on_connected(self):
         self.status_changed.emit("Synchronising…")
+        if self.kherve_doc:
+            # Hocuspocus first wants the (empty) token; it checks the user
+            # from the session cookie sent with the connection.
+            self.ws.sendBinaryMessage(
+                hocuspocus.auth_message(self.kherve_doc.document))
         self._send(create_sync_message(self.doc))
         self._update_presence(force=True)
 
@@ -191,6 +257,8 @@ class LiveSession(QObject):
     # ── Wire protocol ────────────────────────────────────────────────
     def _send(self, data: bytes):
         if self.ws.state() == QAbstractSocket.ConnectedState:
+            if self.kherve_doc:
+                data = hocuspocus.frame(self.kherve_doc.document, data)
             self.ws.sendBinaryMessage(data)
 
     def _send_awareness(self):
@@ -202,6 +270,10 @@ class LiveSession(QObject):
         data = bytes(message)
         if not data:
             return
+        if self.kherve_doc:
+            data = self._unwrap_hocuspocus(data)
+            if data is None:
+                return
         if data[0] == YMessageType.SYNC:
             self._remote = True
             try:
@@ -225,9 +297,34 @@ class LiveSession(QObject):
                 self._send_awareness()
             self._refresh_peers()
 
+    def _unwrap_hocuspocus(self, data: bytes) -> Optional[bytes]:
+        """A Hocuspocus message as a y-websocket one, or None if handled."""
+        try:
+            document, kind, rest = hocuspocus.parse(data)
+        except (IndexError, UnicodeDecodeError):
+            return None
+        if document != self.kherve_doc.document:
+            return None
+        if kind in (hocuspocus.SYNC, hocuspocus.SYNC_REPLY):
+            return bytes([YMessageType.SYNC]) + rest
+        if kind == hocuspocus.AWARENESS:
+            return bytes([YMessageType.AWARENESS]) + rest
+        if kind == hocuspocus.QUERY_AWARENESS:
+            self._send_awareness()
+        elif kind == hocuspocus.AUTH:
+            granted, scope = hocuspocus.parse_auth(rest)
+            if not granted:
+                self.stop("KherveDOC refused access to this spreadsheet"
+                          + (f" ({scope})" if scope else "") + ".")
+            else:
+                self.read_only = scope == "readonly"
+        return None
+
     def _on_doc_transaction(self, event):
         if not self._remote and not self._stopped:
-            self._send(create_update_message(event.update))
+            self._dirty = True
+            if not self.read_only:
+                self._send(create_update_message(event.update))
 
     def _map_observer(self, name):
         # pycrdt passes as many arguments as the callback accepts, so the
@@ -250,12 +347,21 @@ class LiveSession(QObject):
             self._load_from_doc()
         self.window._undo_stack.indexChanged.connect(self._schedule_flush)
         self._poll_timer.start()
-        self.status_changed.emit("Live")
+        if self.kherve_doc:
+            self._save_timer.start()
+            if self.publish_local:
+                self.save()   # a new spreadsheet: on the server at once
+        self.status_changed.emit("Live (view only)" if self.read_only
+                                 else "Live")
 
     def _load_from_doc(self):
         """Replace the (fresh) local workbook's sheets with the shared ones."""
         wb = self._wb
         placeholders = list(wb.all_sheets())
+        # Move the fresh workbook's own sheets out of the way first, so a
+        # shared "Sheet1" is not mistaken for the empty local one.
+        for i, sheet in enumerate(placeholders):
+            wb.tabs.setTabText(wb.tabs.indexOf(sheet), f"__local_{i}__")
         for name, ymap in ((model.SHEETS, self.ysheets),
                            (model.CELLS, self.ycells),
                            (model.FORMATS, self.yformats),
@@ -268,6 +374,8 @@ class LiveSession(QObject):
             if idx >= 0 and len(wb.all_sheets()) > 1:
                 wb.tabs.removeTab(idx)
                 sheet.deleteLater()
+        # Cross-sheet formulas read the shared sheets now.
+        wb.refresh_cross_sheet()
         wb.tabs.setCurrentIndex(0)
         self.window._wire_undo_to_sheets()
 
@@ -285,7 +393,7 @@ class LiveSession(QObject):
         self._refresh_peers()
 
     def _flush_local(self):
-        if self._busy or self._stopped or not self._synced:
+        if self._busy or self._stopped or not self._synced or self.read_only:
             return
         if self._wb is not self.window._workbook:
             return
@@ -367,6 +475,7 @@ class LiveSession(QObject):
             return
         if not self._confirm_python(pending[model.CELLS]):
             self._python_trusted = False
+        new_sheets = bool(pending[model.SHEETS])
         self._busy = True
         try:
             self._apply_sheets(pending[model.SHEETS])
@@ -376,6 +485,8 @@ class LiveSession(QObject):
         finally:
             self._busy = False
         self._refresh_peers()
+        if new_sheets:
+            self.peers_changed.emit(self._peers)   # cursors for new sheets
 
     def _confirm_python(self, cell_keys) -> bool:
         if self._python_trusted is not None:
@@ -441,10 +552,7 @@ class LiveSession(QObject):
         items.sort(key=lambda item: item[4].startswith("="))
         for sheet_id, sheet, row, col, source in items:
             self._apply_cell(sheet, row, col, source)
-            actual = sheet._cell_formulas.get((row, col))
-            if not actual:
-                item = sheet.table.item(row, col)
-                actual = item.text() if item is not None else ""
+            actual = model.cell_source(sheet, row, col)
             last = self._last_cells.setdefault(sheet_id, {})
             if actual:
                 last[(row, col)] = actual
@@ -503,8 +611,11 @@ class LiveSession(QObject):
                     fmt = CellFormat.from_dict(json.loads(raw))
                     sheet._cell_formats[(row, col)] = fmt
                     sheet._apply_format_to_item(item, fmt)
+                    # Remember it as this side writes it, so it is not
+                    # sent back merely because the JSON is laid out
+                    # differently (KherveCELL writes unsorted keys).
                     self._last_formats.setdefault(sheet_id, {})[
-                        (row, col)] = raw
+                        (row, col)] = model.encode_json(fmt.to_dict())
             finally:
                 table.blockSignals(False)
             touched.add(sheet)
@@ -541,6 +652,12 @@ class LiveSession(QObject):
             state["sheet"] = getattr(sheet, "_collab_id", None)
             if index.isValid():
                 state["cell"] = [index.row(), index.column()]
+                # The same, in the form KherveCELL (the web grid) reads.
+                state["kherveCell"] = {
+                    "sheetId": state["sheet"], "row": index.row(),
+                    "col": index.column(), "name": self.user,
+                    "color": self.color,
+                }
         now = time.monotonic()
         if (force or state != self.awareness.get_local_state()
                 or now - self._last_heartbeat > HEARTBEAT_S):
@@ -558,7 +675,18 @@ class LiveSession(QObject):
                 "lastUpdated", now_ms)
             if now_ms - seen > PEER_TIMEOUT_S * 1000:
                 continue
-            peers.append(dict(state))
+            peer = dict(state)
+            web = state.get("kherveCell")
+            if isinstance(web, dict):
+                # A KherveCELL (browser) user.
+                peer.setdefault("user", web.get("name") or "Someone")
+                peer.setdefault("color", web.get("color") or "#1971c2")
+                peer.setdefault("sheet", web.get("sheetId"))
+                if "row" in web and "col" in web:
+                    peer.setdefault("cell", [web["row"], web["col"]])
+            if "user" not in peer:
+                continue   # e.g. a text editor's cursor, not a sheet user
+            peers.append(peer)
         peers.sort(key=lambda peer: peer.get("user", ""))
         if peers != self._peers:
             self._peers = peers

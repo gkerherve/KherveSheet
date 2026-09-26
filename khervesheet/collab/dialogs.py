@@ -191,6 +191,9 @@ class LiveSharing(QWidget):
         self.window = window
         self.session = None
         self.server = None
+        self._account = None
+        self._overlays = {}
+        self._doc_title = ""
         self.label = QLabel("")
         self.label.setTextFormat(Qt.RichText)
         self.label.hide()
@@ -207,21 +210,34 @@ class LiveSharing(QWidget):
             menu.setIcon(icons.themed_icon("mdi.account-multiple"))
         except Exception:
             pass
-        self.share_act = menu.addAction("Share This Workbook…", self.share)
-        self.join_act = menu.addAction("Join Shared Workbook…", self.join)
+        self.kd_share_act = menu.addAction("Share on KherveDOC…",
+                                           self.share_on_kherve_doc)
+        self.kd_open_act = menu.addAction("Open from KherveDOC…",
+                                          self.open_from_kherve_doc)
         menu.addSeparator()
         self.invite_act = menu.addAction("Invite People…", self.invite)
         self.stop_act = menu.addAction("Stop Sharing", self.stop)
+        menu.addSeparator()
+        local = menu.addMenu("Without KherveDOC (same network)")
+        self.share_act = local.addAction("Share This Workbook…", self.share)
+        self.join_act = local.addAction("Join by Link…", self.join)
+        menu.addSeparator()
+        self.sign_out_act = menu.addAction("Sign Out of KherveDOC",
+                                           self.sign_out)
         menu.aboutToShow.connect(self._update_actions)
         self._update_actions()
         return menu
 
     def _update_actions(self):
         live = self.session is not None
-        self.share_act.setEnabled(not live)
-        self.join_act.setEnabled(not live)
+        for act in (self.share_act, self.join_act, self.kd_share_act,
+                    self.kd_open_act):
+            act.setEnabled(not live)
         self.invite_act.setEnabled(live)
         self.stop_act.setEnabled(live)
+        signed = bool(self._account and self._account.kd
+                      and self._account.kd.session)
+        self.sign_out_act.setEnabled(signed and not live)
 
     # ── Actions ──────────────────────────────────────────────────────
     def share(self):
@@ -252,8 +268,100 @@ class LiveSharing(QWidget):
         self._start(server, room, dialog.name.text().strip(),
                     publish_local=False)
 
+    # ── KherveDOC ────────────────────────────────────────────────────
+    @property
+    def account(self):
+        if self._account is None:
+            from .signin import KherveDocAccount
+            self._account = KherveDocAccount()
+        return self._account
+
+    def share_on_kherve_doc(self):
+        """Put the workbook on KherveDOC and edit it there, live."""
+        from .kherve_doc import KherveDocError
+        kd = self.account.ensure(self.window)
+        if kd is None:
+            return
+        path = getattr(self.window, "_current_file", None)
+        import os
+        title = (os.path.splitext(os.path.basename(path))[0] if path
+                 else "Untitled spreadsheet")
+        try:
+            document = kd.create_spreadsheet(title)["id"]
+        except KherveDocError as exc:
+            QMessageBox.warning(self.window, "Share on KherveDOC", str(exc))
+            return
+        self._start_kherve_doc(kd, document, title, publish_local=True)
+        self._show_invite_when_live = True
+
+    def open_from_kherve_doc(self, document: Optional[str] = None):
+        """Open a spreadsheet from KherveDOC and edit it live."""
+        from .kherve_doc import KherveDocError
+        from .kherve_doc_ui import OpenDialog
+        kd = self.account.ensure(self.window)
+        if kd is None:
+            return
+        title = ""
+        if document is None:
+            dialog = OpenDialog(kd, self.window)
+            if dialog.exec_() != QDialog.Accepted:
+                return
+            document, title = dialog.document, dialog.title
+        try:
+            info = kd.document(document)
+            if info.get("kind") not in (None, "sheet"):
+                QMessageBox.information(
+                    self.window, "Open from KherveDOC",
+                    "That is a text document; open it in KherveDOC.")
+                return
+            title = title or info.get("title") or "Untitled spreadsheet"
+        except KherveDocError as exc:
+            QMessageBox.warning(self.window, "Open from KherveDOC", str(exc))
+            return
+        before = self.window._workbook
+        self.window._new_workbook()
+        if self.window._workbook is before:
+            return  # the user cancelled "save changes?"
+        self._start_kherve_doc(kd, document, title, publish_local=False)
+
+    def sign_out(self):
+        self.account.sign_out()
+        if hasattr(self.window, "_status_msg"):
+            self.window._status_msg("Signed out of KherveDOC", 4000)
+
+    def _start_kherve_doc(self, kd, document, title, publish_local):
+        from .kherve_doc import KherveDocError
+        from .session import KherveDocLink, LiveSession
+        try:
+            initial = None if publish_local else kd.content(document)
+        except KherveDocError as exc:
+            QMessageBox.warning(self.window, "KherveDOC", str(exc))
+            return
+        link = KherveDocLink(
+            ws_url=kd.ws_url(document), document=document,
+            page_url=kd.page_url(document), headers=kd.ws_headers(),
+            initial_update=initial,
+            save=lambda update: kd.save_content(document, update))
+        self._show_invite_when_live = False
+        self._doc_title = title
+        session = LiveSession(self.window, kd.server, document,
+                              self.account.name or "KherveSheet user",
+                              publish_local=publish_local, kherve_doc=link)
+        session.status_changed.connect(self._on_status)
+        session.peers_changed.connect(self._on_peers)
+        session.ended.connect(self._on_ended)
+        self.session = session
+        session.start()
+
     def invite(self):
-        if self.session is not None:
+        if self.session is None:
+            return
+        if self.session.kherve_doc is not None:
+            from .kherve_doc_ui import SharedDialog
+            SharedDialog(self.account.kd, self.session.kherve_doc.document,
+                         self._doc_title, self.session.read_only,
+                         self.window).exec_()
+        else:
             InviteDialog(self.session.link, self.server is not None,
                          self.window).exec_()
 
@@ -296,13 +404,44 @@ class LiveSharing(QWidget):
         session.start()
 
     def _on_status(self, text):
-        if text == "Live" and self._show_invite_when_live:
+        if text.startswith("Live") and self.session is not None:
+            # The shared sheets exist now: show who is where.
+            self._show_cursors(self.session._peers)
+            tabs = self.window._workbook.tabs
+            try:
+                tabs.currentChanged.disconnect(self._refresh_cursors)
+            except TypeError:
+                pass
+            tabs.currentChanged.connect(self._refresh_cursors)
+        if text.startswith("Live") and self._show_invite_when_live:
             self._show_invite_when_live = False
             self.invite()
         self._render(text)
 
-    def _on_peers(self, _peers):
+    def _on_peers(self, peers):
         self._render()
+        self._show_cursors(peers)
+
+    def _refresh_cursors(self, *_):
+        if self.session is not None:
+            self._show_cursors(self.session._peers)
+
+    def _show_cursors(self, peers):
+        """Collaborators' cells on each sheet's grid."""
+        from .kherve_doc_ui import PresenceOverlay
+        wb = self.window._workbook
+        sheets = wb.all_sheets()
+        alive = {id(sheet) for sheet in sheets}
+        for key in [k for k in self._overlays if k not in alive]:
+            self._overlays.pop(key)   # its sheet is gone
+        for sheet in sheets:
+            overlay = self._overlays.get(id(sheet))
+            if overlay is None or overlay.sheet is not sheet:
+                overlay = PresenceOverlay(sheet)
+                self._overlays[id(sheet)] = overlay
+            sheet_id = getattr(sheet, "_collab_id", None)
+            overlay.set_peers([p for p in peers
+                               if sheet_id and p.get("sheet") == sheet_id])
 
     def _render(self, status: Optional[str] = None):
         session = self.session
@@ -312,7 +451,7 @@ class LiveSharing(QWidget):
         if status is not None:
             self._status = status
         status = getattr(self, "_status", "")
-        if status != "Live":
+        if not status.startswith("Live"):
             self.label.setText(f"<span style='color:#e67700'>●</span> "
                                f"{status}")
         else:
@@ -321,7 +460,7 @@ class LiveSharing(QWidget):
                 f"<span style='color:{p.get('color', '#1971c2')}'>"
                 f"{p.get('user', '?')}</span>" for p in peers)
             self.label.setText(
-                "<span style='color:#2f9e44'>●</span> Live"
+                f"<span style='color:#2f9e44'>●</span> {status}"
                 + (f" — {names}" if names else " — waiting for others"))
             self.label.setToolTip("\n".join(
                 f"{p.get('user', '?')}: {session.peer_location(p)}"
@@ -329,6 +468,7 @@ class LiveSharing(QWidget):
         self.label.show()
 
     def _on_ended(self, reason):
+        self._show_cursors([])
         self.session = None
         self.label.hide()
         self._update_actions()

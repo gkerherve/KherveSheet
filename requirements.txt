@@ -16,3 +16,4 @@ certifi>=2023.7  # CA bundle for =PY network calls on hosts without one
 pycrdt>=0.12
 pycrdt-websocket>=0.16
 hypercorn>=0.17
+PyQtWebEngine>=5.15  # optional: signing in to KherveDOC

@@ -28,7 +28,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from .compiler import compile_formula, evaluate_cell
 from .functions import build_namespace, lower_names
-from .numbers import format_number, format_value
+from .numbers import format_number, format_value, general_display
 from .refs import XREF_PATTERN, parse_cell_refs
 from .values import CellValues
 
@@ -139,7 +139,8 @@ class Sheet(CellValues):
             self._cell_formulas[key] = text
             self._register_deps(row, col, text)
             display = self._apply_cell_number_format(
-                str(self._evaluate_formula(text, row, col, dec)), row, col)
+                str(self._evaluate_formula(text, row, col, dec)), row, col,
+                exact=self._last_raw)
             self._write(row, col, display)
             self._remember_value(row, col, display, self._last_raw)
             return
@@ -153,7 +154,8 @@ class Sheet(CellValues):
                 text = str(format_number(typed_number, dec))
             except ValueError:
                 pass
-        display = self._apply_cell_number_format(text, row, col)
+        display = self._apply_cell_number_format(text, row, col,
+                                                 exact=typed_number)
         self._write(row, col, display)
         self._remember_value(row, col, display, typed_number)
 
@@ -187,7 +189,7 @@ class Sheet(CellValues):
             nf = self.column_formats.get(col, self.default_format)
         return _DECIMALS.get(nf, 3)
 
-    def _apply_cell_number_format(self, text, row, col):
+    def _apply_cell_number_format(self, text, row, col, exact=None):
         """Numbers show two decimals unless the cell or column says
         otherwise (as on the desktop)."""
         nf = self._number_format(row, col)
@@ -195,10 +197,9 @@ class Sheet(CellValues):
             return text
         if not nf or nf == "General":
             try:
-                val = float(text)
-                if abs(val) >= 1e15:
-                    return f"{val:.2E}"
-                return f"{val:.2f}"
+                val = (float(exact) if isinstance(exact, (int, float))
+                       and not isinstance(exact, bool) else float(text))
+                return general_display(val)
             except (ValueError, TypeError):
                 return text
         return format_value(text, nf)
@@ -292,7 +293,8 @@ class Sheet(CellValues):
             return
         dec = self._cell_decimals(r, c)
         result = self._apply_cell_number_format(
-            str(self._evaluate_formula(formula, r, c, dec)), r, c)
+            str(self._evaluate_formula(formula, r, c, dec)), r, c,
+            exact=self._last_raw)
         self._write(r, c, result)
         self._remember_value(r, c, result, self._last_raw)
 

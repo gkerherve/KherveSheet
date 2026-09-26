@@ -67,17 +67,36 @@ def encode_json(value) -> str:
 
 # ── Snapshots of a SheetWidget (duck-typed, so tests can use fakes) ──
 
+def _number_source(value: float) -> str:
+    """A number as typed: 10 not 10.0, full precision."""
+    if value.is_integer() and abs(value) < 1e15:
+        return str(int(value))
+    return repr(value)
+
+
+def cell_source(sheet, row: int, col: int) -> str:
+    """One cell's source: its formula, else its value ("" when empty).
+
+    A number is shared at full precision (the sheet remembers the exact
+    value behind its rounded text), not as the 2-decimal text on screen."""
+    source = sheet._cell_formulas.get((row, col))
+    if source:
+        return source
+    item = sheet.table.item(row, col)
+    text = item.text() if item is not None else ""
+    known = getattr(sheet, "_precise", {}).get((row, col))
+    if text and known is not None and known[0] == text:
+        return _number_source(known[1])
+    return text
+
+
 def cell_sources(sheet) -> Dict[Cell, str]:
-    """Every non-empty cell's source: its formula, else its text."""
+    """Every non-empty cell's source (see cell_source)."""
     table = sheet.table
-    formulas = sheet._cell_formulas
     out: Dict[Cell, str] = {}
     for row in range(table.rowCount()):
         for col in range(table.columnCount()):
-            source = formulas.get((row, col))
-            if not source:
-                item = table.item(row, col)
-                source = item.text() if item is not None else ""
+            source = cell_source(sheet, row, col)
             if source:
                 out[(row, col)] = source
     return out

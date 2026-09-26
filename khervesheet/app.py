@@ -802,6 +802,13 @@ def main():
         except Exception:
             pass
 
+    # Signing in to KherveDOC shows its web page; Qt's web view must be
+    # loaded before the application object exists. It is optional.
+    try:
+        QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
+        import PyQt5.QtWebEngineWidgets  # noqa: F401
+    except ImportError:
+        pass
     app = QApplication(sys.argv)
     # Install before anything slow happens — a document double-clicked to
     # launch the app fires its event during startup and is lost otherwise.

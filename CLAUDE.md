@@ -81,6 +81,19 @@ into a new module and import.
     - `server.py` — relay (`python -m khervesheet.collab.server`), SQLite-persisted
       rooms; `BackgroundServer` hosts it in-app on a thread.
     - `dialogs.py` — Share/Join/Invite dialogs and the status-bar indicator.
+    - **KherveDOC sharing** (the default): a shared workbook is a KherveDOC
+      document of kind "sheet"; KherveDOC keeps it, controls access and relays edits.
+      - `kherve_doc.py` — REST client (session cookie `docs_sessionid`, CSRF
+        `csrftoken` + `X-CSRFToken`, Origin = the KherveDOC address; dev API on :8071).
+      - `signin.py` — sign-in in a private QWebEngine window; session kept in QSettings.
+      - `hocuspocus.py` — KherveDOC's collaboration protocol: varString(document)
+        + y-websocket message; an empty auth token first. `LiveSession(kherve_doc=…)`
+        uses it, loads the saved content first and PATCHes content back (the server
+        keeps nothing); `ws://localhost` is dialled as 127.0.0.1 (Qt + Colima IPv6).
+      - `kherve_doc_ui.py` — collaborators' cursors on the grid (box + name, header
+        tint), the Shared dialog (invite by e-mail) and Open from KherveDOC.
+      - Presence is published as `kherveCell: {sheetId,row,col,name,color}`, the
+        field KherveCELL (web) uses, so desktop and browser see each other.
     - Not yet synced: merges, row heights, charts/images/shapes, notes, checkboxes;
       row/column insert and sort resend cells by position.
   - `mcp_server.py`  — stdio MCP server an external host (Claude Desktop,
@@ -216,5 +229,6 @@ GPL-3.0. New source files must carry the short GPL notice at the top.
 ## Known differences from Excel (still)
 
 - A TRUE/FALSE cell reads as 1/0 (Excel keeps a boolean; shows TRUE).
-- Numbers show 2 decimals by default; very large ones as 1.00E+20.
+- Numbers show 2 decimals by default (rounded once from the exact value, halves
+  away from zero: 0.125 → 0.13); very large ones as 1.00E+20.
 - IRR/NPV-style functions take separate numbers as well as ranges.

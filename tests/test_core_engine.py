@@ -136,6 +136,15 @@ def test_formulas_read_full_precision_not_the_rounded_text():
     assert s.text(0, 1) == "1.50"
 
 
+def test_numbers_show_two_decimals_rounded_once():
+    s = Workbook().add_sheet("S")
+    for row, (typed, shown) in enumerate([
+            ("1.23456", "1.23"), ("0.125", "0.13"), ("=1/8", "0.13"),
+            ("2.675", "2.68"), ("-0.125", "-0.13"), ("1e20", "1.00E+20")]):
+        s.set_cell(row, 0, typed)
+        assert s.text(row, 0) == shown, typed
+
+
 def test_python_cells_need_the_marker_alone():
     s = Workbook().add_sheet("S")
     s.set_cell(0, 0, "=PYTHAGORAS(3,4)")
@@ -192,6 +201,8 @@ SCRIPT = [
     ("Data", 0, 3, "=1/3"), ("Data", 1, 3, "=D1*3"), ("Data", 2, 3, "0.123456"),
     ("Data", 3, 3, "=D3*1000"), ("Data", 4, 3, "=IF(D2=1,\"exact\",\"rounded\")"),
     ("Data", 5, 3, "=B1&\"!\""), ("Data", 6, 3, "=IFERROR(B1*2,\"text\")"),
+    # Shown numbers are rounded once, halves away from zero
+    ("Data", 7, 3, "1.23456"), ("Data", 8, 3, "=1/8"), ("Data", 9, 3, "2.675"),
 ]
 
 

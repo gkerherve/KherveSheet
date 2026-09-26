@@ -8,6 +8,18 @@ the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 """
 
+def general_display(value: float) -> str:
+    """A number as a cell shows it in the General format: two decimals,
+    rounded once from the exact value and halves away from zero, as Excel
+    does (1.23456 → 1.23, 0.125 → 0.13); huge numbers as 1.00E+20."""
+    from decimal import ROUND_HALF_UP, Decimal
+
+    if abs(value) >= 1e15:
+        return f"{value:.2E}"
+    return str(Decimal(repr(float(value))).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
 def format_number(value, decimals=3):
     """Format a numeric result for cell display.
 
