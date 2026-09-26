@@ -300,7 +300,10 @@ def plot_pie(ax, values, labels, pie_config, plot_type="Pie",
 #    "x": "Sheet1!A2:A20" | null,
 #    "series": [{"ref": "B2:B20", "name": "Sales", "color": "#1f77b4"}],
 #    "legend": true, "grid": false, "logX": false, "logY": false,
-#    "width": 480, "height": 300}
+#    "width": 480, "height": 300,
+#    "trendlines": [{"series": 0, "model": "Linear", "polyOrder": 2,
+#                    "maPeriod": 2, "color": "#d62728", "showEquation": true,
+#                    "showR2": true, "forward": 0, "backward": 0}]}
 #
 # The caller reads the ranges; render_svg only sees their values.
 
@@ -384,10 +387,12 @@ def _message(ax, text):
             transform=ax.transAxes, fontsize=10, color="#666666")
 
 
-def draw_chart(fig, spec: dict, read: Callable[[str], Sequence]):
+def draw_chart(fig, spec: dict, read: Callable[[str], Sequence],
+               fits: Optional[list] = None):
     """Draw the chart *spec* on the matplotlib figure *fig*.
 
-    *read(ref)* returns the values of a range, row by row (a list)."""
+    *read(ref)* returns the values of a range, row by row (a list). The
+    result of each trendline's fit is appended to *fits*."""
     kind = spec.get("type") or "Line"
     series = [s for s in spec.get("series") or [] if s.get("ref")]
     x_ref = spec.get("x") or None
@@ -449,6 +454,7 @@ def draw_chart(fig, spec: dict, read: Callable[[str], Sequence]):
     else:
         labels = None
         bars = kind == "Bar"
+        points = {}
         width = 0.8 / max(1, len(columns))
         for i, ((s, values), name, color) in enumerate(
                 zip(columns, names, colors)):
@@ -457,6 +463,7 @@ def draw_chart(fig, spec: dict, read: Callable[[str], Sequence]):
                 continue
             if lab is not None:
                 labels = labels or lab
+            points[i] = (x, y)
             if bars:
                 # Side by side: numeric X keeps its spacing.
                 step = 1.0
@@ -469,6 +476,9 @@ def draw_chart(fig, spec: dict, read: Callable[[str], Sequence]):
                 artist = plot_one(ax, x, y, name, kind)
                 _color(artist, color)
             drawn = True
+        results = _trendlines(ax, spec, points, colors)
+        if fits is not None:
+            fits.extend(results)
         if labels == "TIME":
             _time_x(ax)
         elif labels:
@@ -496,11 +506,81 @@ def draw_chart(fig, spec: dict, read: Callable[[str], Sequence]):
             ax.grid(True, alpha=0.4)
     if spec.get("title"):
         ax.set_title(spec["title"])
-    legend = spec.get("legend", len(series) > 1)
+    legend = spec.get("legend", len(series) > 1 or bool(
+        spec.get("trendlines")))
     if legend and kind not in PIE_TYPES and kind not in (
             "Heatmap", "3D Surface", "Box"):
         ax.legend(loc="best", fontsize=8)
     return ax
+
+
+def _clean(value):
+    """A number for JSON (NaN and infinities become None)."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def _trendlines(ax, spec: dict, points: dict, colors: List[str]) -> list:
+    """Fit and draw the spec's trendlines; returns what each fit found."""
+    from .fitting import MOVING_AVERAGE_KEY, fit_series
+
+    results = []
+    notes = []
+    # Default colours: red, purple, brown… but never the series' own.
+    spare = [c for c in DEFAULT_COLORS[3:] + DEFAULT_COLORS[:3]
+             if c not in colors] or DEFAULT_COLORS
+    for k, t in enumerate(spec.get("trendlines") or []):
+        index = int(t.get("series", 0) or 0)
+        model = t.get("model") or "Linear"
+        if index not in points:
+            results.append({"error": "That series has no data."})
+            continue
+        x, y = points[index]
+        fit = fit_series(x, y, model,
+                         poly_order=int(t.get("polyOrder") or 2),
+                         ma_period=int(t.get("maPeriod") or 2))
+        if "error" in fit:
+            results.append({"error": fit["error"]})
+            continue
+        color = t.get("color") or spare[k % len(spare)]
+        if model == MOVING_AVERAGE_KEY:
+            period = int(t.get("maPeriod") or 2)
+            xs = x[period - 1:]
+            ys = np.convolve(y, np.ones(period) / period, mode="valid")
+        else:
+            lo = float(np.min(x)) - float(t.get("backward") or 0)
+            hi = float(np.max(x)) + float(t.get("forward") or 0)
+            xs = np.linspace(lo, hi, 300)
+            with np.errstate(all="ignore"):
+                ys = np.asarray(fit["predict"](xs), dtype=float)
+        name = t.get("name") or (
+            f"{model} ({(spec['series'][index].get('name') or 'series ' + str(index + 1))})")
+        ax.plot(xs, ys, linestyle=t.get("linestyle") or "--",
+                linewidth=float(t.get("linewidth") or 1.5), color=color,
+                label=name)
+        gof = fit.get("gof", {})
+        if t.get("showEquation") and fit.get("equation"):
+            notes.append((fit["equation"], color))
+        if t.get("showR2") and _clean(gof.get("R²")) is not None:
+            notes.append((f"R² = {gof['R²']:.4f}", color))
+        results.append({
+            "model": fit.get("model", model),
+            "equation": fit.get("equation", ""),
+            "params": {k: _clean(v) for k, v in fit["params"].items()},
+            "errors": {k: _clean(v) for k, v in fit["errors"].items()},
+            "gof": {k: _clean(v) for k, v in gof.items()},
+        })
+    y_pos = 0.95
+    for text, color in notes:
+        ax.text(0.03, y_pos, text, transform=ax.transAxes, fontsize=8,
+                color=color, va="top",
+                bbox=dict(boxstyle="round,pad=0.25", facecolor="white",
+                          edgecolor=color, alpha=0.85))
+        y_pos -= 0.09
+    return results
 
 
 def _color(artist, color):
@@ -518,6 +598,12 @@ def _color(artist, color):
 def render_svg(spec: dict, read: Callable[[str], Sequence],
                dpi: int = 96) -> str:
     """The chart *spec* as an SVG image (text kept as text)."""
+    return render_chart(spec, read, dpi)["svg"]
+
+
+def render_chart(spec: dict, read: Callable[[str], Sequence],
+                 dpi: int = 96) -> dict:
+    """{"svg": the chart as SVG, "fits": each trendline's fit}."""
     import matplotlib
     matplotlib.rcParams["svg.fonttype"] = "none"
     from matplotlib.figure import Figure
@@ -526,11 +612,12 @@ def render_svg(spec: dict, read: Callable[[str], Sequence],
     height = max(120, int(spec.get("height") or 300))
     fig = Figure(figsize=(width / dpi, height / dpi), dpi=dpi)
     fig.patch.set_facecolor("white")
-    draw_chart(fig, spec, read)
+    fits: list = []
+    draw_chart(fig, spec, read, fits)
     try:
         fig.tight_layout()
     except Exception:
         pass
     out = io.StringIO()
     fig.savefig(out, format="svg", facecolor="white")
-    return out.getvalue()
+    return {"svg": out.getvalue(), "fits": fits}

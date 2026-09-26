@@ -70,3 +70,29 @@ def test_size_follows_spec(wb):
     svg = render_svg({"series": [{"ref": "B2:B5"}], "width": 600,
                       "height": 240}, wb.range_values)
     assert 'width="450pt"' in svg and 'height="180pt"' in svg
+
+
+def test_trendlines_fit_and_report(wb):
+    from khervesheet.core.charts import render_chart
+    sheet = wb.sheet_by_name("Sheet1")
+    for r in range(10):
+        sheet.set_cell(20 + r, 0, str(r))
+        sheet.set_cell(20 + r, 1, str(2 * r * r - 3 * r + 1))
+    out = render_chart({
+        "type": "Scatter", "x": "A21:A30",
+        "series": [{"ref": "B21:B30", "name": "Data"}],
+        "trendlines": [
+            {"series": 0, "model": "Polynomial", "polyOrder": 2,
+             "showEquation": True, "showR2": True},
+            {"series": 0, "model": "Linear"},
+            {"series": 0, "model": "Moving Average", "maPeriod": 3},
+            {"series": 3, "model": "Linear"},
+        ]}, wb.range_values)
+    poly, line, ma, missing = out["fits"]
+    assert poly["gof"]["R²"] == pytest.approx(1.0)
+    assert poly["params"]["a0"] == pytest.approx(2)
+    assert "− 3·x" in poly["equation"]
+    assert poly["equation"] in out["svg"] and "R² = 1.0000" in out["svg"]
+    assert 0.85 < line["gof"]["R²"] < 0.95
+    assert ma["model"] == "Moving Average"
+    assert "error" in missing
