@@ -33,6 +33,20 @@ from matplotlib.backends.backend_qt5agg import (
 from matplotlib.figure import Figure
 
 
+
+def set_draggable(legend):
+    """``legend.set_draggable(True)``, surviving a matplotlib 3.8 race.
+
+    A weakref callback fired by garbage collection in the middle of
+    ``CallbackRegistry.connect`` can delete the very signal slot being
+    connected, raising ``KeyError: 'pick_event'``. It is transient, so
+    a retry succeeds.
+    """
+    try:
+        legend.set_draggable(True)
+    except KeyError:
+        legend.set_draggable(True)
+
 class _OpaqueCanvas(FigureCanvas):
     """FigureCanvas that paints a solid white background first so that
     the grid cells underneath never bleed through."""
@@ -1319,7 +1333,7 @@ class EmbeddedChart(QWidget):
                 kw["title"] = title
             leg = chart._install_legend(ax, **kw)
             if leg:
-                leg.set_draggable(True)
+                set_draggable(leg)
                 lc = lp.get("label_color", "#000000")
                 for t in leg.get_texts():
                     t.set_color(lc)
@@ -1589,7 +1603,7 @@ class EmbeddedChart(QWidget):
                 kw["title"] = title
             leg = chart._install_legend(ax, **kw)
             if leg:
-                leg.set_draggable(True)
+                set_draggable(leg)
                 lc = lp.get("label_color", "#000000")
                 for t in leg.get_texts():
                     t.set_color(lc)
@@ -1758,7 +1772,7 @@ class EmbeddedChart(QWidget):
             }
             leg = self._install_legend(ax, **kw)
             if leg:
-                leg.set_draggable(True)
+                set_draggable(leg)
             self._legend_props = dict(lp)
 
         # Apply visual properties to existing series.
@@ -3080,7 +3094,7 @@ class EmbeddedChart(QWidget):
             kw.setdefault("fontsize", 8)
         leg = ax.legend(handles, labels, **kw)
         if leg:
-            leg.set_draggable(True)
+            set_draggable(leg)
         return leg
 
     # ── Event filter on canvas ─────────────────────────────────────
@@ -3410,7 +3424,7 @@ class _ChartWindow(QDialog):
                 ax, s["x"], s["y"], s["label"], s["plot_type"])
         leg = ax.legend(loc="best", framealpha=0.8, fontsize=8)
         if leg:
-            leg.set_draggable(True)
+            set_draggable(leg)
 
         toolbar = NavigationToolbar(canvas, self)
         toolbar.setIconSize(QSize(18, 18))
@@ -4818,7 +4832,7 @@ class LegendEditorDialog(QDialog):
             title=self._title_edit.text() or None,
         )
         if leg:
-            leg.set_draggable(True)
+            set_draggable(leg)
             # Apply label colour.
             for t in leg.get_texts():
                 t.set_color(self._label_color)

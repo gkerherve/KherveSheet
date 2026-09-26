@@ -78,8 +78,11 @@ into a new module and import.
   - `icons.py`      — qtawesome icon factory (themed MDI + custom QPainter plot glyphs).
   - `updater.py`    — silent auto-updater: polls the `Kherve-Downloads`
     releases API (tag prefix `khervesheet-v`), downloads and checksums the
-    Inno installer in the background, prompts to restart, hands over to a
-    detached batch helper. Windows + frozen builds only.
+    Inno installer (Windows) or the per-arch DMG (macOS) in the background,
+    prompts to restart, hands over to a detached batch / sh helper.
+    Frozen builds only.
+  - `splash.py`     — painted startup splash (green, app mark, fitted peak)
+    with the step/progress bar `main()` drives.
   - `git_backend.py` — per-document Git repo: auto-commit, push, pull, history, branches (pygit2).
   - `history_dialog.py` — `HistoryDialog` commit browser with DAG graph, diff view, restore.
   - `collab/` — live co-editing (File ▸ Live Sharing), pycrdt/Yjs over WebSocket:

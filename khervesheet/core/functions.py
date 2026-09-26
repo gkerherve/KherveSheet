@@ -2144,11 +2144,22 @@ def build_namespace(host):
         # Dynamic reference shifting is not supported; stub.
         return ref
 
+    def _ROUND(x, n=0):
+        # Excel rounds halves away from zero; Python's round() rounds
+        # them to even (ROUND(2.5,0) would give 2).
+        from decimal import ROUND_HALF_UP, Decimal
+        q = Decimal(1).scaleb(-int(n))
+        return float(Decimal(repr(float(x))).quantize(
+            q, rounding=ROUND_HALF_UP))
+
+    def _INT(x):
+        return math.floor(x)    # Excel INT rounds down: -2.5 -> -3
+
     ns = {"__builtins__": {}, "math": math, "np": np,
           "abs": abs, "round": round, "int": int, "float": float,
           "sum": _SUM, "min": _MINF, "max": _MAXF, "len": len,
           "mean": _mean, "avg": _mean,
-          "ABS": abs, "ROUND": round, "INT": int, "FLOAT": float,
+          "ABS": abs, "ROUND": _ROUND, "INT": _INT, "FLOAT": float,
           "SUM": _SUM, "MIN": _MINF, "MAX": _MAXF,
           "MEAN": _mean, "AVG": _mean, "AVERAGE": _mean,
           "COUNT": _COUNT, "COUNTA": _COUNTA,

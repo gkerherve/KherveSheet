@@ -115,7 +115,7 @@ def build() -> str:
 
     # Row 1: A2 label points at the =PY program in B2; subtitle sits to
     # the right (C2:F2) so it never overlaps the B2 code cell.
-    s.set(1, 0, "=PY  ->")
+    s.set(1, 0, "Python ->")   # not "=PY ...": that would run as code
     s.fmt(1, 0, bold=True, align="right")
     s.set(1, 2, "An STM-like intensity matrix written to B10")
     s.fmt(1, 2, italic=True, font_color="#555555")

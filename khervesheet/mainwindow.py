@@ -977,14 +977,27 @@ class MainWindow(QMainWindow):
             return True
         return False
 
+    def _replace_workbook(self, wb):
+        """Make *wb* the document, retiring the old one's =PY loops.
+
+        The old workbook is only deleted once control is back in the
+        event loop; until then a running simulation would keep ticking
+        (and redrawing figures) behind the new document.
+        """
+        old = getattr(self, "_workbook", None)
+        if old is not None:
+            for sheet in old.all_sheets():
+                sheet._stop_py_loops()
+        self.setCentralWidget(wb)
+        self._workbook = wb
+
     def _new_workbook(self):
         if not self._maybe_save_changes():
             return
         self._current_file = None
         # Reset workbook
         wb = WorkbookWidget()
-        self.setCentralWidget(wb)
-        self._workbook = wb
+        self._replace_workbook(wb)
         self._wire_undo_to_sheets()
         self._workbook.tabs.currentChanged.connect(
             lambda: self._wire_undo_to_sheets())
@@ -1950,6 +1963,11 @@ class MainWindow(QMainWindow):
         ex_dir = self._examples_dir()
         if ex_dir and os.path.abspath(path).startswith(os.path.abspath(ex_dir)):
             return True
+        # A tool call (MCP / AI chat) must never block on a modal the
+        # user may not be watching: leave the cells unrun and say so.
+        if getattr(self, "_headless_open", False):
+            self._python_left_unrun = True
+            return False
         from PyQt5.QtWidgets import QMessageBox
         reply = QMessageBox.question(
             self, "Python in workbook",
@@ -2422,8 +2440,7 @@ class MainWindow(QMainWindow):
                             sheet._fit_custom = dict(cfg["custom"])
 
                 wb.tabs.setCurrentIndex(0)
-                self.setCentralWidget(wb)
-                self._workbook = wb
+                self._replace_workbook(wb)
                 self._wire_undo_to_sheets()
                 self._workbook.tabs.currentChanged.connect(
                     lambda: self._wire_undo_to_sheets())
@@ -2441,8 +2458,14 @@ class MainWindow(QMainWindow):
                     sheet._charts = []
                 viewport = sheet.table.viewport()
                 for cd in chart_dicts:
-                    chart = EmbeddedChart.from_dict(
-                        cd, sheet, viewport)
+                    # One bad chart must not cost the rest of the file.
+                    try:
+                        chart = EmbeddedChart.from_dict(
+                            cd, sheet, viewport)
+                    except Exception:
+                        import traceback
+                        traceback.print_exc()
+                        continue
                     sheet._charts.append(chart)
                 del sheet._deferred_charts
 

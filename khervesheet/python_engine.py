@@ -408,12 +408,16 @@ class PythonRuntime:
 
         deadline = time.monotonic() + timeout
         expired = False
+        # Set when fn() returns, so the watchdog exits at once instead of
+        # sleeping out the full timeout — a live simulation re-running
+        # its cells would otherwise pile up hundreds of idle threads.
+        done = threading.Event()
 
         def _watchdog():
             nonlocal expired
             remaining = deadline - time.monotonic()
-            if remaining > 0:
-                threading.Event().wait(remaining)
+            if remaining > 0 and done.wait(remaining):
+                return
             expired = True
 
         def _trace(frame, event, arg):
@@ -431,7 +435,7 @@ class PythonRuntime:
             return fn()
         finally:
             sys.settrace(old_trace)
-            expired = True  # stop watchdog early
+            done.set()
 
     @staticmethod
     def _exec_with_value(code, g):

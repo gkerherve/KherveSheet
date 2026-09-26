@@ -27,6 +27,15 @@ CHART_TYPES = [
     "Stem", "Histogram", "Box", "Heatmap", "3D Surface",
 ]
 
+
+def canonical_chart_type(name):
+    """``"scatter"`` -> ``"Scatter"``; unknown names pass through.
+
+    Callers (LLMs especially) rarely match the capitalisation.
+    """
+    return next((t for t in CHART_TYPES
+                 if t.lower() == str(name).strip().lower()), name)
+
 #: Named looks ``style_chart`` can apply in one call.  Each is a small
 #: recipe applied to the live axes — no rcParams, so it never leaks
 #: into other charts.
@@ -430,6 +439,7 @@ def _style_one_series(chart, idx: int, spec: dict) -> dict:
     # Plot type first: it replaces the artist.
     new_type = spec.get("plot_type")
     if new_type:
+        new_type = canonical_chart_type(new_type)
         if new_type not in CHART_TYPES:
             raise ValueError(f"Unknown plot_type {new_type!r}. "
                              f"Valid: {CHART_TYPES}")
@@ -536,7 +546,7 @@ def tool_insert_chart(ex, inp: dict) -> dict:
     from .graph import EmbeddedChart, parse_time_column
 
     sheet = ex._sheet(inp["sheet_name"])
-    chart_type = inp["chart_type"]
+    chart_type = canonical_chart_type(inp["chart_type"])
     if chart_type not in CHART_TYPES:
         return {"error": f"Invalid chart_type {chart_type!r}. "
                 f"Valid: {CHART_TYPES}"}

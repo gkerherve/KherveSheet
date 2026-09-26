@@ -6,6 +6,7 @@ h5py>=3.7
 pygit2>=1.12
 pyspellchecker>=0.7
 scipy>=1.10
+pandas>=2.0  # imported by =PY cells (and shipped examples), invisible to PyInstaller
 lmfit>=1.2
 qtawesome>=1.2
 anthropic>=0.39

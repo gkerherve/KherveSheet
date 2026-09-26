@@ -334,6 +334,11 @@ def fit_series(x, y, model_name: str, poly_order: int = 4,
     if len(x) < 2:
         return {"error": "Not enough data points (need at least 2)."}
 
+    # Tool callers write "polynomial" or "linear"; match case-blind.
+    known = [MOVING_AVERAGE_KEY, "Polynomial", *MODELS]
+    model_name = next((k for k in known
+                       if k.lower() == str(model_name).lower()), model_name)
+
     if model_name == MOVING_AVERAGE_KEY:
         if ma_period > len(y):
             return {"error": f"Period {ma_period} is larger than the "

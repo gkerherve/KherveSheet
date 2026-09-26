@@ -57,9 +57,13 @@ you have one, add `codesign --options runtime` with the identity plus a
 
 ## Known gaps
 
-- **No auto-update.** `khervesheet/updater.py` gates every entry point on
-  `sys.platform.startswith("win")`, so macOS builds never check for
-  updates. Users update by downloading a new DMG.
+- **Auto-update needs the DMGs published.** `khervesheet/updater.py`
+  looks for `KherveSheet-<version>-<arch>.dmg` on a `khervesheet-v<version>`
+  release in `gkerherve/Kherve-Downloads`, swaps the bundle in place and
+  relaunches. The macOS workflow only uploads the DMGs as build artifacts,
+  so they must be attached to that release by hand (or by a publish step)
+  for Macs to see the update. The bundle's folder must be writable by the
+  user; otherwise the app points at the release page instead.
 - **File associations** are declared in the bundle's `Info.plist`, but
   macOS only honours them once the app has been moved to `/Applications`
   and registered by LaunchServices — which can take a login cycle, or a
