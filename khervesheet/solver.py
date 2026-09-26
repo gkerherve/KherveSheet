@@ -15,7 +15,6 @@ the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 """
 
-import re
 from typing import List, Optional, Tuple
 
 from PyQt5.QtCore import Qt, QEvent
@@ -27,57 +26,14 @@ from PyQt5.QtWidgets import (
     QButtonGroup, QWidget, QSizePolicy, QToolButton, QApplication,
 )
 
-from .sheet import SheetWidget, col_index_to_letter, letter_to_col_index
+from .core import solver as core_solver
+from .sheet import SheetWidget
 
 # ── Cell reference helpers ──────────────────────────────────────────
 
-_CELL_RE = re.compile(
-    r'\$?([A-Za-z]{1,3})\$?(\d{1,7})', re.ASCII)
-
-
-def _parse_ref(ref: str) -> Optional[Tuple[int, int]]:
-    """Parse a cell reference like '$D$5' or 'A1' → (row, col) 0-based."""
-    ref = ref.strip()
-    m = _CELL_RE.fullmatch(ref)
-    if not m:
-        return None
-    col = letter_to_col_index(m.group(1))
-    row = int(m.group(2)) - 1
-    return (row, col)
-
-
-def _parse_range(text: str) -> List[Tuple[int, int]]:
-    """Parse one or more comma-separated cell references / ranges into a
-    flat list of (row, col). Handles 'A1', 'A1:A5', and
-    'A1:A5,C1:D3' (multiple non-contiguous blocks)."""
-    cells: List[Tuple[int, int]] = []
-    for part in text.split(','):
-        part = part.strip()
-        if not part:
-            continue
-        if ':' in part:
-            ends = part.split(':')
-            if len(ends) != 2:
-                continue
-            start = _parse_ref(ends[0])
-            end = _parse_ref(ends[1])
-            if start is None or end is None:
-                continue
-            r1, c1 = start
-            r2, c2 = end
-            for r in range(min(r1, r2), max(r1, r2) + 1):
-                for c in range(min(c1, c2), max(c1, c2) + 1):
-                    cells.append((r, c))
-        else:
-            rc = _parse_ref(part)
-            if rc:
-                cells.append(rc)
-    return cells
-
-
-def _ref_str(row: int, col: int) -> str:
-    """(row, col) 0-based → '$A$1' string."""
-    return f"${col_index_to_letter(col)}${row + 1}"
+_parse_ref = core_solver.parse_ref
+_parse_range = core_solver.parse_range
+_ref_str = core_solver.ref_str
 
 
 def _range_ref_str(rng) -> str:
@@ -252,7 +208,7 @@ class SolverDialog(QDialog):
     range in the sheet — the reference is inserted automatically.
     """
 
-    METHODS = ["GRG Nonlinear", "LP Simplex", "Evolutionary"]
+    METHODS = core_solver.METHODS
 
     def __init__(self, sheet: SheetWidget, parent=None,
                  headless: bool = False):
@@ -633,7 +589,7 @@ class SolverDialog(QDialog):
 
     def _solve(self):
         try:
-            from scipy import optimize as opt
+            import scipy  # noqa: F401
         except ImportError:
             self._report(
                 "critical", "Missing Dependency",
@@ -647,193 +603,56 @@ class SolverDialog(QDialog):
             self._report("warning", "Solver", "Invalid objective cell.")
             return
 
-        # Parse variable cells (may span several comma-separated ranges).
-        # Deduplicate while preserving order so overlapping ranges don't
-        # create duplicate optimiser variables.
-        parsed = _parse_range(self._var_edit.text())
-        var_cells = list(dict.fromkeys(parsed))
+        # Variable cells (several comma-separated ranges; duplicates go).
+        var_cells = list(dict.fromkeys(_parse_range(self._var_edit.text())))
         if not var_cells:
             self._report("warning", "Solver",
                          "Invalid variable cell range.")
             return
 
         # Save original values for undo
-        original = {}
-        for r, c in var_cells:
-            original[(r, c)] = self._sheet.cell_text(r, c)
+        original = {rc: self._sheet.cell_text(*rc) for rc in var_cells}
 
-        # Read initial guess
-        x0 = []
-        for r, c in var_cells:
-            try:
-                x0.append(float(self._sheet.cell_text(r, c)))
-            except (ValueError, TypeError):
-                x0.append(0.0)
-
-        # Determine sense
         if self._radio_max.isChecked():
-            sense = "max"
+            goal, target = "max", 0.0
         elif self._radio_min.isChecked():
-            sense = "min"
+            goal, target = "min", 0.0
         else:
-            sense = "value"
+            goal = "value"
             target = self._resolve_value(self._target_edit.text())
             if target is None:
                 self._report("warning", "Solver",
                              "Invalid target value.")
                 return
 
-        # Bounds (unchanged from the original engine: the only box bounds
-        # come from the "non-negative" option).  Constraints are passed to
-        # the optimiser as real constraints so the search path is exactly
-        # what it always was; we additionally remember the lower/upper
-        # limits that act on a variable cell so the *final* result can be
-        # clipped into range — that is what makes the constraints bind
-        # without changing how the solver explores.
-        if self._nonneg_chk.isChecked():
-            bounds = [(0, None)] * len(var_cells)
-        else:
-            bounds = [(None, None)] * len(var_cells)
-
-        var_index = {rc: i for i, rc in enumerate(var_cells)}
-        clip_lo = [None] * len(var_cells)
-        clip_hi = [None] * len(var_cells)
-
-        # Build objective function
-        _SOLVE_DEC = 15  # full precision during optimisation
-
-        def _fmt_display(v, dec):
-            """Format a float for cell display (matches sheet style)."""
-            v = float(v)
-            if v == int(v) and abs(v) < 1e15:
-                return str(int(v))
-            s = f"{round(v, dec):.{dec}f}"
-            return s.rstrip("0").rstrip(".")
-
-        def _set_vars(x, full_prec=True):
-            """Write trial values into the sheet (silently)."""
-            for i, (r, c) in enumerate(var_cells):
-                if full_prec:
-                    self._sheet._set_cell_quiet(r, c, repr(float(x[i])))
-                else:
-                    # Format for display using cell's own precision.
-                    dec = self._sheet._cell_decimals(r, c)
-                    self._sheet._set_cell_quiet(
-                        r, c, _fmt_display(x[i], dec))
-            # Recalculate formulas that depend on variable cells.
-            # Use high precision so the optimizer sees smooth gradients.
-            # Seed from all variable cells at once so the shared
-            # downstream graph is evaluated only once per trial.
-            dec = _SOLVE_DEC if full_prec else None
-            self._sheet._recalc_from_seeds(var_cells, decimals=dec)
-
-        def _obj(x):
-            _set_vars(x)
-            # Read objective — evaluate formula at full precision
-            # to avoid rounding that flattens the gradient.
-            formula = self._sheet._cell_formulas.get(obj_rc)
-            if formula:
-                try:
-                    val = float(self._sheet._evaluate_formula(
-                        formula, obj_rc[0], obj_rc[1], _SOLVE_DEC))
-                except (ValueError, TypeError):
-                    return 1e30
-            else:
-                try:
-                    val = float(self._sheet.cell_text(*obj_rc))
-                except (ValueError, TypeError):
-                    return 1e30
-            if sense == "max":
-                return -val
-            elif sense == "value":
-                return (val - target) ** 2
-            return val
-
-        # Build constraint dicts for scipy
-        scipy_constraints = []
+        constraints = []
         for con in self._constraints:
             con_rc = _parse_ref(con.cell_ref)
             if con_rc is None:
                 self._report(
                     "warning", "Solver",
                     f"Invalid constraint reference: {con.cell_ref}")
-                # Restore originals
-                for (r, c), txt in original.items():
-                    self._sheet._set_cell_quiet(r, c, txt)
                 return
-
             rhs_val = self._resolve_value(con.rhs)
             if rhs_val is None:
                 self._report(
                     "warning", "Solver",
                     f"Invalid constraint value: {con.rhs}")
-                for (r, c), txt in original.items():
-                    self._sheet._set_cell_quiet(r, c, txt)
                 return
+            constraints.append(core_solver.Constraint(con_rc, con.op,
+                                                      rhs_val))
 
-            # If the constraint acts on a variable cell, remember its
-            # limit so the final solution can be clipped into range.  The
-            # constraint is STILL added below as a real optimiser
-            # constraint — clipping is only a guarantee, not a substitute,
-            # so the search behaves exactly as it always did.
-            idx = var_index.get(con_rc)
-            if idx is not None:
-                if con.op == "<=":
-                    clip_hi[idx] = (rhs_val if clip_hi[idx] is None
-                                    else min(clip_hi[idx], rhs_val))
-                elif con.op == ">=":
-                    clip_lo[idx] = (rhs_val if clip_lo[idx] is None
-                                    else max(clip_lo[idx], rhs_val))
-                else:  # "="
-                    clip_lo[idx] = clip_hi[idx] = rhs_val
+        problem = core_solver.Problem(
+            objective=obj_rc, variables=var_cells, goal=goal,
+            target=target, constraints=constraints,
+            non_negative=self._nonneg_chk.isChecked(),
+            method=self._method_combo.currentText(),
+            keep_searching=self._keep_chk.isChecked())
+        host = _SheetHost(self._sheet)
 
-            def _read_cell_full(rc):
-                """Read a cell value at full precision."""
-                f = self._sheet._cell_formulas.get(rc)
-                if f:
-                    try:
-                        return float(self._sheet._evaluate_formula(
-                            f, rc[0], rc[1], _SOLVE_DEC))
-                    except (ValueError, TypeError):
-                        pass
-                try:
-                    return float(self._sheet.cell_text(*rc))
-                except (ValueError, TypeError):
-                    return None
-
-            if con.op == "<=":
-                def _cfn(x, _rc=con_rc, _rhs=rhs_val):
-                    _set_vars(x)
-                    v = _read_cell_full(_rc)
-                    if v is None:
-                        return -1e30
-                    return _rhs - v  # >= 0 means cell <= rhs
-                scipy_constraints.append({"type": "ineq", "fun": _cfn})
-            elif con.op == ">=":
-                def _cfn(x, _rc=con_rc, _rhs=rhs_val):
-                    _set_vars(x)
-                    v = _read_cell_full(_rc)
-                    if v is None:
-                        return -1e30
-                    return v - _rhs  # >= 0 means cell >= rhs
-                scipy_constraints.append({"type": "ineq", "fun": _cfn})
-            elif con.op == "=":
-                def _cfn(x, _rc=con_rc, _rhs=rhs_val):
-                    _set_vars(x)
-                    v = _read_cell_full(_rc)
-                    if v is None:
-                        return -1e30
-                    return v - _rhs  # == 0
-                scipy_constraints.append({"type": "eq", "fun": _cfn})
-
-        # Keep the GUI responsive: scipy runs synchronously on the GUI
-        # thread, so pump the event loop on every iteration.  We also
-        # refresh embedded charts here so the plot tracks the solve live.
-        # If the user clicks Stop or presses Esc, raise to abort.
-        class _SolverCancelled(Exception):
-            pass
-
-        def _pump(*_args, **_kwargs):
+        # scipy runs on the GUI thread: keep the window alive and the
+        # charts following the search; Stop / Esc cancels.
+        def _pump():
             QApplication.processEvents()
             for chart in getattr(self._sheet, "_charts", []):
                 try:
@@ -841,120 +660,24 @@ class SolverDialog(QDialog):
                 except Exception:
                     pass
             if self._cancelled:
-                raise _SolverCancelled
+                raise core_solver.Cancelled
 
-        import numpy as np
+        def _restore():
+            for (r, c), txt in original.items():
+                self._sheet._set_cell_quiet(r, c, txt)
+            for r, c in var_cells:
+                self._sheet._recalc_dependents(r, c)
 
-        # Powell bounds want finite/±inf entries, not None.
-        powell_bounds = [(-np.inf if lo is None else lo,
-                          np.inf if hi is None else hi)
-                         for (lo, hi) in bounds]
-
-        def _solve_nonlinear(start):
-            # Spreadsheet models are routinely badly scaled — a peak
-            # amplitude of ~500 sitting next to a background coefficient
-            # of ~0.1 whose term is multiplied by a large x².  Gradient
-            # methods (SLSQP) take a finite-difference Jacobian and
-            # diverge on such conditioning.  Powell is a derivative-free
-            # direction-set method that is immune to this and reliably
-            # matches Excel's GRG on these problems, so prefer it when
-            # there are no constraints.  Fall back to SLSQP only when
-            # constraints are present (Powell can't honour them).  The
-            # final result is clipped to the variable-cell limits below
-            # so the constraints are respected even if SLSQP drifts.
-            if scipy_constraints:
-                return opt.minimize(
-                    _obj, start, method='SLSQP', bounds=bounds,
-                    constraints=scipy_constraints, callback=_pump,
-                    options={'maxiter': 1000, 'ftol': 1e-9})
-            return opt.minimize(
-                _obj, start, method='Powell', bounds=powell_bounds,
-                callback=_pump,
-                options={'maxiter': 20000, 'xtol': 1e-8, 'ftol': 1e-8})
-
-        # Evolutionary needs finite bounds and a penalty for constraints.
-        de_bounds = []
-        for i, (lo, hi) in enumerate(bounds):
-            lo2 = lo if lo is not None else x0[i] - 1000
-            hi2 = hi if hi is not None else x0[i] + 1000
-            if lo2 >= hi2:
-                hi2 = lo2 + 1000
-            de_bounds.append((lo2, hi2))
-
-        def _penalised(x):
-            v = _obj(x)
-            for cd in scipy_constraints:
-                cv = cd["fun"](x)
-                if cd["type"] == "ineq" and cv < 0:
-                    v += 1e6 * cv ** 2
-                elif cd["type"] == "eq":
-                    v += 1e6 * cv ** 2
-            return v
-
-        method_name = self._method_combo.currentText()
-
-        def _run_once(start):
-            if method_name == "Evolutionary":
-                return opt.differential_evolution(
-                    _penalised, de_bounds, maxiter=1000, tol=1e-12,
-                    callback=_pump)
-            return _solve_nonlinear(start)
-
-        # Random-restart point for multistart mode: sample bounded
-        # (constrained) variables uniformly across their range, jitter the
-        # rest around the current best.
-        rng = np.random.default_rng()
-
-        def _restart(base):
-            nx = list(base)
-            for i in range(len(var_cells)):
-                lo, hi = clip_lo[i], clip_hi[i]
-                if lo is not None and hi is not None:
-                    nx[i] = float(rng.uniform(lo, hi))
-                elif lo is not None:
-                    nx[i] = lo + abs(rng.normal(
-                        0.0, max(1.0, abs(base[i]))))
-                elif hi is not None:
-                    nx[i] = hi - abs(rng.normal(
-                        0.0, max(1.0, abs(base[i]))))
-                else:
-                    nx[i] = base[i] + rng.normal(
-                        0.0, max(1.0, abs(base[i])))
-            return nx
-
-        # Run solver, looping with random restarts when "keep searching"
-        # is on, keeping the best result, until the user presses Stop.
-        keep_searching = self._keep_chk.isChecked()
         self._sheet._suppress_recalc_signals = True
         self._cancelled = False
         self._solving = True
         self._solve_btn.setText("Stop")
         self._close_btn.setEnabled(False)
         QApplication.setOverrideCursor(Qt.WaitCursor)
-        cancelled = False
-        best = None
-        start = list(x0)
         try:
-            while True:
-                try:
-                    res = _run_once(start)
-                except _SolverCancelled:
-                    cancelled = True
-                    break
-                if (getattr(res, "x", None) is not None
-                        and np.isfinite(res.fun)
-                        and (best is None or res.fun < best.fun)):
-                    best = res
-                    _set_vars(best.x)  # reflect the best so far live
-                if not keep_searching:
-                    break
-                if self._cancelled:
-                    cancelled = True
-                    break
-                start = _restart(best.x if best is not None else x0)
+            outcome = core_solver.solve(host, problem, _pump)
         except Exception as exc:
-            for (r, c), txt in original.items():
-                self._sheet._set_cell_quiet(r, c, txt)
+            _restore()
             self._report("critical", "Solver Error",
                          f"Solver failed:\n{exc}")
             return
@@ -966,54 +689,23 @@ class SolverDialog(QDialog):
             self._close_btn.setEnabled(True)
             QApplication.restoreOverrideCursor()
 
-        if best is None:
-            # Cancelled before any run produced a usable result.
-            for (r, c), txt in original.items():
-                self._sheet._set_cell_quiet(r, c, txt)
-            for r, c in var_cells:
-                self._sheet._recalc_dependents(r, c)
-            self._report(
-                "info", "Solver",
-                "Solver stopped before finding a solution."
-                if cancelled else "Solver could not find a solution.")
+        if outcome.x is None:
+            _restore()
+            self._report("info", "Solver", outcome.message)
             return
 
-        result = best
-
-        # Make the constraints bind: clip every variable that carries a
-        # <= / >= / = limit into range.  The search itself was free, so
-        # quality matches the old engine; this just guarantees the final
-        # values respect the limits the user set.
-        if getattr(result, "x", None) is not None:
-            for i in range(len(var_cells)):
-                lo, hi = clip_lo[i], clip_hi[i]
-                if lo is not None and result.x[i] < lo:
-                    result.x[i] = lo
-                if hi is not None and result.x[i] > hi:
-                    result.x[i] = hi
-
-        if cancelled:
-            # User stopped a (multistart) search — keep the best found.
-            _set_vars(result.x, full_prec=False)
-        elif not result.success:
-            # Still write the best result found, but warn user.
-            # Use normal precision for final display formatting.
-            _set_vars(result.x, full_prec=False)
+        # Final write at each cell's display precision.
+        host.write_final(var_cells, outcome.x)
+        if not outcome.success:
             keep = self._report(
                 "warning", "Solver",
                 f"Solver could not find a solution.\n"
-                f"Reason: {result.message}\n\n"
+                f"Reason: {outcome.message}\n\n"
                 f"Keep the best values found, or restore originals?",
                 question=True, default=True)
             if not keep:
-                for (r, c), txt in original.items():
-                    self._sheet._set_cell_quiet(r, c, txt)
-                for r, c in var_cells:
-                    self._sheet._recalc_dependents(r, c)
+                _restore()
                 return
-        else:
-            # Final write at normal display precision.
-            _set_vars(result.x, full_prec=False)
 
         # Push undo command for all changed cells
         if self._sheet._undo_stack is not None:
@@ -1028,16 +720,47 @@ class SolverDialog(QDialog):
                     BulkCellEditCmd(self._sheet, changes, "Solver"))
 
         obj_val = self._sheet.cell_text(*obj_rc)
-        # Show a clean number in the message.
         try:
             obj_display = f"{float(obj_val):g}"
         except (ValueError, TypeError):
             obj_display = obj_val
         self._report(
             "info", "Solver",
-            (f"Search stopped — keeping the best result found.\n"
-             if cancelled else "Solver found a solution.\n")
+            ("Search stopped — keeping the best result found.\n"
+             if outcome.cancelled else "Solver found a solution.\n")
             + f"Objective cell value: {obj_display}")
+
+
+_SOLVE_DEC = 15  # full precision during optimisation
+
+
+class _SheetHost(core_solver.SolverHost):
+    """The desktop sheet, for core.solver."""
+
+    def __init__(self, sheet: SheetWidget):
+        self.sheet = sheet
+
+    def value(self, cell):
+        formula = self.sheet._cell_formulas.get(cell)
+        try:
+            if formula:
+                return float(self.sheet._evaluate_formula(
+                    formula, cell[0], cell[1], _SOLVE_DEC))
+            return float(self.sheet.cell_text(*cell))
+        except (ValueError, TypeError):
+            return None
+
+    def try_values(self, cells, values):
+        for (r, c), v in zip(cells, values):
+            self.sheet._set_cell_quiet(r, c, repr(float(v)))
+        # One recalculation seeded from every variable cell.
+        self.sheet._recalc_from_seeds(list(cells), decimals=_SOLVE_DEC)
+
+    def write_final(self, cells, values):
+        for (r, c), v in zip(cells, values):
+            self.sheet._set_cell_quiet(r, c, core_solver.display_number(
+                v, self.sheet._cell_decimals(r, c)))
+        self.sheet._recalc_from_seeds(list(cells))
 
 
 # ── Headless entry point ────────────────────────────────────────────
