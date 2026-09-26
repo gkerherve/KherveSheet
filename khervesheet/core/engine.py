@@ -24,13 +24,15 @@ the Free Software Foundation, either version 3 of the License, or
 
 from __future__ import annotations
 
+import re
 from typing import Dict, Iterable, List, Optional, Tuple
 
 from .compiler import compile_formula, evaluate_cell
 from .functions import build_namespace, lower_names
 from .numbers import format_number, format_value, general_display
 from .refs import XREF_PATTERN, parse_cell_refs
-from .values import CellValues
+from .refs import letter_to_col_index
+from .values import BLANK, CellValues
 
 Cell = Tuple[int, int]
 
@@ -38,6 +40,29 @@ DEFAULT_ROWS = 5000
 DEFAULT_COLS = 50
 PY_MARKER = "=PY"
 PYTHON_NOT_RUN = "⟨Python — not run⟩"
+
+_RANGE_END = re.compile(r"\$?([A-Za-z]{1,3})?\$?(\d{1,7})?")
+
+
+def _range_bounds(cells: str, sheet: "Sheet"):
+    """((c1, r1), (c2, r2)) of ``A1``, ``A1:B5``, ``B:B`` or ``3:3``."""
+    parts = cells.replace(" ", "").split(":")
+    if not 1 <= len(parts) <= 2 or not all(parts):
+        raise ValueError(f"Not a range: {cells!r}")
+    last_row, last_col = sheet.used_extent()
+    ends = []
+    for i, part in enumerate(parts * (2 // len(parts))):
+        m = _RANGE_END.fullmatch(part)
+        if not m or not (m.group(1) or m.group(2)):
+            raise ValueError(f"Not a range: {cells!r}")
+        col = letter_to_col_index(m.group(1)) if m.group(1) else (
+            0 if i == 0 else last_col)
+        row = int(m.group(2)) - 1 if m.group(2) else (
+            0 if i == 0 else last_row)
+        ends.append((col, row))
+    (c1, r1), (c2, r2) = ends
+    return (min(c1, c2), min(r1, r2)), (max(c1, c2), max(r1, r2))
+
 
 _DECIMALS = {"0": 0, "0.0": 1, "0.00": 2, "0.000": 3, "0.0000": 4}
 
@@ -92,6 +117,13 @@ class Sheet(CellValues):
 
     def formula(self, row: int, col: int) -> Optional[str]:
         return self._cell_formulas.get((row, col))
+
+    def used_extent(self) -> Cell:
+        """(last row, last column) holding something; (0, 0) when empty."""
+        if not self.texts:
+            return 0, 0
+        return (max(r for r, _c in self.texts),
+                max(c for _r, c in self.texts))
 
     # CellValues host interface.
     def _cell_text(self, r, c):
@@ -330,6 +362,22 @@ class Workbook:
 
     def sheet_names(self) -> List[str]:
         return [sheet.name for sheet in self.sheets]
+
+    def range_values(self, ref: str, sheet: Optional[str] = None) -> list:
+        """The values of a range such as ``B2:B20``, ``Sheet2!A1:C3`` or
+        ``'My data'!B:B``, row by row; None for empty cells.
+
+        A whole column or row stops at the sheet's last filled cell."""
+        name, _, cells = ref.rpartition("!")
+        target = self.sheet_by_name(name) if name else (
+            self.sheet_by_name(sheet) if sheet else None) or (
+            self.sheets[0] if self.sheets else None)
+        if target is None:
+            raise ValueError(f"No sheet called {name or sheet!r}")
+        (c1, r1), (c2, r2) = _range_bounds(cells, target)
+        return [None if v is BLANK else v
+                for r in range(r1, r2 + 1) for c in range(c1, c2 + 1)
+                for v in (target._value(r, c),)]
 
     def rename_sheet(self, old: str, new: str) -> List[tuple]:
         sheet = self.sheet_by_name(old)

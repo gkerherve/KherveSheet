@@ -45,8 +45,10 @@ class _OpaqueCanvas(FigureCanvas):
 
 
 # ── Plot defaults ───────────────────────────────────────────────────
-_DEFAULT_LINEWIDTH = 1.0
-_DEFAULT_MARKERSIZE = 3.0
+from .core.charts import (  # noqa: E402
+    DEFAULT_LINEWIDTH as _DEFAULT_LINEWIDTH,
+    DEFAULT_MARKERSIZE as _DEFAULT_MARKERSIZE, plot_one,
+)
 
 # Resize handle size in pixels.
 _HANDLE = 12  # matches layout margin for handle hit-testing
@@ -67,78 +69,7 @@ def _arrowstyle_name(arrow_patch):
     return "->"
 
 
-# ── Time string parsing ────────────────────────────────────────────
-import re as _re
-
-_TIME_HM = _re.compile(
-    r'^(\d{1,2}):(\d{2})(?::(\d{2}))?$')           # 8:00  20:00  13:45:30
-_TIME_AMPM = _re.compile(
-    r'^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$', _re.I)   # 8am  8:30pm
-
-
-def _parse_time_str(text: str):
-    """Try to parse *text* as a time-of-day string.
-
-    Returns fractional hours (float) on success, or ``None``.
-    """
-    text = text.strip()
-    m = _TIME_HM.match(text)
-    if m:
-        h, mi = int(m.group(1)), int(m.group(2))
-        s = int(m.group(3)) if m.group(3) else 0
-        if 0 <= h <= 23 and 0 <= mi <= 59 and 0 <= s <= 59:
-            return h + mi / 60.0 + s / 3600.0
-    m = _TIME_AMPM.match(text)
-    if m:
-        h = int(m.group(1))
-        mi = int(m.group(2)) if m.group(2) else 0
-        pm = m.group(3).lower() == 'pm'
-        if 1 <= h <= 12 and 0 <= mi <= 59:
-            if h == 12:
-                h = 0
-            if pm:
-                h += 12
-            return h + mi / 60.0
-    return None
-
-
-def parse_time_column(strings, start=0, count=None):
-    """Parse a list of strings as time values.
-
-    Returns ``(hours, labels)`` where *hours* is a float ndarray of
-    fractional hours (with day-wrap adjustment so the sequence is
-    monotonically non-decreasing when it crosses midnight) and *labels*
-    is a list of the original strings.  Returns ``(None, None)`` if
-    fewer than half the values parse as valid times.
-    """
-    if count is None:
-        count = len(strings) - start
-    sub = strings[start:start + count]
-    hours = []
-    for s in sub:
-        h = _parse_time_str(s)
-        hours.append(h)
-
-    valid = sum(1 for h in hours if h is not None)
-    if valid < len(hours) / 2 or valid == 0:
-        return None, None
-
-    # Replace None entries with NaN, then adjust day wraps.
-    result = np.empty(len(hours))
-    day_offset = 0.0
-    prev = None
-    for i, h in enumerate(hours):
-        if h is None:
-            result[i] = np.nan
-            continue
-        val = h + day_offset
-        if prev is not None and val < prev - 1.0:
-            # Clock wrapped past midnight — add 24h.
-            day_offset += 24.0
-            val += 24.0
-        result[i] = val
-        prev = val
-    return result, sub
+from .core.charts import _parse_time_str, parse_time_column  # noqa: E402,F401
 
 
 class _RangeOverlay(QWidget):
@@ -707,64 +638,7 @@ class EmbeddedChart(QWidget):
     @staticmethod
     def _plot_one(ax, x, y, label, plot_type):
         """Plot a single series and return the artist."""
-        if plot_type == "Line":
-            lines = ax.plot(x, y, label=label,
-                            linewidth=_DEFAULT_LINEWIDTH)
-            return lines[0] if lines else None
-        elif plot_type == "Scatter":
-            return ax.scatter(x, y, label=label,
-                              s=_DEFAULT_MARKERSIZE ** 2)
-        elif plot_type == "Line+Symbol":
-            lines = ax.plot(x, y, 'o-', label=label,
-                            linewidth=_DEFAULT_LINEWIDTH,
-                            markersize=_DEFAULT_MARKERSIZE)
-            return lines[0] if lines else None
-        elif plot_type == "Bar":
-            return ax.bar(x, y, label=label)
-        elif plot_type == "Step":
-            lines = ax.step(x, y, label=label, where='mid',
-                            linewidth=_DEFAULT_LINEWIDTH)
-            return lines[0] if lines else None
-        elif plot_type == "Stem":
-            container = ax.stem(x, y, label=label)
-            return container
-        elif plot_type == "Histogram":
-            _, _, patches = ax.hist(y, bins='auto', label=label,
-                                    alpha=0.7)
-            return patches
-        elif plot_type == "Box":
-            bp = ax.boxplot([y], labels=[label], patch_artist=True)
-            return bp
-        elif plot_type == "Heatmap":
-            # For heatmap, y is expected to be a 2D array; if 1D,
-            # reshape into a single-row matrix.
-            data = np.atleast_2d(np.asarray(y))
-            im = ax.imshow(data, aspect='auto', origin='lower',
-                           cmap='viridis')
-            return im
-        elif plot_type in ("Pie", "Doughnut", "3D Pie"):
-            # Pie charts are drawn by pie_options.plot_pie;
-            # _plot_one just returns a placeholder — the real draw
-            # happens in _redraw_pie or from_dict.
-            from .pie_options import plot_pie
-            result = plot_pie(ax, y, None, {}, plot_type)
-            if result is not None:
-                return result[0]  # list of Wedge patches
-            return None
-        elif plot_type == "3D Surface":
-            # 3D surface expects y to be a 2D array (Z matrix).
-            # x is ignored here; X/Y are generated from shape.
-            data = np.atleast_2d(np.asarray(y))
-            rows, cols = data.shape
-            X = np.arange(cols)
-            Y = np.arange(rows)
-            X, Y = np.meshgrid(X, Y)
-            surf = ax.plot_surface(X, Y, data, cmap='viridis',
-                                   edgecolor='none', alpha=0.9)
-            return surf
-        else:
-            lines = ax.plot(x, y, label=label)
-            return lines[0] if lines else None
+        return plot_one(ax, x, y, label, plot_type)
 
     def _rebuild_axes(self, want_3d):
         """Swap the axes between 2-D and 3-D projections.

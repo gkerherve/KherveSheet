@@ -21,144 +21,15 @@ from PyQt5.QtWidgets import (
 
 # ── Defaults ────────────────────────────────────────────────────────
 
-DEFAULT_PIE_CONFIG = {
-    "start_angle": 90,
-    "direction": "counter-clockwise",
-    "explode_pct": 0.0,
-    "label_mode": "label+percent",  # percent | value | label | label+percent | none
-    "decimal_places": 1,
-    "shadow": False,
-    "doughnut_width": 0.4,       # only used for Doughnut type
-    "labels": None,              # list[str] | None — slice labels
-}
-
-PIE_TYPES = {"Pie", "Doughnut", "3D Pie"}
+from .core.charts import (  # noqa: F401
+    DEFAULT_COLORS as _DEFAULT_COLORS, DEFAULT_PIE_CONFIG, PIE_TYPES, plot_pie,
+)
 
 _LABEL_MODES = ["Percent", "Value", "Label", "Label + Percent", "None"]
 _LABEL_MODE_KEYS = ["percent", "value", "label", "label+percent", "none"]
 
-_DEFAULT_COLORS = [
-    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
-    "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
-    "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5",
-]
-
 
 # ── Drawing ─────────────────────────────────────────────────────────
-
-def plot_pie(ax, values, labels, pie_config, plot_type="Pie",
-             colors=None):
-    """Draw a pie / doughnut / 3-D pie on *ax*.
-
-    Parameters
-    ----------
-    ax : matplotlib Axes
-    values : array-like  — slice sizes (will be abs'd, zeros removed)
-    labels : list[str] | None — per-slice labels
-    pie_config : dict
-    plot_type : str — "Pie", "Doughnut", or "3D Pie"
-    colors : list[str] | None
-
-    Returns
-    -------
-    (wedges, texts, autotexts) — the three lists returned by ax.pie
-    """
-    ax.clear()
-
-    vals = np.asarray(values, dtype=float)
-    # Remove zero / nan slices.
-    mask = (vals > 0) & ~np.isnan(vals)
-    vals = vals[mask]
-    n = len(vals)
-    if n == 0:
-        ax.text(0.5, 0.5, "No data", ha="center", va="center",
-                transform=ax.transAxes, fontsize=10)
-        return None
-
-    if labels is not None:
-        labels = [labels[i] for i, m in enumerate(mask) if m]
-    else:
-        labels = [f"Slice {i+1}" for i in range(n)]
-    # Truncate / pad labels to match values.
-    while len(labels) < n:
-        labels.append(f"Slice {len(labels)+1}")
-    labels = labels[:n]
-
-    if colors is None:
-        colors = [_DEFAULT_COLORS[i % len(_DEFAULT_COLORS)]
-                  for i in range(n)]
-    else:
-        while len(colors) < n:
-            colors.append(_DEFAULT_COLORS[len(colors) % len(_DEFAULT_COLORS)])
-        colors = colors[:n]
-
-    cfg = dict(DEFAULT_PIE_CONFIG)
-    cfg.update(pie_config or {})
-
-    start = cfg["start_angle"]
-    ccw = cfg["direction"] == "counter-clockwise"
-    shadow = cfg["shadow"]
-    explode_pct = cfg["explode_pct"]
-
-    explode = [explode_pct] * n if explode_pct > 0 else None
-
-    # Build autopct string.
-    lm = cfg["label_mode"]
-    dp = cfg["decimal_places"]
-    fmt = f"%.{dp}f%%"
-
-    show_labels = lm in ("label", "label+percent")
-    show_pct = lm in ("percent", "label+percent")
-    show_val = lm == "value"
-
-    if show_pct:
-        autopct = fmt
-    elif show_val:
-        # autopct receives the percentage; convert back to value.
-        total = vals.sum()
-        def autopct(pct, _t=total, _dp=dp):
-            v = pct * _t / 100.0
-            return f"{v:.{_dp}f}"
-    else:
-        autopct = None
-
-    pie_labels = labels if show_labels else None
-
-    kw = dict(
-        labels=pie_labels,
-        autopct=autopct,
-        startangle=start,
-        colors=colors,
-        counterclock=ccw,
-        shadow=shadow,
-        explode=explode,
-    )
-
-    # Doughnut: ring shape.
-    if plot_type == "Doughnut":
-        w = cfg.get("doughnut_width", 0.4)
-        kw["wedgeprops"] = dict(width=w, edgecolor="white", linewidth=1.5)
-    else:
-        kw["wedgeprops"] = dict(edgecolor="white", linewidth=1.0)
-
-    # 3D Pie: fake depth via shadow + slight explode + squash.
-    if plot_type == "3D Pie":
-        kw["shadow"] = True
-        if explode is None:
-            kw["explode"] = [0.02] * n
-        ax.set_aspect(0.7)  # squash vertically for 3-D illusion
-    else:
-        ax.set_aspect("equal")
-
-    result = ax.pie(vals, **kw)
-
-    # Hide axes frame.
-    ax.set_frame_on(False)
-    ax.set_xticks([])
-    ax.set_yticks([])
-
-    return result
-
 
 def redraw_pie(chart):
     """Redraw the pie chart on *chart* using its stored config."""
