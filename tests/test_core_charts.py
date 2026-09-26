@@ -96,3 +96,15 @@ def test_trendlines_fit_and_report(wb):
     assert 0.85 < line["gof"]["R²"] < 0.95
     assert ma["model"] == "Moving Average"
     assert "error" in missing
+
+
+def test_category_trendline_counts_from_one(wb):
+    from khervesheet.core.charts import render_chart
+    out = render_chart({"type": "Bar", "x": "A2:A3",
+                        "series": [{"ref": "B2:B3"}],
+                        "trendlines": [{"series": 0, "model": "Linear"}]},
+                       wb.range_values)
+    # Jan → 10, Feb → 14 at x = 1, 2: y = 4x + 6 (Excel's equation).
+    fit = out["fits"][0]
+    assert fit["params"]["a"] == pytest.approx(4)
+    assert fit["params"]["b"] == pytest.approx(6)

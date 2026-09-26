@@ -463,7 +463,10 @@ def draw_chart(fig, spec: dict, read: Callable[[str], Sequence],
                 continue
             if lab is not None:
                 labels = labels or lab
-            points[i] = (x, y)
+            # Categories (and plain 1, 2, 3…) count from 1 in the fit,
+            # as in Excel, though they are drawn at 0, 1, 2…
+            points[i] = (x, y, 1.0 if lab not in (None, "TIME") or
+                         x_values is None else 0.0)
             if bars:
                 # Side by side: numeric X keeps its spacing.
                 step = 1.0
@@ -538,8 +541,8 @@ def _trendlines(ax, spec: dict, points: dict, colors: List[str]) -> list:
         if index not in points:
             results.append({"error": "That series has no data."})
             continue
-        x, y = points[index]
-        fit = fit_series(x, y, model,
+        x, y, shift = points[index]
+        fit = fit_series(x + shift, y, model,
                          poly_order=int(t.get("polyOrder") or 2),
                          ma_period=int(t.get("maPeriod") or 2))
         if "error" in fit:
@@ -555,7 +558,7 @@ def _trendlines(ax, spec: dict, points: dict, colors: List[str]) -> list:
             hi = float(np.max(x)) + float(t.get("forward") or 0)
             xs = np.linspace(lo, hi, 300)
             with np.errstate(all="ignore"):
-                ys = np.asarray(fit["predict"](xs), dtype=float)
+                ys = np.asarray(fit["predict"](xs + shift), dtype=float)
         name = t.get("name") or (
             f"{model} ({(spec['series'][index].get('name') or 'series ' + str(index + 1))})")
         ax.plot(xs, ys, linestyle=t.get("linestyle") or "--",
