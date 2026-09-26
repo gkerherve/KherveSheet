@@ -200,3 +200,65 @@ def test_remote_python_cells_do_not_run_without_consent(pair, monkeypatch):
     bob_sheet = bob._workbook.current_sheet()
     assert wait_for(app, lambda: text_at(bob_sheet, 5, 0) == NOT_RUN)
     assert asked == [f"live:{b.room}"]
+
+
+def test_charts_are_shared_both_ways(pair):
+    """A desktop chart reaches the others as a chart spec (what KherveCELL
+    draws), and a spec written by the web becomes a desktop chart."""
+    import json
+
+    import numpy as np
+
+    from khervesheet.collab import model
+    from khervesheet.graph import EmbeddedChart
+
+    app, alice, bob, a, b = pair
+    sheet = alice._workbook.current_sheet()
+    for r, (month, sales) in enumerate([("Jan", 3), ("Feb", 5), ("Mar", 4)]):
+        type_into(sheet, 3 + r, 0, month)
+        type_into(sheet, 3 + r, 1, str(sales))
+    chart = EmbeddedChart(np.arange(3.0), np.array([3.0, 5.0, 4.0]), "Sales",
+                          "Bar", sheet, sheet.table.viewport(), x_col=0,
+                          y_col=1, row_start=3, row_end=5)
+    chart._ax.set_title("Quarter")
+    chart.resize(400, 260)
+    chart.move(sheet.table.columnViewportPosition(3),
+               sheet.table.rowViewportPosition(1))
+    sheet._charts.append(chart)
+    a._flush_local()
+
+    bob_sheet = bob._workbook.current_sheet()
+    assert wait_for(app, lambda: len(bob_sheet._charts) == 1)
+    spec = json.loads(next(iter(b.ycharts.values())))
+    assert spec["type"] == "Bar" and spec["title"] == "Quarter"
+    assert spec["x"] == "A4:A6"
+    assert [s["ref"] for s in spec["series"]] == ["B4:B6"]
+    assert (spec["row"], spec["col"]) == (1, 3)
+    assert bob_sheet._charts[0]._ax.get_title() == "Quarter"
+
+    # The web adds a chart with a trendline (a spec in the shared map).
+    web = {"sheetId": spec["sheetId"], "row": 10, "col": 1, "width": 360,
+           "height": 240, "type": "Scatter", "title": "From the web",
+           "x": "A1:A2", "series": [{"ref": "B4:B6", "name": "Sales"}],
+           "trendlines": [{"series": 0, "model": "Linear", "forward": 2}]}
+    with b.doc.transaction():
+        b.ycharts["webchart0001"] = model.encode_json(web)
+    assert wait_for(app, lambda: len(sheet._charts) == 2)
+    made = next(c for c in sheet._charts
+                if getattr(c, "_collab_id", None) == "webchart0001")
+    assert made._ax.get_title() == "From the web"
+    assert len(made._trendlines) == 1
+    # Alice's window does not send it back changed: the forecast stays.
+    a._flush_local()
+    app.processEvents()
+    assert json.loads(a.ycharts["webchart0001"])["trendlines"][0][
+        "forward"] == 2
+
+    # Deleting a chart on the desktop deletes it for everyone.
+    from khervesheet.collab.charts import remove_chart
+    remove_chart(chart)
+    a._flush_local()
+    assert wait_for(app, lambda: set(b.ycharts.keys()) == {"webchart0001"})
+    # (Bob wrote the web chart himself, as a browser would: his desktop
+    # window only draws charts that come from others.)
+    assert wait_for(app, lambda: len(bob_sheet._charts) == 0)

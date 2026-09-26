@@ -40,6 +40,17 @@ into a new module and import.
     - `numbers.py` — `format_number`, `format_value`. `catalog.py` — function catalogue.
     - `engine.py` — Qt-free `Workbook`/`Sheet` mirroring the desktop's typing, recalc,
       cross-sheet refresh and file loading; new sheets are 5,000 × 50.
+      `Workbook.range_values("Sheet2!B2:B9")` reads a range. =PY cells run only after
+      `Workbook.enable_python(trusted=…)` (hashes from `core.python.source_hash`).
+    - `charts.py` — chart drawing without Qt: `plot_one`, `plot_pie`, time parsing (moved
+      from graph.py / pie_options.py, which re-export them) and `render_chart(spec, read)`
+      → SVG + trendline fits, from the chart spec KherveCELL shares (see its docstring).
+    - `fitting.py` — trendline models, `fit_series`, `TrendlineInfo` (moved from
+      trendline.py, which re-exports them).
+    - `solver.py` — the Solver (`solve(host, Problem)`, Powell / SLSQP / evolutionary,
+      multistart, clipping); `solver.SolverDialog` and KherveCELL both run it.
+    - `python.py` — =PY runtime without Qt (ks()/ks_set(), spills, figures as SVG, a
+      per-line time limit that needs no thread).
     - Parity is enforced: `tests/test_formula_golden.py` (245 formulas, golden JSON in
       `tests/data/`) and `tests/test_core_engine.py` (engine vs desktop, typed side by side).
       Change formula behaviour on purpose only, then regenerate with
@@ -94,6 +105,10 @@ into a new module and import.
         tint), the Shared dialog (invite by e-mail) and Open from KherveDOC.
       - Presence is published as `kherveCell: {sheetId,row,col,name,color}`, the
         field KherveCELL (web) uses, so desktop and browser see each other.
+    - `charts.py` — charts in the shared `charts` map: `spec_from_chart` /
+      `chart_from_spec` convert between `EmbeddedChart` and KherveCELL's chart spec;
+      the session publishes desktop charts on each flush and redraws remote ones
+      (charts from grid columns only; spec fields the desktop cannot express are kept).
     - Not yet synced: merges, row heights, charts/images/shapes, notes, checkboxes;
       row/column insert and sort resend cells by position.
   - `mcp_server.py`  — stdio MCP server an external host (Claude Desktop,

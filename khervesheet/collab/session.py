@@ -43,6 +43,9 @@ from pycrdt import (
 
 from ..python_engine import is_python_source
 from . import hocuspocus, model
+from .charts import (
+    chart_from_spec, merge_spec, remove_chart, spec_from_chart,
+)
 
 FLUSH_DELAY_MS = 200
 POLL_MS = 1500
@@ -110,6 +113,8 @@ class LiveSession(QObject):
         self._last_cells: Dict[str, Dict] = {}
         self._last_formats: Dict[str, Dict] = {}
         self._last_widths: Dict[str, Dict] = {}
+        #: Each shared chart's spec as this window last saw it.
+        self._last_charts: Dict[str, dict] = {}
 
         self.doc = Doc()
         if kherve_doc and kherve_doc.initial_update:
@@ -120,6 +125,7 @@ class LiveSession(QObject):
         self.ycells = self.doc.get(model.CELLS, type=Map)
         self.yformats = self.doc.get(model.FORMATS, type=Map)
         self.ywidths = self.doc.get(model.WIDTHS, type=Map)
+        self.ycharts = self.doc.get(model.CHARTS, type=Map)
         self.awareness = Awareness(self.doc)
         self.color = random.choice(PEER_COLORS)
 
@@ -130,7 +136,7 @@ class LiveSession(QObject):
         self._python_trusted: Optional[bool] = None
         self._pending = {name: set() for name in
                          (model.SHEETS, model.CELLS, model.FORMATS,
-                          model.WIDTHS)}
+                          model.WIDTHS, model.CHARTS)}
         self._last_heartbeat = 0.0
         self._peers: list = []
 
@@ -139,7 +145,8 @@ class LiveSession(QObject):
         for name, ymap in ((model.SHEETS, self.ysheets),
                            (model.CELLS, self.ycells),
                            (model.FORMATS, self.yformats),
-                           (model.WIDTHS, self.ywidths)):
+                           (model.WIDTHS, self.ywidths),
+                           (model.CHARTS, self.ycharts)):
             self._subscriptions.append(
                 (ymap, ymap.observe(self._map_observer(name))))
 
@@ -365,7 +372,8 @@ class LiveSession(QObject):
         for name, ymap in ((model.SHEETS, self.ysheets),
                            (model.CELLS, self.ycells),
                            (model.FORMATS, self.yformats),
-                           (model.WIDTHS, self.ywidths)):
+                           (model.WIDTHS, self.ywidths),
+                           (model.CHARTS, self.ycharts)):
             self._pending[name] = set(ymap.keys())
         # The placeholder sheets are about to go: do not publish them.
         self._apply_remote(flush_first=False)
@@ -420,6 +428,31 @@ class LiveSession(QObject):
             for sheet_id in list(self._last_meta):
                 if sheet_id not in seen:
                     self._forget_sheet(sheet_id, shared=True)
+            self._push_charts()
+
+    def _push_charts(self):
+        """Share charts made, changed, moved or deleted in this window."""
+        seen = set()
+        for sheet_id, sheet in list(self._sheets.items()):
+            for chart in list(getattr(sheet, "_charts", [])):
+                spec = spec_from_chart(chart, sheet_id)
+                if spec is None:
+                    continue       # not drawn from grid columns
+                chart_id = getattr(chart, "_collab_id", None)
+                if chart_id is None:
+                    chart_id = chart._collab_id = model.new_sheet_id()
+                seen.add(chart_id)
+                if self._last_charts.get(chart_id) == spec:
+                    continue
+                # Keep what only the web side knows (a forecast…).
+                shared = model.decode_json(self.ycharts.get(chart_id)) or {}
+                self.ycharts[chart_id] = model.encode_json(
+                    merge_spec(shared, spec))
+                self._last_charts[chart_id] = spec
+        for chart_id in list(self._last_charts):
+            if chart_id not in seen:
+                self._last_charts.pop(chart_id)
+                self.ycharts.pop(chart_id, None)
 
     def _push_sheet(self, sheet_id, sheet):
         cells = model.cell_sources(sheet)
@@ -482,11 +515,36 @@ class LiveSession(QObject):
             self._apply_cells(pending[model.CELLS])
             self._apply_formats(pending[model.FORMATS])
             self._apply_widths(pending[model.WIDTHS])
+            self._apply_charts(pending[model.CHARTS])
         finally:
             self._busy = False
         self._refresh_peers()
         if new_sheets:
             self.peers_changed.emit(self._peers)   # cursors for new sheets
+
+    def _apply_charts(self, chart_ids):
+        """Draw (or redraw, or remove) charts a collaborator changed."""
+        by_id = {getattr(chart, "_collab_id", None): chart
+                 for sheet in self._sheets.values()
+                 for chart in getattr(sheet, "_charts", [])}
+        for chart_id in chart_ids:
+            old = by_id.get(chart_id)
+            if old is not None:
+                remove_chart(old)
+            self._last_charts.pop(chart_id, None)
+            spec = model.decode_json(self.ycharts.get(chart_id))
+            if not spec:
+                continue
+            sheet = self._sheets.get(spec.get("sheetId"))
+            if sheet is None:
+                continue
+            chart = chart_from_spec(sheet, spec)
+            if chart is None:
+                continue
+            chart._collab_id = chart_id
+            # What this window now shows, so it is not sent straight back.
+            self._last_charts[chart_id] = spec_from_chart(
+                chart, spec["sheetId"])
 
     def _confirm_python(self, cell_keys) -> bool:
         if self._python_trusted is not None:

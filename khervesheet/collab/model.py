@@ -29,6 +29,7 @@ SHEETS = "sheets"
 CELLS = "cells"
 FORMATS = "formats"
 WIDTHS = "widths"
+CHARTS = "charts"          # chart id → JSON chart spec (core/charts.py)
 
 Cell = Tuple[int, int]
 
@@ -58,6 +59,16 @@ def parse_width_key(key: str) -> Tuple[str, int]:
 
 def sheet_id_of(key: str) -> str:
     return key.partition("|")[0]
+
+
+def decode_json(raw):
+    """A JSON value from the shared document; None if missing or bad."""
+    if not isinstance(raw, str):
+        return None
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return None
 
 
 def encode_json(value) -> str:
