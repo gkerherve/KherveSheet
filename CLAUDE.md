@@ -58,6 +58,18 @@ into a new module and import.
     detached batch helper. Windows + frozen builds only.
   - `git_backend.py` — per-document Git repo: auto-commit, push, pull, history, branches (pygit2).
   - `history_dialog.py` — `HistoryDialog` commit browser with DAG graph, diff view, restore.
+  - `collab/` — live co-editing (File ▸ Live Sharing), pycrdt/Yjs over WebSocket:
+    - `model.py` — Qt-free doc layout (flat maps `sheets`/`cells`/`formats`/`widths`,
+      keys `"<sheet id>|r,c"`), workbook snapshots and diffs. Cells hold *sources*.
+    - `session.py` — `LiveSession`: `QWebSocket` on the GUI thread, Yjs sync protocol,
+      local edits found by diffing on undo-stack moves + a 1.5 s poll, remote edits
+      applied via `_on_cell_changed` with `sheet._collab_applying` set (no undo push);
+      remote `=PY` only runs after `_confirm_python_trust("live:<room>")`.
+    - `server.py` — relay (`python -m khervesheet.collab.server`), SQLite-persisted
+      rooms; `BackgroundServer` hosts it in-app on a thread.
+    - `dialogs.py` — Share/Join/Invite dialogs and the status-bar indicator.
+    - Not yet synced: merges, row heights, charts/images/shapes, notes, checkboxes;
+      row/column insert and sort resend cells by position.
   - `mcp_server.py`  — stdio MCP server an external host (Claude Desktop,
     Claude Code, Cursor, Zed) launches. Pure stdlib, no Qt: it forwards
     JSON-RPC `tools/call` over a loopback socket. Also reachable as

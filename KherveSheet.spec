@@ -58,9 +58,9 @@ _version_file = ROOT / "khervesheet" / "VERSION"
 if _version_file.is_file():
     datas.append((str(_version_file), "khervesheet"))
 binaries = []
-# QtNetwork backs the MCP bridge and is only reached through a
-# lazy import, so name it explicitly rather than trust analysis.
-hiddenimports = ["khervesheet", "PyQt5.QtNetwork"]
+# QtNetwork backs the MCP bridge and QtWebSockets live sharing; both are
+# only reached through lazy imports, so name them explicitly.
+hiddenimports = ["khervesheet", "PyQt5.QtNetwork", "PyQt5.QtWebSockets"]
 
 # Packages whose data files / submodules PyInstaller's built-in hooks may
 # miss.  numpy / scipy / pandas / matplotlib / PyQt5 have good built-in
@@ -79,6 +79,8 @@ _REQUIRED = [
     "openpyxl",                             # Excel import/export
     "spellchecker",                         # bundled dictionary data
     "certifi",                             # SSL certs for =PY HTTPS fetches
+    "pycrdt", "anyio", "sqlite_anyio",     # live sharing (Yjs documents)
+    "hypercorn", "h11", "wsproto",         # live sharing: hosted server
 ]
 _OPTIONAL = ["anthropic", "openai", "mistralai", "ollama"]
 

@@ -124,6 +124,15 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_spell_live_act"):
             self._toggle_live_spell(self._spell_live_act.isChecked())
 
+    def _install_live_sharing(self, file_menu):
+        """File ▸ Live Sharing, if pycrdt and Qt WebSockets are present."""
+        try:
+            from .collab.dialogs import LiveSharing
+        except ImportError:
+            return
+        self._live = LiveSharing(self)
+        self._live.install_menu(file_menu)
+
     def _wire_undo_to_sheets(self):
         # The layout tab hosts its own overlay shapes; give it the shared
         # undo stack so inserts/edits there are undoable too.
@@ -185,6 +194,7 @@ class MainWindow(QMainWindow):
         vc_menu.addAction("Pull", self._vc_pull)
         vc_menu.addSeparator()
         vc_menu.addAction("Configure Remote…", self._vc_configure_remote)
+        self._install_live_sharing(file_menu)
         file_menu.addSeparator()
         file_menu.addAction("E&xit", self.close, "Ctrl+Q")
 
@@ -886,6 +896,8 @@ class MainWindow(QMainWindow):
 
         self._status_label = QLabel("Ready")
         sb.addWidget(self._status_label, stretch=1)
+        if getattr(self, "_live", None) is not None:
+            sb.addPermanentWidget(self._live)
 
         self._progress = QProgressBar()
         self._progress.setFixedWidth(200)

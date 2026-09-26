@@ -2171,7 +2171,9 @@ class SheetWidget(QWidget):
 
         self._shadow[(row, col)] = new_text
 
-        if self._undo_stack is not None and old_text != new_text:
+        # Collaborators' edits (live sharing) are not ours to undo.
+        if (self._undo_stack is not None and old_text != new_text
+                and not getattr(self, "_collab_applying", False)):
             cmd = CellEditCmd(self, row, col, old_text, new_text)
             self._undo_stack.push(cmd)
 
