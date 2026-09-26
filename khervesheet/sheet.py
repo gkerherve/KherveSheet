@@ -22,7 +22,11 @@ from .core.numbers import format_value as _format_value
 from .core.refs import (  # noqa: F401 - re-exported for other modules
     XREF_PATTERN as _XREF_PATTERN,
     col_index_to_letter,
+    REF_PATTERN,
+    RANGE_PATTERN,
+    function_names,
     letter_to_col_index,
+    parse_cell_refs,
     quote_sheet_name as _quote_sheet_name,
     shift_formula,
 )
@@ -2525,75 +2529,15 @@ class SheetWidget(CellValues, QWidget):
         self.table.setFocus()
 
     # ── Formula reference highlighting ─────────────────────────────
-    # Pattern for ranges like A1:B10 (must be checked before singles).
-    _RANGE_PATTERN = None
-    # Pattern for single cell refs like A1, $B$5.
-    _REF_PATTERN = None
-    # Known function names — exclude from cell ref matching.
-    _FUNC_NAMES = None
+    # Patterns for ranges (A1:B10) and single refs (A1, $B$5), and the
+    # function names that are not refs; shared with core.refs.
+    _RANGE_PATTERN = RANGE_PATTERN
+    _REF_PATTERN = REF_PATTERN
+    _FUNC_NAMES = function_names()
 
     def _parse_cell_refs(self, formula_text: str):
-        """Extract unique (row, col) positions from cell references
-        in *formula_text*, expanding ranges like A1:A10 into every
-        cell in the range.  Returns a list of (row, col).
-
-        Cross-sheet tokens (``Sheet1!A1``) are removed first so their
-        inner ref isn't mistaken for a local cell on this sheet."""
-        import re
-        formula_text = _XREF_PATTERN.sub(" ", formula_text or "")
-        if SheetWidget._RANGE_PATTERN is None:
-            SheetWidget._RANGE_PATTERN = re.compile(
-                r'\$?([A-Za-z]{1,3})\$?(\d{1,7})'
-                r'\s*:\s*'
-                r'\$?([A-Za-z]{1,3})\$?(\d{1,7})')
-        if SheetWidget._REF_PATTERN is None:
-            SheetWidget._REF_PATTERN = re.compile(
-                r'\$?([A-Za-z]{1,3})\$?(\d{1,7})')
-        if SheetWidget._FUNC_NAMES is None:
-            from .formulas import FUNCTION_CATEGORIES
-            names = set()
-            for fns in FUNCTION_CATEGORIES.values():
-                for fn in fns:
-                    names.add(fn.replace(".", ""))
-            SheetWidget._FUNC_NAMES = names
-
-        seen = set()
-        result = []
-
-        def _add(r, c):
-            key = (r, c)
-            if key not in seen and r >= 0 and c >= 0:
-                seen.add(key)
-                result.append(key)
-
-        # First pass — expand ranges (A1:B10 → every cell).
-        used_spans = set()
-        for m in self._RANGE_PATTERN.finditer(formula_text):
-            used_spans.add((m.start(), m.end()))
-            c1 = letter_to_col_index(m.group(1).upper())
-            r1 = int(m.group(2)) - 1
-            c2 = letter_to_col_index(m.group(3).upper())
-            r2 = int(m.group(4)) - 1
-            for r in range(min(r1, r2), max(r1, r2) + 1):
-                for c in range(min(c1, c2), max(c1, c2) + 1):
-                    _add(r, c)
-
-        # Second pass — single refs not already consumed by ranges.
-        for m in self._REF_PATTERN.finditer(formula_text):
-            # Skip if this match is inside an already-consumed range.
-            if any(s <= m.start() and m.end() <= e
-                   for s, e in used_spans):
-                continue
-            letters = m.group(1).upper()
-            # Skip function names (SUM, AVERAGE, etc.).
-            if letters in self._FUNC_NAMES:
-                continue
-            row_num = int(m.group(2))
-            c = letter_to_col_index(letters)
-            r = row_num - 1
-            _add(r, c)
-
-        return result
+        """Every (row, col) *formula_text* reads (see core.refs)."""
+        return parse_cell_refs(formula_text)
 
     def _parse_ref_tokens(self, text: str):
         """Parse *text* into a list of reference tokens, each

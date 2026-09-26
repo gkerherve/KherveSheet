@@ -31,6 +31,19 @@ into a new module and import.
   - `_version.py`   — git-based version string.
   - `app.py`        — `main()`, app icon, crash log, QSS styling.
   - `sheet.py`      — `SheetWidget` (single grid tab with formula bar).
+  - `core/` — the calculation engine with **no Qt** (runs in Pyodide for KherveCELL):
+    - `functions.py` — the ~290-function library, `build_namespace(host)`.
+    - `compiler.py` — `compile_formula(formula, ns, ns_lower)`: formula text → code.
+    - `values.py` — `CellValues` mixin (_C/_RANGE/_COL/_XC readers) over `_cell_text(r, c)`;
+      `SheetWidget` and `engine.Sheet` both inherit it.
+    - `refs.py` — A1 helpers, `parse_cell_refs`, `shift_formula`, cross-sheet refs.
+    - `numbers.py` — `format_number`, `format_value`. `catalog.py` — function catalogue.
+    - `engine.py` — Qt-free `Workbook`/`Sheet` mirroring the desktop's typing, recalc,
+      cross-sheet refresh and file loading; new sheets are 5,000 × 50.
+    - Parity is enforced: `tests/test_formula_golden.py` (245 formulas, golden JSON in
+      `tests/data/`) and `tests/test_core_engine.py` (engine vs desktop, typed side by side).
+      Change formula behaviour on purpose only, then regenerate with
+      `KHERVESHEET_WRITE_GOLDEN=1`.
   - `workbook.py`   — `WorkbookWidget` (QTabWidget managing sheets).
   - `graph.py`      — `EmbeddedChart` (matplotlib chart overlaid on grid viewport).
   - `axis_dialog.py` — `AxisPropertiesDialog` (per-axis config: scale, title, ticks, grids).
@@ -188,3 +201,13 @@ Commit subjects under 70 chars; body explains *why*, not what.
 ## Licensing
 
 GPL-3.0. New source files must carry the short GPL notice at the top.
+
+## Known engine differences from Excel (to fix deliberately, golden updated)
+
+- Formulas read the *displayed* text of other cells (2 decimals by default), so
+  `=A1*3` with A1 `=1/3` gives 0.99, not 1.
+- Fail today: `=PI()`, `=CEILING(2.1,1)`, `=FLOOR(2.9,1)`, `=IFERROR(1/0,"x")` (1/0 raises
+  before IFERROR), `VLOOKUP(…,FALSE)`, `HLOOKUP`, `FIND`, `SEARCH`, `DAYS360`, `IRR`,
+  `IMSUM`/`IMPRODUCT` on "1+2i" strings, `CONVERT`, `NORM.AREA`, `INTERP.LINEAR`, `SUMX2MY2`…
+- `=1e20` is read as a reference to E20; `="a"&"b"` (`&`) is not supported.
+- Any source starting with `=PY` is a Python cell, even `=PYTHAGORAS(…)`.
