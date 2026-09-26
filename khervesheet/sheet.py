@@ -15,7 +15,7 @@ from typing import List, Optional
 
 import numpy as np
 
-from .core.compiler import CELLREF_SKIP, compile_formula
+from .core.compiler import CELLREF_SKIP, compile_formula, evaluate_cell
 from .core.functions import build_namespace, lower_names
 from .core.numbers import format_number as _format_number  # noqa: F401
 from .core.numbers import format_value as _format_value
@@ -1183,6 +1183,9 @@ class SheetWidget(CellValues, QWidget):
         super().__init__()
         self._undo_stack = None  # set by MainWindow after construction
         self._default_format = "General"
+        # Exact numbers behind rounded cell text (see core.values).
+        self._precise = {}
+        self._last_raw = None
         # When set, _recalc_dependents skips data_changed emissions so
         # charts are not redrawn on every recalc (used by the Solver,
         # which recalculates the model hundreds of times).
@@ -1595,6 +1598,8 @@ class SheetWidget(CellValues, QWidget):
         if not nf or nf == "General":
             try:
                 val = float(text)
+                if abs(val) >= 1e15:
+                    return f"{val:.2E}"
                 return f"{val:.2f}"
             except (ValueError, TypeError):
                 return text
@@ -1974,9 +1979,14 @@ class SheetWidget(CellValues, QWidget):
                 it.setText(display)
             self.table.blockSignals(False)
             new_text = display
+            self._remember_value(row, col, display, self._last_raw)
         else:
             self._cell_formulas.pop((row, col), None)
             self._unregister_deps(row, col)
+            try:
+                typed_number = float(new_text)
+            except ValueError:
+                typed_number = None
             # Format plain numbers (strip trailing zeros).
             if new_text:
                 try:
@@ -1996,6 +2006,7 @@ class SheetWidget(CellValues, QWidget):
                 self.table.blockSignals(True)
                 it.setText(new_text)
                 self.table.blockSignals(False)
+            self._remember_value(row, col, new_text, typed_number)
 
         self._shadow[(row, col)] = new_text
 
@@ -2148,6 +2159,8 @@ class SheetWidget(CellValues, QWidget):
                 it.setText(result)
             self._shadow[(dr, dc)] = result
             self.table.blockSignals(False)
+            if not is_python_source(formula):
+                self._remember_value(dr, dc, result, self._last_raw)
             changed_cols.add(dc)
         # Notify charts about columns that changed via formula recalc.
         if not self._suppress_recalc_signals:
@@ -2765,34 +2778,9 @@ class SheetWidget(CellValues, QWidget):
     # ── Formula evaluation (basic) ───────────────────────────────────
     def _evaluate_formula(self, formula: str, row: int, col: int,
                           decimals: int = 3):
-        """Evaluate a cell formula (compiled once, then cached).
-
-        Supports cell refs (A1, $B$5), arithmetic (A1^2), range
-        functions (SUM(A1:A10)), whole-column functions (max(A)) and a
-        large library of Excel-style functions.  The formula is parsed
-        and compiled to a Python code object the first time it is seen;
-        thereafter the cached code is evaluated directly, reading live
-        cell values through the _C/_AGG/_COL helpers.
-        """
-        try:
-            code = self._compiled_cache.get(formula)
-            if code is None:
-                code = self._compile_formula(formula)
-                self._compiled_cache[formula] = code
-            if code is False:
-                return "#ERROR"
-            result = eval(code, self._build_eval_ns())  # noqa: S307
-            # Array spill: if the formula returns a list, write the
-            # remaining elements into the cells below and return the
-            # first element for the formula cell itself.
-            if isinstance(result, list) and len(result) > 1:
-                self._spill_array(result, row, col)
-                return _format_number(result[0], decimals)
-            if isinstance(result, list) and len(result) == 1:
-                return _format_number(result[0], decimals)
-            return _format_number(result, decimals)
-        except Exception:
-            return "#ERROR"
+        """Evaluate a cell formula and return its display (see
+        core.compiler.evaluate_cell); a list result spills below."""
+        return evaluate_cell(self, formula, row, col, decimals)
 
     def _spill_array(self, values, row, col):
         """Write spill values into the cells below (row+1 …) silently.
@@ -2815,6 +2803,7 @@ class SheetWidget(CellValues, QWidget):
                     self.table.setItem(r, col, item)
                 item.setData(Qt.EditRole, _format_number(v))
                 self._shadow[(r, col)] = item.text()
+                self._remember_value(r, col, item.text(), v)
         finally:
             self.table.blockSignals(False)
 
@@ -3131,6 +3120,8 @@ class SheetWidget(CellValues, QWidget):
             result = self._apply_cell_number_format(
                 str(self._evaluate_formula(formula, r, c, dec)), r, c)
         self._set_cell_quiet(r, c, result)
+        if not is_python_source(formula):
+            self._remember_value(r, c, result, self._last_raw)
 
     def _pick_cross_sheet_ref(self, event):
         """If another sheet is mid-formula-entry, insert a reference to the

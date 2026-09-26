@@ -20,8 +20,15 @@ def format_number(value, decimals=3):
         return value
     if not isinstance(value, float):
         return value
+    if value != value or value in (float("inf"), float("-inf")):
+        return "#NUM!"
+    # Very large numbers in scientific notation (1E+20), as Excel does.
+    if abs(value) >= 1e15:
+        mantissa, exponent = f"{value:.{decimals}E}".split("E")
+        mantissa = mantissa.rstrip("0").rstrip(".")
+        return f"{mantissa}E{exponent[0]}{exponent[1:].lstrip('0') or '0'}"
     # Exact integer floats.
-    if value == int(value) and abs(value) < 1e15:
+    if value == int(value):
         return int(value)
     # Round to requested precision and strip trailing zeros.
     rounded = round(value, decimals)

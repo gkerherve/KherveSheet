@@ -202,12 +202,19 @@ Commit subjects under 70 chars; body explains *why*, not what.
 
 GPL-3.0. New source files must carry the short GPL notice at the top.
 
-## Known engine differences from Excel (to fix deliberately, golden updated)
+## How formulas see cells (Excel rules)
 
-- Formulas read the *displayed* text of other cells (2 decimals by default), so
-  `=A1*3` with A1 `=1/3` gives 0.99, not 1.
-- Fail today: `=PI()`, `=CEILING(2.1,1)`, `=FLOOR(2.9,1)`, `=IFERROR(1/0,"x")` (1/0 raises
-  before IFERROR), `VLOOKUP(…,FALSE)`, `HLOOKUP`, `FIND`, `SEARCH`, `DAYS360`, `IRR`,
-  `IMSUM`/`IMPRODUCT` on "1+2i" strings, `CONVERT`, `NORM.AREA`, `INTERP.LINEAR`, `SUMX2MY2`…
-- `=1e20` is read as a reference to E20; `="a"&"b"` (`&`) is not supported.
-- Any source starting with `=PY` is a Python cell, even `=PYTHAGORAS(…)`.
+- A reference gives the cell's value: numbers at **full precision** (hosts
+  record the exact number behind the rounded text with `_remember_value`; a
+  cell rewritten another way falls back to its text), text as text, empty as
+  `BLANK` (0 in arithmetic, "" as text). Ranges are `core.values.Range`: the
+  values row by row plus `.grid` (rows × columns) for lookups.
+- The compiler leaves "text in quotes" alone, supports `=`/`<>` comparisons,
+  `&`, `""` inside text, and makes IF/IFS/IFERROR/IFNA arguments lazy.
+- Errors are Excel's: #DIV/0!, #VALUE!, #NAME?, #NUM!, #REF!, #N/A.
+
+## Known differences from Excel (still)
+
+- A TRUE/FALSE cell reads as 1/0 (Excel keeps a boolean; shows TRUE).
+- Numbers show 2 decimals by default; very large ones as 1.00E+20.
+- IRR/NPV-style functions take separate numbers as well as ranges.

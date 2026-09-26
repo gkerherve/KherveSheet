@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from .compiler import compile_formula
+from .compiler import compile_formula, evaluate_cell
 from .functions import build_namespace, lower_names
 from .numbers import format_number, format_value
 from .refs import XREF_PATTERN, parse_cell_refs
@@ -43,10 +43,16 @@ _DECIMALS = {"0": 0, "0.0": 1, "0.00": 2, "0.000": 3, "0.0000": 4}
 
 
 def is_python_source(text) -> bool:
-    """True if *text* is a Python cell (starts with the =PY marker).
+    """True if *text* is a Python cell: the =PY marker, then the end, a
+    space or a line break (so =PYTHAGORAS(…) stays a formula).
 
     Same rule as ``python_engine.is_python_source`` on the desktop."""
-    return isinstance(text, str) and text.lstrip().upper().startswith(PY_MARKER)
+    if not isinstance(text, str):
+        return False
+    s = text.lstrip()
+    return (s[:len(PY_MARKER)].upper() == PY_MARKER
+            and s[len(PY_MARKER):len(PY_MARKER) + 1] in ("", " ", "\n",
+                                                         "\r", "\t"))
 
 
 class Sheet(CellValues):
@@ -71,6 +77,9 @@ class Sheet(CellValues):
         self._dependents: Dict[Cell, set] = {}
         self._xref_cells: set = set()
         self._compiled_cache: dict = {}
+        #: Exact numbers behind rounded text (see core.values).
+        self._precise: dict = {}
+        self._last_raw = None
         self._eval_ns = None
         self._eval_ns_lower = None
 
@@ -129,19 +138,24 @@ class Sheet(CellValues):
         if text.startswith("="):
             self._cell_formulas[key] = text
             self._register_deps(row, col, text)
-            display = str(self._evaluate_formula(text, row, col, dec))
-            self._write(row, col,
-                        self._apply_cell_number_format(display, row, col))
+            display = self._apply_cell_number_format(
+                str(self._evaluate_formula(text, row, col, dec)), row, col)
+            self._write(row, col, display)
+            self._remember_value(row, col, display, self._last_raw)
             return
 
         self._cell_formulas.pop(key, None)
         self._unregister_deps(row, col)
+        typed_number = None
         if text:
             try:
-                text = str(format_number(float(text), dec))
+                typed_number = float(text)
+                text = str(format_number(typed_number, dec))
             except ValueError:
                 pass
-        self._write(row, col, self._apply_cell_number_format(text, row, col))
+        display = self._apply_cell_number_format(text, row, col)
+        self._write(row, col, display)
+        self._remember_value(row, col, display, typed_number)
 
     def _write(self, row, col, text):
         key = (row, col)
@@ -181,7 +195,10 @@ class Sheet(CellValues):
             return text
         if not nf or nf == "General":
             try:
-                return f"{float(text):.2f}"
+                val = float(text)
+                if abs(val) >= 1e15:
+                    return f"{val:.2E}"
+                return f"{val:.2f}"
             except (ValueError, TypeError):
                 return text
         return format_value(text, nf)
@@ -208,29 +225,16 @@ class Sheet(CellValues):
 
     def _evaluate_formula(self, formula: str, row: int, col: int,
                           decimals: int = 3):
-        """Evaluate a cell formula (compiled once, then cached)."""
-        try:
-            code = self._compiled_cache.get(formula)
-            if code is None:
-                code = self._compile_formula(formula)
-                self._compiled_cache[formula] = code
-            if code is False:
-                return "#ERROR"
-            result = eval(code, self._build_eval_ns())  # noqa: S307
-            # Array spill: the rest of a list goes in the cells below.
-            if isinstance(result, list) and len(result) > 1:
-                self._spill_array(result, row, col)
-                return format_number(result[0], decimals)
-            if isinstance(result, list) and len(result) == 1:
-                return format_number(result[0], decimals)
-            return format_number(result, decimals)
-        except Exception:
-            return "#ERROR"
+        """Evaluate a cell formula and return its display; a list result
+        spills below (see core.compiler.evaluate_cell)."""
+        return evaluate_cell(self, formula, row, col, decimals)
 
     def _spill_array(self, values, row, col):
         for i, v in enumerate(values[1:], start=1):
             self._ensure_size(row + i, col)
-            self._write(row + i, col, str(format_number(v)))
+            text = str(format_number(v))
+            self._write(row + i, col, text)
+            self._remember_value(row + i, col, text, v)
 
     # ── Dependencies ─────────────────────────────────────────────────
     def _register_deps(self, row, col, formula):
@@ -287,8 +291,10 @@ class Sheet(CellValues):
         if not formula or is_python_source(formula):
             return
         dec = self._cell_decimals(r, c)
-        result = str(self._evaluate_formula(formula, r, c, dec))
-        self._write(r, c, self._apply_cell_number_format(result, r, c))
+        result = self._apply_cell_number_format(
+            str(self._evaluate_formula(formula, r, c, dec)), r, c)
+        self._write(r, c, result)
+        self._remember_value(r, c, result, self._last_raw)
 
 
 class Workbook:
@@ -390,6 +396,7 @@ class Workbook:
                     sheet.texts[(r, c)] = result
                 else:
                     sheet.texts.pop((r, c), None)
+                sheet._remember_value(r, c, result, sheet._last_raw)
 
     # ── Change collection ────────────────────────────────────────────
     def _changed(self, sheet: Sheet, row: int, col: int, text: str):

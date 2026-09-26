@@ -122,6 +122,28 @@ def test_clearing_a_cell():
     assert s.text(0, 1) == "1.00"
 
 
+def test_formulas_read_full_precision_not_the_rounded_text():
+    s = Workbook().add_sheet("S")
+    s.set_cell(0, 0, "=1/3")
+    s.set_cell(0, 1, "=A1*3")
+    assert s.text(0, 0) == "0.33" and s.text(0, 1) == "1.00"
+    s.set_cell(1, 0, "2.718281828")
+    s.set_cell(1, 1, "=A2*1000000")
+    assert s.text(1, 1) == "2718281.83"
+    # A cell rewritten without its exact value falls back to its text.
+    s.texts[(0, 0)] = "0.5"
+    s.set_cell(0, 1, "=A1*3")
+    assert s.text(0, 1) == "1.50"
+
+
+def test_python_cells_need_the_marker_alone():
+    s = Workbook().add_sheet("S")
+    s.set_cell(0, 0, "=PYTHAGORAS(3,4)")
+    assert s.text(0, 0) == "#NAME?"
+    s.set_cell(0, 1, "=PY 1+1")
+    assert s.text(0, 1) == PYTHON_NOT_RUN
+
+
 def test_python_cells_are_kept_but_not_run():
     s = Workbook().add_sheet("S")
     s.set_cell(0, 0, "=PY\nimport os")
@@ -166,6 +188,10 @@ SCRIPT = [
     ("Data", 6, 0, "TRUE"), ("Data", 7, 0, "=A7+1"), ("Data", 8, 0, "="),
     ("Data", 0, 2, "0.1"), ("Data", 1, 2, "=C1*3"), ("Data", 2, 2, "=C2*C2"),
     ("Other", 2, 0, "=SUM(Data!A1:A3)"), ("Data", 2, 0, "100"),
+    # Full precision behind rounded cells, and Excel syntax
+    ("Data", 0, 3, "=1/3"), ("Data", 1, 3, "=D1*3"), ("Data", 2, 3, "0.123456"),
+    ("Data", 3, 3, "=D3*1000"), ("Data", 4, 3, "=IF(D2=1,\"exact\",\"rounded\")"),
+    ("Data", 5, 3, "=B1&\"!\""), ("Data", 6, 3, "=IFERROR(B1*2,\"text\")"),
 ]
 
 

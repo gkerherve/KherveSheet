@@ -42,8 +42,14 @@ _XL_CALL = re.compile(r"\b(?:ks|xl|cell)\s*\(\s*([\"'])(.+?)\1")
 
 
 def is_python_source(text) -> bool:
-    """True if *text* is a Python cell (starts with the =PY marker)."""
-    return isinstance(text, str) and text.lstrip().upper().startswith(PY_MARKER)
+    """True if *text* is a Python cell: the =PY marker, then the end, a
+    space or a line break (so =PYTHAGORAS(…) stays a formula)."""
+    if not isinstance(text, str):
+        return False
+    s = text.lstrip()
+    return (s[:len(PY_MARKER)].upper() == PY_MARKER
+            and s[len(PY_MARKER):len(PY_MARKER) + 1] in ("", " ", "\n",
+                                                         "\r", "\t"))
 
 
 def strip_marker(text: str) -> str:

@@ -25,6 +25,8 @@ DATA = {
         **{(r, 7): repr(round(2.0 * (r * 0.5) + 1.0 + ((r % 3) - 1) * 0.1, 4))
            for r in range(12)},
     },
+    # I1 holds a formula whose shown value (0.33) is rounded; I2 reads it.
+    "Precision": {(0, 0): "=1/3", (1, 0): "=A1*3", (2, 0): "0.123456789"},
     "Other Sheet": {
         (0, 0): "100", (1, 0): "200", (2, 0): "300",
         (0, 1): "hello",
@@ -123,6 +125,23 @@ FORMULAS = [
     # Cross-sheet references
     "='Other Sheet'!A1", "='Other Sheet'!A1+A2", "=SUM('Other Sheet'!A1:A3)",
     "='Other Sheet'!B1", "=Data!A5*2",
+    # Excel syntax: comparisons, text joining, quotes inside text
+    "=IF(A1=1,\"one\",\"other\")", "=A1=1", "=A1<>2", "=C1=\"apple\"",
+    "=\"say \"\"hi\"\"\"", "=C1&\"-\"&A2", "=1+2&\"x\"", "=A1&B1",
+    "=COUNTIF(C1:C5,\"A1\")",
+    # Only the branch that is needed is computed
+    "=IF(A1=0,0,1/A1)", "=IF(A1>0,\"ok\",1/0)", "=IFERROR(C1+1,\"text\")",
+    "=IFNA(MATCH(99,A1:A10,0),\"none\")", "=IFS(A1>5,1/0,TRUE,\"else\")",
+    # Text cells, lookups on tables, text made from numbers
+    "=VLOOKUP(\"cherry\",C1:D3,2,FALSE)", "=INDEX(A1:B10,3,2)",
+    "=HLOOKUP(1,A1:B3,3)", "=MID(A10*100,1,2)", "=LEN(E3)",
+    # Full precision behind rounded cells
+    "=Precision!A2", "=Precision!A3*1000000", "=Precision!A1*300",
+    # More constants, rounding and units
+    "=PI*2", "=CEILING(-2.1,-1)", "=FLOOR(-2.5,1)",
+    "=CONVERT(100,\"C\",\"F\")", "=CONVERT(5,\"mi\",\"km\")",
+    "=CONVERT(1,\"kWh\",\"J\")", "=CONVERT(1,\"m\",\"kg\")",
+    "=PYTHAGORAS(3,4)", "=SQRT(-1)", "=1e300*1e300",
     # Errors and edge cases
     "=NOSUCHFUNC(1)", "=SUM(", "=\"text\"", "=1.0", "=0.1+0.2",
     "=1/3", "=1e20", "=-1e-9",

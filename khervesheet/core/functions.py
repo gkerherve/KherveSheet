@@ -15,6 +15,8 @@ the Free Software Foundation, either version 3 of the License, or
 
 import numpy as np
 
+from .values import Blank, Range
+
 
 def build_namespace(host):
     """Every function and constant a formula can use, bound to *host*."""
@@ -38,11 +40,69 @@ def build_namespace(host):
         # Flatten then keep only numeric-convertible values.
         out = []
         for v in _flatten(args):
+            if isinstance(v, Blank):
+                continue           # empty cells are not numbers
             try:
                 out.append(float(v))
             except (TypeError, ValueError):
                 pass
         return out
+
+    def _text(v):
+        # A value as text, the way Excel writes it: 2 not 2.0,
+        # 0.1+0.2 as 0.3 (15 significant digits), "" for empty.
+        if v is None or isinstance(v, Blank):
+            return ""
+        if isinstance(v, bool):
+            return "TRUE" if v else "FALSE"
+        if isinstance(v, float):
+            if v.is_integer() and abs(v) < 1e15:
+                return str(int(v))
+            return f"{v:.15g}"
+        return str(v)
+
+    class _Lazy:
+        # An IF/IFS/IFERROR/IFNA argument, computed only when needed.
+        __slots__ = ("thunk",)
+
+        def __init__(self, thunk):
+            self.thunk = thunk
+
+    def _force(v):
+        return v.thunk() if isinstance(v, _Lazy) else v
+
+    def _is_error(v):
+        return isinstance(v, str) and v.startswith("#") and (
+            v.endswith("!") or v.endswith("?") or v in ("#N/A", "#ERROR"))
+
+    class _Join:
+        # The & operator: a & _JOIN & b joins a and b as text.
+        def __rand__(self, left):
+            return _Joining(left)
+
+    class _Joining:
+        __slots__ = ("left",)
+
+        def __init__(self, left):
+            self.left = left
+
+        def __and__(self, right):
+            return _text(self.left) + _text(right)
+
+    _JOIN = _Join()
+
+    class _Constant(float):
+        # PI works both as a value (PI*2) and a function (PI()*2).
+        def __call__(self):
+            return float(self)
+
+    def _grid(x):
+        # A range's rows × columns; a plain list is one column.
+        if isinstance(x, Range):
+            return x.grid
+        if isinstance(x, list) and x and isinstance(x[0], list):
+            return x
+        return [[v] for v in _flatten([x])]
 
     def _mean(*args):
         # Accept _mean([1,2,3]), _mean(1,2,3) or mixed ranges.
@@ -226,41 +286,41 @@ def build_namespace(host):
 
     # ── Text helpers ─────────────────────────────────────
     def _LEFT(t, n=1):
-        return str(t)[:int(n)]
+        return _text(t)[:int(n)]
 
     def _RIGHT(t, n=1):
-        return str(t)[-int(n):]
+        return _text(t)[-int(n):]
 
     def _MID(t, start, n):
-        s = str(t)
+        s = _text(t)
         return s[int(start) - 1:int(start) - 1 + int(n)]
 
     def _LEN(t):
-        return len(str(t))
+        return len(_text(t))
 
     def _LOWER(t):
-        return str(t).lower()
+        return _text(t).lower()
 
     def _UPPER(t):
-        return str(t).upper()
+        return _text(t).upper()
 
     def _PROPER(t):
-        return str(t).title()
+        return _text(t).title()
 
     def _TRIM(t):
-        return " ".join(str(t).split())
+        return " ".join(_text(t).split())
 
     def _CONCAT(*args):
-        return "".join(str(a) for a in args)
+        return "".join(_text(a) for a in args)
 
     def _SUBSTITUTE(t, old, new, instance=None):
-        s = str(t)
+        s = _text(t)
         if instance is None:
-            return s.replace(str(old), str(new))
+            return s.replace(_text(old), _text(new))
         # Replace only the n-th occurrence.
         count = 0
         idx = 0
-        old_s, new_s = str(old), str(new)
+        old_s, new_s = _text(old), _text(new)
         while True:
             pos = s.find(old_s, idx)
             if pos == -1:
@@ -271,22 +331,22 @@ def build_namespace(host):
             idx = pos + 1
 
     def _REPT(t, n):
-        return str(t) * int(n)
+        return _text(t) * int(n)
 
     def _FIND(find, within, start=1):
-        pos = str(within).find(str(find), int(start) - 1)
+        pos = _text(within).find(_text(find), int(start) - 1)
         return pos + 1 if pos >= 0 else "#VALUE!"
 
     def _REPLACE(old, start, n, new):
-        s = str(old)
+        s = _text(old)
         i = int(start) - 1
-        return s[:i] + str(new) + s[i + int(n):]
+        return s[:i] + _text(new) + s[i + int(n):]
 
     def _EXACT(a, b):
-        return str(a) == str(b)
+        return _text(a) == str(b)
 
     def _VALUE(t):
-        return float(str(t))
+        return float(_text(t))
 
     def _TEXT(v, fmt):
         return format(float(v), str(fmt))
@@ -295,14 +355,14 @@ def build_namespace(host):
         return chr(int(float(n)))
 
     def _CODE(t):
-        s = str(t)
+        s = _text(t)
         return ord(s[0]) if s else 0
 
     def _CLEAN(t):
-        return "".join(c for c in str(t) if ord(c) >= 32)
+        return "".join(c for c in _text(t) if ord(c) >= 32)
 
     def _T(v):
-        return str(v) if isinstance(v, str) else ""
+        return _text(v) if isinstance(v, str) else ""
 
     def _DOLLAR_F(n, decimals=2):
         return f"${float(n):,.{int(decimals)}f}"
@@ -328,23 +388,23 @@ def build_namespace(host):
         return s
 
     def _NUMBERVALUE(text, dec_sep=".", grp_sep=","):
-        s = (str(text).replace(str(grp_sep), "")
+        s = (_text(text).replace(str(grp_sep), "")
              .replace(str(dec_sep), "."))
         return float(s)
 
     def _SEARCH(find, within, start=1):
-        pos = (str(within).lower()
-               .find(str(find).lower(), int(start) - 1))
+        pos = (_text(within).lower()
+               .find(_text(find).lower(), int(start) - 1))
         return pos + 1 if pos >= 0 else "#VALUE!"
 
     def _TEXTJOIN(delimiter, ignore_empty, *args):
-        d = str(delimiter)
+        d = _text(delimiter)
         vals = _flatten(args)
         if ignore_empty:
-            vals = [str(v) for v in vals
+            vals = [_text(v) for v in vals
                     if v not in ("", None)]
         else:
-            vals = [str(v) for v in vals]
+            vals = [_text(v) for v in vals]
         return d.join(vals)
 
     def _UNICHAR(n):
@@ -355,8 +415,11 @@ def build_namespace(host):
         return ord(s[0]) if s else 0
 
     # ── Logical helpers ──────────────────────────────────
-    def _IF(cond, true_val, false_val=""):
-        return true_val if cond else false_val
+    def _IF(cond, true_val=True, false_val=False):
+        cond = _force(cond)
+        if _is_error(cond):
+            return cond
+        return _force(true_val) if cond else _force(false_val)
 
     def _AND(*args):
         return all(args)
@@ -368,21 +431,24 @@ def build_namespace(host):
         return not val
 
     def _IFERROR(val, fallback):
-        # Evaluated eagerly so errors in val are already
-        # caught by the outer try/except — use as best-effort.
-        return val if val != "#ERROR" else fallback
+        try:
+            v = _force(val)
+        except Exception:
+            return _force(fallback)
+        return _force(fallback) if _is_error(v) else v
 
     def _XOR(*args):
         return sum(bool(a) for a in args) % 2 == 1
 
     def _IFNA(val, fallback):
-        return fallback if val == "#N/A" else val
+        v = _force(val)
+        return _force(fallback) if v == "#N/A" else v
 
     def _IFS(*args):
         # IFS(cond1, val1, cond2, val2, ...)
         for i in range(0, len(args) - 1, 2):
-            if args[i]:
-                return args[i + 1]
+            if _force(args[i]):
+                return _force(args[i + 1])
         return "#N/A"
 
     # ── Information functions ────────────────────────────
@@ -521,6 +587,22 @@ def build_namespace(host):
         return total
 
     # ── Math extras ──────────────────────────────────────
+    def _CEILING(n, significance=1):
+        n, sig = float(n), float(significance)
+        if sig == 0:
+            return 0.0
+        if n > 0 and sig < 0:
+            return "#NUM!"
+        return math.ceil(n / sig) * sig
+
+    def _FLOOR(n, significance=1):
+        n, sig = float(n), float(significance)
+        if sig == 0:
+            return "#DIV/0!"
+        if n > 0 and sig < 0:
+            return "#NUM!"
+        return math.floor(n / sig) * sig
+
     def _MOD(n, d):
         return float(n) % float(d)
 
@@ -1085,23 +1167,33 @@ def build_namespace(host):
     def _parse_complex(z):
         """Parse '3+4i' or '3-4i' or number into (real, imag)."""
         s = str(z).strip().replace(" ", "")
+
+        def coeff(t):
+            # "", "+" and "-" before i mean 1, 1 and -1.
+            return {"": 1.0, "+": 1.0, "-": -1.0}.get(t, None) \
+                if t in ("", "+", "-") else float(t)
+
         if s.endswith("i") or s.endswith("j"):
             s = s[:-1]
             for idx in range(len(s) - 1, 0, -1):
-                if s[idx] in "+-":
-                    return float(s[:idx]), float(s[idx:])
-            return 0.0, float(s) if s else 0.0
+                if s[idx] in "+-" and s[idx - 1] not in "eE":
+                    return float(s[:idx]), coeff(s[idx:])
+            return 0.0, coeff(s)
         try:
             return float(s), 0.0
         except ValueError:
             return 0.0, 0.0
 
     def _COMPLEX(real, imag, suffix="i"):
+        # Written as Excel does: 3+4i, 4+i, -i, 2.5.
         r, i = float(real), float(imag)
-        if i == 0: return str(r)
-        if r == 0: return f"{i}{suffix}"
+        if i == 0:
+            return _text(r)
+        coeff = {1.0: "", -1.0: "-"}.get(i, _text(i))
+        if r == 0:
+            return f"{coeff}{suffix}"
         sign = "+" if i > 0 else ""
-        return f"{r}{sign}{i}{suffix}"
+        return f"{_text(r)}{sign}{coeff}{suffix}"
 
     def _IMREAL(z):
         r, i = _parse_complex(z)
@@ -1193,8 +1285,106 @@ def build_namespace(host):
         c = complex(r1, i1) / complex(r2, i2)
         return _COMPLEX(c.real, c.imag)
 
+    _UNITS = {
+        # length (m)
+        "m": ("length", 1.0), "mi": ("length", 1609.344),
+        "Nmi": ("length", 1852.0), "in": ("length", 0.0254),
+        "ft": ("length", 0.3048), "yd": ("length", 0.9144),
+        "ang": ("length", 1e-10), "ell": ("length", 1.143),
+        "ly": ("length", 9.46073047258e15), "pc": ("length", 3.08567758e16),
+        # mass (g)
+        "g": ("mass", 1.0), "lbm": ("mass", 453.59237),
+        "ozm": ("mass", 28.349523125), "u": ("mass", 1.66053906660e-24),
+        "stone": ("mass", 6350.29318), "ton": ("mass", 907184.74),
+        # time (s)
+        "sec": ("time", 1.0), "s": ("time", 1.0), "mn": ("time", 60.0),
+        "min": ("time", 60.0), "hr": ("time", 3600.0),
+        "day": ("time", 86400.0), "d": ("time", 86400.0),
+        "yr": ("time", 31557600.0),
+        # pressure (Pa)
+        "Pa": ("pressure", 1.0), "p": ("pressure", 1.0),
+        "atm": ("pressure", 101325.0), "at": ("pressure", 101325.0),
+        "mmHg": ("pressure", 133.322), "psi": ("pressure", 6894.757),
+        "Torr": ("pressure", 133.322368),
+        # force (N)
+        "N": ("force", 1.0), "dyn": ("force", 1e-5), "lbf": ("force", 4.4482216),
+        # energy (J)
+        "J": ("energy", 1.0), "e": ("energy", 1e-7), "c": ("energy", 4.184),
+        "cal": ("energy", 4.1868), "eV": ("energy", 1.602176634e-19),
+        "ev": ("energy", 1.602176634e-19), "Wh": ("energy", 3600.0),
+        "wh": ("energy", 3600.0), "BTU": ("energy", 1055.05585262),
+        # power (W)
+        "W": ("power", 1.0), "w": ("power", 1.0), "HP": ("power", 745.69987),
+        "h": ("power", 745.69987), "PS": ("power", 735.49875),
+        # magnetism (T)
+        "T": ("magnetism", 1.0), "ga": ("magnetism", 1e-4),
+        # volume (l)
+        "l": ("volume", 1.0), "L": ("volume", 1.0), "lt": ("volume", 1.0),
+        "m3": ("volume", 1000.0), "tsp": ("volume", 0.00492892159375),
+        "tbs": ("volume", 0.01478676478125), "oz": ("volume", 0.0295735295625),
+        "cup": ("volume", 0.2365882365), "pt": ("volume", 0.473176473),
+        "qt": ("volume", 0.946352946), "gal": ("volume", 3.785411784),
+        # area (m2)
+        "m2": ("area", 1.0), "ha": ("area", 10000.0),
+        "ar": ("area", 100.0), "uk_acre": ("area", 4046.8564224),
+        # information (bit)
+        "bit": ("information", 1.0), "byte": ("information", 8.0),
+        # speed (m/s)
+        "m/s": ("speed", 1.0), "m/sec": ("speed", 1.0),
+        "m/h": ("speed", 1 / 3600.0), "mph": ("speed", 0.44704),
+        "kn": ("speed", 0.514444444),
+    }
+    _PREFIXES = {
+        "Y": 1e24, "Z": 1e21, "E": 1e18, "P": 1e15, "T": 1e12, "G": 1e9,
+        "M": 1e6, "k": 1e3, "h": 1e2, "da": 1e1, "d": 1e-1, "c": 1e-2,
+        "m": 1e-3, "u": 1e-6, "µ": 1e-6, "n": 1e-9, "p": 1e-12,
+        "f": 1e-15, "a": 1e-18, "z": 1e-21, "y": 1e-24,
+        "ki": 2 ** 10, "Mi": 2 ** 20, "Gi": 2 ** 30, "Ti": 2 ** 40,
+    }
+    _TEMPERATURES = {"C", "cel", "F", "fah", "K", "kel", "Rank", "Reau"}
+
+    def _unit(name):
+        if name in _UNITS:
+            return _UNITS[name]
+        for prefix in sorted(_PREFIXES, key=len, reverse=True):
+            base = name[len(prefix):]
+            if name.startswith(prefix) and base in _UNITS:
+                kind, factor = _UNITS[base]
+                power = 2 if kind == "area" and base.endswith("2") else \
+                    3 if kind == "volume" and base.endswith("3") else 1
+                return kind, factor * _PREFIXES[prefix] ** power
+        return None
+
+    def _to_kelvin(v, unit):
+        if unit in ("C", "cel"):
+            return v + 273.15
+        if unit in ("F", "fah"):
+            return (v - 32) * 5 / 9 + 273.15
+        if unit == "Rank":
+            return v * 5 / 9
+        if unit == "Reau":
+            return v * 1.25 + 273.15
+        return v
+
+    def _from_kelvin(k, unit):
+        if unit in ("C", "cel"):
+            return k - 273.15
+        if unit in ("F", "fah"):
+            return (k - 273.15) * 9 / 5 + 32
+        if unit == "Rank":
+            return k * 9 / 5
+        if unit == "Reau":
+            return (k - 273.15) * 0.8
+        return k
+
     def _CONVERT(n, from_unit, to_unit):
-        return "#N/A"  # Full implementation needs unit tables
+        v, a, b = float(n), str(from_unit), str(to_unit)
+        if a in _TEMPERATURES and b in _TEMPERATURES:
+            return _from_kelvin(_to_kelvin(v, a), b)
+        ua, ub = _unit(a), _unit(b)
+        if ua is None or ub is None or ua[0] != ub[0]:
+            return "#N/A"
+        return v * ua[1] / ub[1]
 
     # ── Financial functions ─────────────────────────────
     def _PV(rate, nper, pmt, fv=0, type=0):
@@ -1456,12 +1646,12 @@ def build_namespace(host):
             return int(float(args[0]))
         return 1
 
-    def _ROWS(*args):
-        v = _flatten(args)
-        return len(v) if v else 0
+    def _ROWS(array):
+        return len(_grid(array))
 
-    def _COLUMNS(*args):
-        return 1
+    def _COLUMNS(array):
+        grid = _grid(array)
+        return len(grid[0]) if grid else 0
 
     def _CHOOSE(idx, *args):
         i = int(float(idx))
@@ -1525,10 +1715,17 @@ def build_namespace(host):
             return last
 
     def _INDEX(array, row_num, col_num=None):
-        vals = _flatten([array])
+        grid = _grid(array)
         r = int(float(row_num))
-        if 1 <= r <= len(vals):
-            return vals[r - 1]
+        if col_num is None:
+            if len(grid) == 1:           # a single row: INDEX(A1:E1, 3)
+                r, c = 1, r
+            else:
+                c = 1
+        else:
+            c = int(float(col_num))
+        if 1 <= r <= len(grid) and 1 <= c <= len(grid[r - 1]):
+            return grid[r - 1][c - 1]
         return "#REF!"
 
     def _SWITCH(expr, *args):
@@ -1547,11 +1744,7 @@ def build_namespace(host):
 
     def _VLOOKUP(lookup, rng, col_idx, approx=True):
         ci = int(float(col_idx))
-        if isinstance(rng, list) and rng and isinstance(rng[0], list):
-            table2d = rng
-        else:
-            vals = _flatten([rng])
-            table2d = [vals]
+        table2d = _grid(rng)
         for row in table2d:
             if not row:
                 continue
@@ -1584,11 +1777,7 @@ def build_namespace(host):
 
     def _HLOOKUP(lookup, rng, row_idx, approx=True):
         ri = int(float(row_idx))
-        if isinstance(rng, list) and rng and isinstance(rng[0], list):
-            table2d = rng
-        else:
-            vals = _flatten([rng])
-            table2d = [vals]
+        table2d = _grid(rng)
         ncols = max((len(r) for r in table2d), default=0)
         for c in range(ncols):
             first = table2d[0][c] if c < len(table2d[0]) else None
@@ -1964,7 +2153,7 @@ def build_namespace(host):
           "MEAN": _mean, "AVG": _mean, "AVERAGE": _mean,
           "COUNT": _COUNT, "COUNTA": _COUNTA,
           "STDEV": _STDEV, "SUMSQ": _SUMSQ,
-          "PI": math.pi, "pi": math.pi,
+          "PI": _Constant(math.pi), "pi": _Constant(math.pi),
           "sqrt": math.sqrt, "SQRT": math.sqrt,
           "log": math.log, "LOG": math.log,
           "log10": math.log10, "LOG10": math.log10,
@@ -2161,6 +2350,9 @@ def build_namespace(host):
           "IMSUM": _IMSUM, "IMSUB": _IMSUB,
           "IMPRODUCT": _IMPRODUCT, "IMDIV": _IMDIV,
           "CONVERT": _CONVERT,
+                  "CEILING": _CEILING, "FLOOR": _FLOOR,
+                  # Runtime helpers of the compiler: & and lazy IFs.
+                  "_JOIN": _JOIN, "_LAZY": _Lazy,
           # Compiled-formula runtime helpers (read live values).
           "_C": host._cell_val,
           "_CR": host._cell_raw,

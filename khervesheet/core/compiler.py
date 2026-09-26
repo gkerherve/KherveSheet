@@ -112,15 +112,123 @@ CELLREF_SKIP = frozenset({
     "convert"})
 
 
+# An Excel text literal: "…", with "" standing for one quote inside.
+_STRING = re.compile(r'"(?:[^"]|"")*"')
+# A cell reference only when it stands alone: not inside a name (SUMX2MY2,
+# DAYS360), not the exponent of a number (1e20), not a function (LOG10().
+_CELL_REF = re.compile(
+    r'(?<![A-Za-z0-9_.])(\$?)([A-Za-z]{1,3})(\$?)(\d+)\b(?!\s*\()')
+# IF-like functions whose arguments are computed only when needed.
+_LAZY_CALL = re.compile(r'(IF|IFS|IFERROR|IFNA)\s*\(')
+
+
+def _split_strings(expr):
+    """Split *expr* into code and text parts: [(is_text, part)], each text
+    already turned into a Python literal."""
+    parts = []
+    pos = 0
+    for m in _STRING.finditer(expr):
+        if m.start() > pos:
+            parts.append((False, expr[pos:m.start()]))
+        parts.append((True, repr(m.group(0)[1:-1].replace('""', '"'))))
+        pos = m.end()
+    if pos < len(expr):
+        parts.append((False, expr[pos:]))
+    return parts
+
+
+def _on_code(parts, rewrite):
+    return [(is_text, part if is_text else rewrite(part))
+            for is_text, part in parts]
+
+
+def _string_end(expr, i):
+    """Index just past the Python string literal starting at *i*."""
+    quote = expr[i]
+    j = i + 1
+    while j < len(expr):
+        if expr[j] == "\\":
+            j += 2
+            continue
+        if expr[j] == quote:
+            return j + 1
+        j += 1
+    return len(expr)
+
+
+def _call_arguments(expr, open_idx):
+    """(index of the matching ")", [argument texts]) for the call whose
+    "(" is at *open_idx*; strings and nested brackets are skipped."""
+    depth = 0
+    args = []
+    start = open_idx + 1
+    i = open_idx
+    while i < len(expr):
+        ch = expr[i]
+        if ch in "'\"":
+            i = _string_end(expr, i)
+            continue
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+            if depth == 0:
+                args.append(expr[start:i])
+                return i, args
+        elif ch == "," and depth == 1:
+            args.append(expr[start:i])
+            start = i + 1
+        i += 1
+    raise SyntaxError("unbalanced brackets")
+
+
+def _wrap_lazy(expr):
+    """IF(c, a, b) → IF(_LAZY(lambda: (c)), …): each argument is computed
+    only when the function asks for it, as in Excel (so IF(A1=0, 0, 1/A1)
+    and IFERROR(1/0, "x") work)."""
+    out = []
+    i = 0
+    while i < len(expr):
+        ch = expr[i]
+        if ch in "'\"":
+            j = _string_end(expr, i)
+            out.append(expr[i:j])
+            i = j
+            continue
+        m = _LAZY_CALL.match(expr, i)
+        if m and (i == 0 or not (expr[i - 1].isalnum()
+                                 or expr[i - 1] in "_.")):
+            close, args = _call_arguments(expr, m.end() - 1)
+            wrapped = ", ".join(
+                f"_LAZY(lambda: ({_wrap_lazy(a)}))" if a.strip() else "None"
+                for a in args)
+            out.append(f"{m.group(1)}({wrapped})")
+            i = close + 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _operators(code):
+    """Excel operators in Python: = and <> compare, ^ raises to a power,
+    & joins text."""
+    code = code.replace("<>", "!=")
+    code = re.sub(r'(?<![<>=!])=(?!=)', "==", code)
+    code = code.replace("^", "**")
+    return code.replace("&", " &_JOIN& ")
+
+
 def compile_formula(formula, ns, ns_lower):
     """Parse a formula and compile it to a reusable code object.
 
-    Cell refs and aggregate ranges are rewritten into _C/_AGG/_COL
+    Cell refs and aggregate ranges are rewritten into _C/_RANGE/_COL
     calls that read live grid values at eval time, so the compiled
     object is value-independent and safe to cache by formula text.
-    Returns False if the expression cannot be compiled.
+    Text in quotes is left alone.  Returns False if the expression cannot
+    be compiled.
     """
-    expr = formula[1:]  # strip leading =
+    parts = _split_strings(formula[1:])  # strip leading =
 
     # Mask cross-sheet refs (Sheet1!B5, 'My Sheet'!A1:B10) with
     # letters-only placeholders so the local cell-ref/range regexes
@@ -138,17 +246,12 @@ def compile_formula(formula, ns, ns_lower):
         xref_subs[token] = compile_xref(name, ref)
         return token
 
-    expr = XREF_PATTERN.sub(_mask_xref, expr)
-
-    # Rewrite dotted function names (NORM.MINMAX, FFT.MAG, …) into
-    # underscore equivalents that are valid Python identifiers.
-    expr = re.sub(
-        r'\b([A-Za-z]+(?:\.[A-Za-z]+)+)\s*\(',
-        lambda m: m.group(1).replace(".", "_") + "("
-        if m.group(1).replace(".", "_").upper() in ns
-        or ns_lower.get(m.group(1).replace(".", "_").lower())
-        else m.group(0),
-        expr)
+    def _dotted(m):
+        # NORM.MINMAX, FFT.MAG… → underscore names (valid identifiers).
+        name = m.group(1).replace(".", "_")
+        if name.upper() in ns or ns_lower.get(name.lower()):
+            return name + "("
+        return m.group(0)
 
     def _normalise_func(m):
         word = m.group(1)
@@ -157,23 +260,27 @@ def compile_formula(formula, ns, ns_lower):
         canon = ns_lower.get(word.lower())
         return canon + "(" if canon else m.group(0)
 
-    expr = re.sub(r'\b([A-Za-z_]\w*)\s*\(', _normalise_func, expr)
-    expr = _compile_range_functions(expr)
-    expr = _compile_column_functions(expr)
-    expr = re.sub(r'(\$?)([A-Za-z]{1,3})(\$?)(\d+)\b',
-                  _compile_cell_ref, expr)
-    # IS* functions need the raw cell value (string or number),
-    # not the numeric-coerced _C() result.
-    expr = re.sub(
-        r'\b(ISNUMBER|ISTEXT|ISNONTEXT|ISBLANK|ISLOGICAL)\(_C\(',
-        r'\1(_CR(', expr)
+    def _rewrite(code):
+        code = XREF_PATTERN.sub(_mask_xref, code)
+        code = re.sub(r'\b([A-Za-z]+(?:\.[A-Za-z]+)+)\s*\(', _dotted, code)
+        code = re.sub(r'\b([A-Za-z_]\w*)\s*\(', _normalise_func, code)
+        code = _compile_range_functions(code)
+        code = _compile_column_functions(code)
+        code = _CELL_REF.sub(_compile_cell_ref, code)
+        # IS* functions need the raw cell value (string or number).
+        code = re.sub(
+            r'\b(ISNUMBER|ISTEXT|ISNONTEXT|ISBLANK|ISLOGICAL)\(_C\(',
+            r'\1(_CR(', code)
+        return _operators(code)
+
+    expr = "".join(part for _, part in _on_code(parts, _rewrite))
     for token, call in xref_subs.items():
         expr = expr.replace(token, call)
-    expr = expr.replace("^", "**")
     try:
-        return compile(expr, "<formula>", "eval")
+        return compile(_wrap_lazy(expr), "<formula>", "eval")
     except Exception:
         return False
+
 
 def _compile_cell_ref(m):
     name = m.group(2)
@@ -197,7 +304,7 @@ def _compile_range_functions(expr: str) -> str:
         r2 = int(m.group(4)) - 1
         return f"_RANGE({c1},{r1},{c2},{r2})"
 
-    pattern = (r'\$?([A-Za-z]+)\$?(\d+)\s*:\s*'
+    pattern = (r'(?<![A-Za-z0-9_.])\$?([A-Za-z]+)\$?(\d+)\s*:\s*'
                r'\$?([A-Za-z]+)\$?(\d+)')
     return re.sub(pattern, _expand, expr)
 
@@ -212,3 +319,57 @@ def _compile_column_functions(expr: str) -> str:
     pattern = (r'(SUM|AVERAGE|AVG|MEAN|MIN|MAX|COUNT|STDEV)'
                r'\s*\(\s*([A-Z]+)\s*\)')
     return re.sub(pattern, _expand, expr, flags=re.IGNORECASE)
+
+
+# ── Running a formula ────────────────────────────────────────────────
+def _error_code(exc: Exception) -> str:
+    """The Excel error a Python exception stands for."""
+    if isinstance(exc, ZeroDivisionError):
+        return "#DIV/0!"
+    if isinstance(exc, NameError):
+        return "#NAME?"
+    if isinstance(exc, (OverflowError, ArithmeticError)):
+        return "#NUM!"
+    if isinstance(exc, ValueError) and "domain" in str(exc):
+        return "#NUM!"             # e.g. SQRT(-1), LN(0)
+    if isinstance(exc, (TypeError, ValueError)):
+        return "#VALUE!"
+    if isinstance(exc, (IndexError, KeyError)):
+        return "#REF!"
+    return "#ERROR"
+
+
+def run_formula(host, formula: str):
+    """Evaluate *formula* for *host* (a sheet) and return its raw result:
+    a number, text, a list (to spill), or an Excel error such as #DIV/0!.
+
+    The compiled code is cached on ``host._compiled_cache``."""
+    code = host._compiled_cache.get(formula)
+    if code is None:
+        code = host._compile_formula(formula)
+        host._compiled_cache[formula] = code
+    if code is False:
+        return "#ERROR"            # not a formula Python can read
+    try:
+        return eval(code, host._build_eval_ns())  # noqa: S307
+    except Exception as exc:
+        return _error_code(exc)
+
+
+def evaluate_cell(host, formula: str, row: int, col: int, decimals: int = 3):
+    """Evaluate a cell's formula and return what the cell shows.
+
+    A list result spills into the cells below (``host._spill_array``);
+    the exact first value is left in ``host._last_raw`` so the host can
+    remember it behind the rounded text."""
+    from .numbers import format_number
+    result = run_formula(host, formula)
+    if isinstance(result, list):
+        if len(result) > 1:
+            host._spill_array(result, row, col)
+        result = result[0] if result else ""
+    host._last_raw = result
+    try:
+        return format_number(result, decimals)
+    except Exception:
+        return "#ERROR"

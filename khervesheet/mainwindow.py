@@ -2062,6 +2062,8 @@ class MainWindow(QMainWindow):
                             if it:
                                 it.setText(str(result))
                             sheet._shadow[(r, c)] = str(result)
+                            sheet._remember_value(r, c, str(result),
+                                                  sheet._last_raw)
 
                     # Python (=PY) cells: run in row-major order (so earlier
                     # defs precede later uses), but only if the user trusts
@@ -2085,6 +2087,8 @@ class MainWindow(QMainWindow):
                             if it:
                                 it.setText(str(result))
                             sheet._shadow[(r, c)] = str(result)
+                            sheet._remember_value(r, c, str(result),
+                                                  sheet._last_raw)
                     elif pending_python:
                         # Not trusted: show the source, do not execute.
                         for r, c, src in pending_python:

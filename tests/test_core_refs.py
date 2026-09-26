@@ -55,3 +55,30 @@ def test_desktop_formula_highlighting_uses_the_core_patterns():
     app = QApplication.instance() or QApplication([])  # noqa: F841
     tokens = SheetWidget()._parse_ref_tokens("=SUM(A1:B3)+C4*2")
     assert [t["text"] for t in tokens] == ["A1:B3", "C4"]
+
+
+def test_desktop_sheet_keeps_full_precision_behind_rounded_text():
+    pytest.importorskip("PyQt5.QtWidgets")
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt5.QtWidgets import QApplication, QTableWidgetItem
+    from khervesheet.sheet import SheetWidget
+
+    app = QApplication.instance() or QApplication([])  # noqa: F841
+    sheet = SheetWidget()
+
+    def type_in(row, col, text):
+        sheet.table.blockSignals(True)
+        sheet.table.setItem(row, col, QTableWidgetItem(text))
+        sheet.table.blockSignals(False)
+        sheet._on_cell_changed(row, col)
+
+    type_in(0, 0, "=1/3")
+    type_in(0, 1, "=A1*3")
+    assert sheet.table.item(0, 1).text() == "1.00"
+    # Changing A1 recalculates B1 from A1's exact value too.
+    type_in(0, 0, "=2/3")
+    assert sheet.table.item(0, 1).text() == "2.00"
+    # Text written by another path (paste, undo…) is read as shown.
+    sheet._set_cell_quiet(0, 0, "0.5")
+    type_in(1, 1, "=A1*3")
+    assert sheet.table.item(1, 1).text() == "1.50"
