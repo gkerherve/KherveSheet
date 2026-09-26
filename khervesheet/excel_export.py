@@ -14,6 +14,11 @@ from typing import TYPE_CHECKING
 
 from PyQt5.QtCore import Qt
 
+from .core.xlsx import (  # noqa: F401 (shared with KherveCELL)
+    _EXCEL_FUNCTIONS, _convert_number_format, _formula_for_excel,
+    _hex_to_argb, _is_excel_compatible,
+)
+
 if TYPE_CHECKING:
     from .sheet import SheetWidget
 
@@ -37,16 +42,6 @@ def _px_to_row_height(px: int) -> float:
 
 
 # ── Qt → openpyxl style helpers ──────────────────────────────────────
-
-def _hex_to_argb(hex_color: str) -> str:
-    """Convert '#RRGGBB' or '#AARRGGBB' to 8-char ARGB for openpyxl."""
-    h = hex_color.lstrip("#")
-    if len(h) == 6:
-        return "FF" + h.upper()
-    if len(h) == 8:
-        return h.upper()
-    return "FF000000"
-
 
 def _qt_border_style(qt_style: int) -> str:
     """Map Qt pen style to openpyxl border style name."""
@@ -92,62 +87,6 @@ def _qt_alignment_to_xl(qt_align: int):
         vert = "center"
 
     return horiz, vert
-
-
-def _convert_number_format(fmt: str) -> str:
-    """Convert KherveSheet number format string to Excel number format."""
-    if not fmt or fmt == "General":
-        return "General"
-    if fmt == "Text":
-        return "@"
-    # Fixed decimal: "0", "0.0", "0.00", …
-    if fmt.startswith("0"):
-        return fmt
-    # Scientific
-    if fmt == "Scientific" or fmt.startswith("Sci:"):
-        dec = 2
-        if fmt.startswith("Sci:"):
-            try:
-                dec = int(fmt.split(":")[1])
-            except (IndexError, ValueError):
-                pass
-        return "0." + "0" * dec + "E+00"
-    # Percentage
-    if fmt == "Percentage":
-        return "0.00%"
-    # Currency
-    if fmt.startswith("Currency"):
-        sym = "$"
-        if ":" in fmt:
-            sym = fmt.split(":", 1)[1]
-        return f'{sym}#,##0.00'
-    # Date
-    if fmt.startswith("Date"):
-        # Convert strftime patterns to Excel date format codes
-        pattern = "yyyy-mm-dd"
-        if ":" in fmt:
-            py_pat = fmt.split(":", 1)[1]
-            pattern = (py_pat
-                       .replace("%Y", "yyyy")
-                       .replace("%y", "yy")
-                       .replace("%m", "mm")
-                       .replace("%d", "dd")
-                       .replace("%B", "mmmm")
-                       .replace("%b", "mmm"))
-        return pattern
-    # Time
-    if fmt.startswith("Time"):
-        pattern = "hh:mm:ss"
-        if ":" in fmt:
-            py_pat = fmt.split(":", 1)[1]
-            pattern = (py_pat
-                       .replace("%H", "hh")
-                       .replace("%M", "mm")
-                       .replace("%S", "ss")
-                       .replace("%I", "hh")
-                       .replace("%p", "AM/PM"))
-        return pattern
-    return "General"
 
 
 def _apply_cell_format(ws_cell, cf):
@@ -279,66 +218,6 @@ def _add_image_to_ws(ws, png_bytes: bytes, col: int, row: int,
 
 
 # ── Formula export ───────────────────────────────────────────────────
-
-# Functions that exist in Excel with the same name and semantics.
-_EXCEL_FUNCTIONS = {
-    "ABS", "ACOS", "ACOSH", "AND", "ASIN", "ASINH", "ATAN", "ATAN2",
-    "ATANH", "AVERAGE", "CEILING", "CHAR", "CHOOSE", "CLEAN", "CODE",
-    "COLUMN", "COLUMNS", "COMBIN", "CONCAT", "CONCATENATE", "COS",
-    "COSH", "COUNT", "COUNTA", "COUNTBLANK", "COUNTIF", "COUNTIFS",
-    "DATE", "DAY", "DAYS", "DEGREES", "EVEN", "EXACT", "EXP", "FACT",
-    "FALSE", "FIND", "FLOOR", "FV", "GCD", "HLOOKUP", "HOUR", "IF",
-    "IFERROR", "IFNA", "IFS", "INDEX", "INT", "IPMT", "IRR", "ISBLANK",
-    "ISERR", "ISERROR", "ISLOGICAL", "ISNA", "ISNONTEXT", "ISNUMBER",
-    "ISTEXT", "LARGE", "LCM", "LEFT", "LEN", "LN", "LOG", "LOG10",
-    "LOWER", "MATCH", "MAX", "MEDIAN", "MID", "MIN", "MINUTE", "MOD",
-    "MONTH", "NOT", "NOW", "NPER", "NPV", "ODD", "OR", "PERCENTILE",
-    "PI", "PMT", "POWER", "PPMT", "PRODUCT", "PROPER", "PV", "QUOTIENT",
-    "RADIANS", "RAND", "RANDBETWEEN", "RANK", "RATE", "REPLACE", "REPT",
-    "RIGHT", "ROUND", "ROUNDDOWN", "ROUNDUP", "ROW", "ROWS", "SEARCH",
-    "SECOND", "SIGN", "SIN", "SINH", "SMALL", "SORT", "SQRT", "STDEV",
-    "SUBSTITUTE", "SUM", "SUMIF", "SUMIFS", "SUMPRODUCT", "SUMSQ",
-    "SWITCH", "TAN", "TANH", "TEXT", "TIME", "TODAY", "TRIM", "TRUE",
-    "TRUNC", "TYPE", "UPPER", "VALUE", "VLOOKUP", "WEEKDAY", "XOR",
-    "YEAR",
-}
-
-# Pattern for function names in a formula (word before open-paren).
-_FUNC_RE = re.compile(r'([A-Za-z_][A-Za-z0-9_.]*)\s*\(')
-
-
-def _is_excel_compatible(formula: str) -> bool:
-    """Check whether a KherveSheet formula can be written to Excel as-is.
-
-    Returns True for formulas that only use Excel-compatible functions,
-    standard cell refs, ranges, and arithmetic operators.
-    Returns False for =PY(...) cells and KherveSheet-specific functions.
-    """
-    if not formula or not formula.startswith("="):
-        return False
-    body = formula[1:].strip()
-    # Python cells are never compatible
-    if body.upper().startswith("PY(") or body.upper().startswith("PY "):
-        return False
-    # Check every function call in the formula
-    for m in _FUNC_RE.finditer(body):
-        name = m.group(1).upper().replace(".", "_")
-        if name not in _EXCEL_FUNCTIONS:
-            return False
-    return True
-
-
-def _formula_for_excel(formula: str) -> str:
-    """Prepare a KherveSheet formula for Excel.
-
-    Replaces ^ (power) with Excel-compatible syntax and normalises
-    function names.  The leading '=' is preserved.
-    """
-    # KherveSheet uses ^ for power like Excel, but the internal compiler
-    # converts it to **.  The raw stored formula still has ^, so it's
-    # already Excel-compatible.  Just return it as-is.
-    return formula
-
 
 # ── Native Excel chart builder ───────────────────────────────────────
 
