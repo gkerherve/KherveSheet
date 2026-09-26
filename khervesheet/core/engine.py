@@ -12,7 +12,9 @@ Cells are addressed (row, col), 0-based.  A cell has a *source* (what was
 typed: a value or a formula) and a *text* (what is shown).  Formulas read
 the shown text of other cells, exactly as the desktop sheet does.
 
-Python (=PY) cells are kept but not run here yet.
+Python (=PY) cells run only once the workbook is given a runtime and the
+cell's code is trusted (see ``Workbook.enable_python``); until then they
+show PYTHON_NOT_RUN.
 
 Copyright (C) 2026 Gwilherm Kerherve
 
@@ -30,6 +32,10 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from .compiler import compile_formula, evaluate_cell
 from .functions import build_namespace, lower_names
 from .numbers import format_number, format_value, general_display
+from .python import (  # noqa: F401 (is_python_source is re-exported)
+    PY_MARKER, PyResult, badge_for, extract_refs, is_python_source,
+    source_hash, strip_marker, value_to_block,
+)
 from .refs import XREF_PATTERN, parse_cell_refs
 from .refs import letter_to_col_index
 from .values import BLANK, CellValues
@@ -38,7 +44,6 @@ Cell = Tuple[int, int]
 
 DEFAULT_ROWS = 5000
 DEFAULT_COLS = 50
-PY_MARKER = "=PY"
 PYTHON_NOT_RUN = "⟨Python — not run⟩"
 
 _RANGE_END = re.compile(r"\$?([A-Za-z]{1,3})?\$?(\d{1,7})?")
@@ -65,19 +70,6 @@ def _range_bounds(cells: str, sheet: "Sheet"):
 
 
 _DECIMALS = {"0": 0, "0.0": 1, "0.00": 2, "0.000": 3, "0.0000": 4}
-
-
-def is_python_source(text) -> bool:
-    """True if *text* is a Python cell: the =PY marker, then the end, a
-    space or a line break (so =PYTHAGORAS(…) stays a formula).
-
-    Same rule as ``python_engine.is_python_source`` on the desktop."""
-    if not isinstance(text, str):
-        return False
-    s = text.lstrip()
-    return (s[:len(PY_MARKER)].upper() == PY_MARKER
-            and s[len(PY_MARKER):len(PY_MARKER) + 1] in ("", " ", "\n",
-                                                         "\r", "\t"))
 
 
 class Sheet(CellValues):
@@ -107,6 +99,13 @@ class Sheet(CellValues):
         self._last_raw = None
         self._eval_ns = None
         self._eval_ns_lower = None
+        #: =PY outputs: live objects, cells a run filled (spills and
+        #: ks_set), figures as SVG, tracebacks and printed text.
+        self._py_objects: Dict[Cell, object] = {}
+        self._py_outputs: Dict[Cell, List[Cell]] = {}
+        self.py_figures: Dict[Cell, str] = {}
+        self.py_errors: Dict[Cell, str] = {}
+        self.py_stdout: Dict[Cell, str] = {}
 
     # ── Reading ──────────────────────────────────────────────────────
     def text(self, row: int, col: int) -> str:
@@ -164,9 +163,10 @@ class Sheet(CellValues):
             return
         if is_python_source(text):
             self._cell_formulas[key] = text
-            self._unregister_deps(row, col)
-            self._write(row, col, PYTHON_NOT_RUN)
+            self._register_py_deps(row, col, text)
+            self._write(row, col, self._evaluate_python(text, row, col, dec))
             return
+        self._clear_py_outputs(row, col)
         if text.startswith("="):
             self._cell_formulas[key] = text
             self._register_deps(row, col, text)
@@ -285,9 +285,9 @@ class Sheet(CellValues):
         for deps in self._dependents.values():
             deps.discard(key)
 
-    def _recalc_from_seeds(self, seeds: Iterable[Cell]):
+    def _recalc_from_seeds(self, seeds: Iterable[Cell], exclude=None):
         """Re-evaluate every formula that depends on *seeds*, each after
-        all of its inputs (topological order)."""
+        all of its inputs (topological order); *exclude* is skipped."""
         affected = set()
         stack = list(seeds)
         while stack:
@@ -317,11 +317,17 @@ class Sheet(CellValues):
             done = set(order)
             order.extend(k for k in affected if k not in done)
         for (r, c) in order:
+            if exclude and (r, c) in exclude:
+                continue
             self._reeval_formula_cell(r, c)
 
     def _reeval_formula_cell(self, r, c):
         formula = self._cell_formulas.get((r, c))
-        if not formula or is_python_source(formula):
+        if not formula:
+            return
+        if is_python_source(formula):
+            self._write(r, c, self._evaluate_python(
+                formula, r, c, self._cell_decimals(r, c)))
             return
         dec = self._cell_decimals(r, c)
         result = self._apply_cell_number_format(
@@ -331,6 +337,109 @@ class Sheet(CellValues):
         self._remember_value(r, c, result, self._last_raw)
 
 
+    # ── Python (=PY) cells ───────────────────────────────────────────
+    def _register_py_deps(self, row, col, source):
+        """A =PY cell depends on the cells its ks() calls read."""
+        self._unregister_deps(row, col)
+        cross = False
+        for ref in extract_refs(strip_marker(source)):
+            if "!" in ref:
+                cross = True
+                continue
+            for dep in parse_cell_refs("=" + ref):
+                self._dependents.setdefault(dep, set()).add((row, col))
+        if cross:
+            self._xref_cells.add((row, col))
+
+    def _clear_py_outputs(self, row, col):
+        """Forget what the cell's last run produced (spilled cells too)."""
+        key = (row, col)
+        self._py_objects.pop(key, None)
+        self.py_figures.pop(key, None)
+        self.py_errors.pop(key, None)
+        self.py_stdout.pop(key, None)
+        for cell in self._py_outputs.pop(key, []):
+            if cell not in self.sources:
+                self._write(*cell, "")
+                self._precise.pop(cell, None)
+
+    def _py_text(self, value, dec):
+        if isinstance(value, str):
+            return value
+        if isinstance(value, bool):
+            return "TRUE" if value else "FALSE"
+        if value is None:
+            return ""
+        try:
+            return str(format_number(float(value), dec))
+        except (TypeError, ValueError):
+            return str(value)
+
+    def _py_put(self, row, col, value, owner):
+        """Show *value* in a cell filled by the =PY cell *owner*."""
+        if (row, col) == owner or (row, col) in self.sources:
+            return False   # never over what someone typed
+        self._ensure_size(row, col)
+        text = self._py_text(value, self._cell_decimals(row, col))
+        self._write(row, col, text)
+        exact = value if isinstance(value, (int, float)) and not \
+            isinstance(value, bool) else None
+        self._remember_value(row, col, text, exact)
+        self._py_outputs.setdefault(owner, []).append((row, col))
+        return True
+
+    def _py_write(self, coords, value, cur_cell, written):
+        """ks_set(): write *value* into the range *coords*."""
+        r1, c1, r2, c2 = coords
+        for i, values in enumerate(value_to_block(value, r1, c1, r2, c2)):
+            for j, v in enumerate(values):
+                if self._py_put(r1 + i, c1 + j, v, cur_cell) and \
+                        written is not None:
+                    written.add((r1 + i, c1 + j))
+
+    def _evaluate_python(self, source, row, col, dec=3):
+        """Run a =PY cell (if Python may run) and return what it shows."""
+        self._clear_py_outputs(row, col)
+        workbook = self.workbook
+        if workbook.python is None or not workbook.may_run(source):
+            return PYTHON_NOT_RUN
+        code = strip_marker(source)
+        if not code.strip():
+            return ""
+        runtime = workbook.python
+        res = runtime.run(code, self, row, col)
+        writes = getattr(runtime, "last_writes", None)
+        if writes:
+            self._recalc_from_seeds(list(writes), exclude={(row, col)})
+        if res.stdout:
+            self.py_stdout[(row, col)] = res.stdout
+        if not res.ok:
+            self.py_errors[(row, col)] = res.error
+            return "#PYERR"
+        if res.kind == PyResult.FIGURE:
+            self.py_figures[(row, col)] = res.svg
+            return "📈 plot"
+        if res.kind == PyResult.NONE:
+            return ""
+        value = res.value
+        if res.kind == PyResult.SCALAR:
+            return self._py_text(value, dec)
+        if res.kind in (PyResult.ARRAY1D, PyResult.ARRAY2D):
+            block = value if res.kind == PyResult.ARRAY2D else \
+                [[v] for v in value]
+            for i, values in enumerate(block):
+                for j, v in enumerate(values):
+                    if i or j:
+                        self._py_put(row + i, col + j, v, (row, col))
+            spilled = self._py_outputs.get((row, col))
+            if spilled:
+                self._recalc_from_seeds(list(spilled), exclude={(row, col)})
+            head = block[0][0] if block and block[0] else ""
+            return self._py_text(head, dec)
+        self._py_objects[(row, col)] = value
+        return badge_for(value)
+
+
 class Workbook:
     """Sheets, looked up by name like the desktop workbook."""
 
@@ -338,6 +447,36 @@ class Workbook:
         self.sheets: List[Sheet] = []
         self._in_xref_refresh = False
         self._changes: Optional[List[tuple]] = None
+        #: The Python runtime for =PY cells (None: they are not run), and
+        #: the sources the user trusts (None: all of them).
+        self.python = None
+        self.trusted: Optional[set] = None
+
+    # ── Python ───────────────────────────────────────────────────────
+    def may_run(self, source: str) -> bool:
+        return self.trusted is None or source_hash(source) in self.trusted
+
+    def enable_python(self, runtime=None, trusted: Optional[set] = None
+                      ) -> List[tuple]:
+        """Run =PY cells from now on (only the *trusted* ones, if given:
+        hashes from ``source_hash``), and run those not run yet."""
+        from .python import PythonRuntime
+        self.python = runtime or self.python or PythonRuntime()
+        self.trusted = trusted
+        return self.rerun_python()
+
+    def rerun_python(self) -> List[tuple]:
+        """Run every =PY cell again (and what depends on them)."""
+        with self._collect() as changes:
+            for sheet in self.sheets:
+                cells = [rc for rc, f in sheet._cell_formulas.items()
+                         if is_python_source(f)]
+                for r, c in cells:
+                    sheet._reeval_formula_cell(r, c)
+                if cells:
+                    sheet._recalc_from_seeds(cells)
+            self.refresh_cross_sheet()
+        return changes
 
     # ── Sheets ───────────────────────────────────────────────────────
     def add_sheet(self, name: Optional[str] = None,

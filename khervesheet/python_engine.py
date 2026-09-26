@@ -33,38 +33,11 @@ from PyQt5.QtWidgets import QPlainTextEdit, QDialog, QWidget
 #: needed.  The probe touches the filesystem, so run it once.
 _CA_BUNDLE_READY = None
 
-PY_MARKER = "=PY"
-
-# Matches ks("A1"), cell('A1:B10'), ks("Sheet1!A1") inside source so the
-# referenced cells can be registered as dependencies.  (xl is kept as an
-# alias for users coming from Excel.)
-_XL_CALL = re.compile(r"\b(?:ks|xl|cell)\s*\(\s*([\"'])(.+?)\1")
-
-
-def is_python_source(text) -> bool:
-    """True if *text* is a Python cell: the =PY marker, then the end, a
-    space or a line break (so =PYTHAGORAS(…) stays a formula)."""
-    if not isinstance(text, str):
-        return False
-    s = text.lstrip()
-    return (s[:len(PY_MARKER)].upper() == PY_MARKER
-            and s[len(PY_MARKER):len(PY_MARKER) + 1] in ("", " ", "\n",
-                                                         "\r", "\t"))
-
-
-def strip_marker(text: str) -> str:
-    """Return the raw Python code with the leading =PY marker removed."""
-    s = text.lstrip()
-    body = s[len(PY_MARKER):]
-    # Drop a single leading newline or space that separates marker & code.
-    if body[:1] in ("\n", " "):
-        body = body[1:]
-    return body
-
-
-def extract_refs(code: str):
-    """Yield the A1-style ref strings used in xl()/cell() calls in *code*."""
-    return [m.group(2) for m in _XL_CALL.finditer(code or "")]
+# The =PY marker and the rules for reading a Python cell's source are
+# shared with the Qt-free engine (KherveCELL).
+from .core.python import (  # noqa: E402,F401
+    PY_MARKER, extract_refs, is_python_source, strip_marker,
+)
 
 
 class PyResult:
