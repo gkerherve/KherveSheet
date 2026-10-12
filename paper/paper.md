@@ -206,10 +206,14 @@ The script that places these cells, the full log of MCP calls
 
 # AI usage disclosure
 
-Generative AI (Claude, Anthropic) was used to help write parts of the
-KherveSheet code base and of this manuscript, and to drive the MCP session in
-the example. The author reviewed, tested and takes responsibility for all
-code, results and text.
+Generative AI was used in this work. Claude (Anthropic; Claude Opus and
+Sonnet models, through Claude Code, 2025–2026) assisted with writing parts of
+the KherveSheet source code, tests and documentation, and with drafting and
+editing this manuscript. In the worked example, Claude also drove the MCP
+session that placed the `=PY` cells. The author designed the software and its
+architecture, made all core design decisions, chose the scientific analysis
+and models, and reviewed, tested and validated all AI-assisted code, results
+and text, and takes full responsibility for them.
 
 # Acknowledgements
 
