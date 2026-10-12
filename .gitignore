@@ -25,3 +25,7 @@ Thumbs.db
 
 # Packaged installers (Inno .exe / macOS .dmg) — build output, 100 MB+
 installer/
+
+# local scratch workbooks
+/Test*.ksheet
+/Test*.csv

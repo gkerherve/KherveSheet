@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use KherveSheet in your research, please cite it as below."
+title: "KherveSheet: an Excel-like spreadsheet for scientists, with Python in every cell and AI assistants that work through the grid"
+type: software
+authors:
+  - family-names: Kerherve
+    given-names: Gwilherm
+    orcid: "https://orcid.org/0000-0002-6449-1828"
+    affiliation: "Department of Materials, Imperial College London"
+repository-code: "https://github.com/gkerherve/KherveSheet"
+url: "https://khervetools.com/tools/khervesheet"
+doi: 10.5281/zenodo.23317839
+license: GPL-3.0
+keywords:
+  - spreadsheet
+  - Python
+  - scientific data analysis
+  - Model Context Protocol
+  - X-ray photoelectron spectroscopy
