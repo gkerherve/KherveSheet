@@ -147,10 +147,11 @@ conventions [@major2020], and set a full frame with minor ticks. It then
 exported the chart with `export_chart` at 300 dpi. The chart stays linked to
 the cells, so re-running a `=PY` cell redraws it.
 
-![KherveSheet after the MCP session. Columns A–H hold data, the Shirley
-background, the components, the envelope and the residual, all spilled from
-`=PY` cells in row 1. The results table (I3:M9) and the residual plot (I40)
-are `=PY` outputs; the chart on the right is a native KherveSheet chart.\label{fig:window}](figures/khervesheet_window.png)
+![KherveSheet after the MCP session. Every number comes from `=PY` cells
+in row 1: the envelope and residual (columns G–H), the results table (I3:M9),
+and the Monte Carlo summary (T3:X9) with its 300 refits below it. The Ti 2p
+spectrum and the Monte Carlo histogram are native KherveSheet charts over
+those cells.\label{fig:window}](figures/khervesheet_window.png)
 
 ![Ti 2p spectrum of TiO$_2$ as a native KherveSheet chart built over MCP.
 The fit was computed in `=PY` cells: a Voigt spin–orbit doublet (red, blue)
