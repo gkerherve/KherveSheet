@@ -1290,6 +1290,8 @@ class AxisPropertiesDialog(QDialog):
             axis=ax_str, which='both',
             **{sec_key: st["sec_tick_show"],
                f"label{sec_key}": st["sec_label_show"]})
+        from .sec_ticks import apply_sec_tick_dir
+        apply_sec_tick_dir(ax, ax_str, sec_key, st)
 
         # ── Secondary title ────────────────────────────────────────
         sec_text = (st["sec_title_text"]
@@ -1568,6 +1570,8 @@ class AxisPropertiesDialog(QDialog):
             axis=ax_str, which='both',
             **{sec_key: st.get("sec_tick_show", False),
                f"label{sec_key}": st.get("sec_label_show", False)})
+        from .sec_ticks import apply_sec_tick_dir
+        apply_sec_tick_dir(ax, ax_str, sec_key, st)
 
         # Secondary title.
         sec_text = (st.get("sec_title_text", "")

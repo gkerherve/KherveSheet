@@ -226,6 +226,13 @@ CHART_TOOLS_EXTRA = [
                 "sec_title_show": {"type": "boolean"},
                 "sec_spine_show": {"type": "boolean"},
                 "sec_tick_show": {"type": "boolean"},
+                "sec_tick_dir": {
+                    "type": "string", "enum": TICK_DIRECTIONS,
+                    "description": (
+                        "Direction of the ticks on the opposite (top or "
+                        "right) edge when it differs from the main one, "
+                        "e.g. 'out' at the bottom and 'in' at the top. "
+                        "Needs sec_tick_show.")},
             },
             "required": ["sheet_name", "chart_index", "axis"],
         },
@@ -272,6 +279,17 @@ CHART_TOOLS_EXTRA = [
                             "color": {"type": "string"},
                             "fontsize": {"type": "number"},
                             "linewidth": {"type": "number"},
+                            "linestyle": {
+                                "type": "string",
+                                "enum": ["-", "--", ":", "-."],
+                                "description": "Arrow/line dash style; "
+                                               "':' for dotted guides."},
+                            "box": {
+                                "type": "boolean",
+                                "description": "Draw a box behind the "
+                                               "text. Default true; false "
+                                               "for plain journal-style "
+                                               "labels."},
                         },
                         "required": ["type", "x", "y"],
                     },
@@ -481,6 +499,7 @@ _ENUM_KEYS = {
     "tl_format": TICK_FORMATS,
     "major_dir": TICK_DIRECTIONS,
     "minor_dir": TICK_DIRECTIONS,
+    "sec_tick_dir": TICK_DIRECTIONS,
     "grid_major_style": LINE_STYLES,
     "grid_minor_style": LINE_STYLES,
     "sec_spine_style": LINE_STYLES,
@@ -569,12 +588,15 @@ def _add_annotation(chart, spec: dict) -> dict:
     color = spec.get("color", "black")
     lw = float(spec.get("linewidth", 1.5))
     size = float(spec.get("fontsize", 10 if kind == "text" else 9))
+    box = bool(spec.get("box", True))
+    ls = spec.get("linestyle", "-") or "-"
 
     if kind == "text":
         art = ax.annotate(
             text, xy=(x, y), xytext=(x, y), fontsize=size,
             color=color, ha="center", va="center",
-            bbox=dict(boxstyle="round,pad=0.3", fc="wheat", alpha=0.8))
+            bbox=(dict(boxstyle="round,pad=0.3", fc="wheat", alpha=0.8)
+                  if box else None))
         entry = {"type": "text", "artist": art, "text": text,
                  "xy": (x, y)}
     else:
@@ -588,9 +610,10 @@ def _add_annotation(chart, spec: dict) -> dict:
         art = ax.annotate(
             text, xy=(x, y), xytext=(x2, y2), fontsize=size,
             color=color,
-            arrowprops=dict(arrowstyle=style, color=color, lw=lw),
+            arrowprops=dict(arrowstyle=style, color=color, lw=lw,
+                            linestyle=ls),
             bbox=(dict(boxstyle="round,pad=0.2", fc="white", alpha=0.7)
-                  if text.strip() else None))
+                  if text.strip() and box else None))
         entry = {"type": kind, "artist": art, "text": text,
                  "xy": (x, y), "xytext": (x2, y2)}
     art.draggable(True)

@@ -77,6 +77,13 @@ _SERIES_STYLE = {
         "fill_color": {"type": "string", "description": "Hex."},
         "fill_alpha": {"type": "number",
                        "description": "0-1. Default 0.3."},
+        "edgecolor": {"type": "string",
+                      "description": "Bar / histogram outline colour, "
+                                     "e.g. '#000000' for black edges."},
+        "edgewidth": {"type": "number",
+                      "description": "Outline width in points (default "
+                                     "0.8 when edgecolor is given; 0 "
+                                     "removes it)."},
     },
     "required": ["index"],
 }
@@ -468,6 +475,18 @@ def _style_one_series(chart, idx: int, spec: dict) -> dict:
             for patch in artist.patches:
                 patch.set_facecolor(spec["color"])
             applied["color"] = spec["color"]
+        if "edgecolor" in spec or "edgewidth" in spec:
+            from .bar_options import apply_patch_edges
+            bp = s.setdefault("bar", {})
+            if "edgecolor" in spec:
+                bp["edge_color"] = spec["edgecolor"]
+            bp["edge_width"] = float(spec.get(
+                "edgewidth", bp.get("edge_width") or 0.8))
+            apply_patch_edges(artist, bp)
+            if s.get("plot_type") == "Bar":
+                chart._redraw_bars()
+            applied["edgecolor"] = bp.get("edge_color", "#000000")
+            applied["edgewidth"] = bp["edge_width"]
         _apply_fill(chart, idx, spec, applied)
         return applied
 

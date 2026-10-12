@@ -222,6 +222,27 @@ def _draw_stacked(ax, xs, ys, labels, bar_props, colors,
     return containers
 
 
+def apply_patch_edges(artist, bp):
+    """Outline the bars of a histogram (or any patch container)."""
+    patches = getattr(artist, "patches", None) or (
+        artist if isinstance(artist, (list, tuple)) else [])
+    width = float(bp.get("edge_width", 0.0) or 0.0)
+    from matplotlib.colors import to_rgba
+    for patch in patches:
+        if width > 0:
+            # Keep any transparency on the fill only, so the outline
+            # stays solid.
+            a = patch.get_alpha()
+            if a is not None:
+                patch.set_facecolor(to_rgba(patch.get_facecolor(), a))
+                patch.set_alpha(None)
+            patch.set_edgecolor(bp.get("edge_color", "#000000"))
+            patch.set_linewidth(width)
+        else:
+            patch.set_edgecolor("none")
+            patch.set_linewidth(0)
+
+
 def _apply_visuals(ax, container, bp, series_dict, horiz):
     """Apply edge, hatch, opacity, data labels to a BarContainer."""
     edge_color = bp.get("edge_color", "#000000")

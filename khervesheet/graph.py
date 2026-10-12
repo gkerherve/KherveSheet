@@ -1557,6 +1557,10 @@ class EmbeddedChart(QWidget):
             # Per-series bar properties.
             if "bar" in sd:
                 chart._series[i]["bar"] = dict(sd["bar"])
+                if sd.get("plot_type") == "Histogram":
+                    from .bar_options import apply_patch_edges
+                    apply_patch_edges(chart._series[i].get("artist"),
+                                      sd["bar"])
             fm = sd.get("fill_mode", "none")
             if fm != "none":
                 chart.apply_fill(
