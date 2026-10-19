@@ -118,6 +118,10 @@ class MainWindow(QMainWindow):
         # Build UI
         self._build_menu_bar()
         self._build_toolbars()
+        self._ribbon = None
+        if self._settings.value("toolbar_style", "ribbon") != "classic":
+            from .ribbon_tabs import build_ribbon
+            self._ribbon = build_ribbon(self)
         self._build_status_bar()
         self._update_title()
         # Apply the default live spell-check state now menus + sheets exist.
@@ -247,6 +251,14 @@ class MainWindow(QMainWindow):
         view_menu.addAction("Zoom Out", self._zoom_out, "Ctrl+-")
         view_menu.addAction("Reset Zoom", self._zoom_reset, "Ctrl+0")
         view_menu.addSeparator()
+        tb_menu = view_menu.addMenu("Toolbar Style")
+        style = self._settings.value("toolbar_style", "ribbon")
+        for key, label in (("ribbon", "Excel Ribbon"),
+                           ("classic", "Classic Toolbars")):
+            a = tb_menu.addAction(
+                label, lambda k=key: self._set_toolbar_style(k))
+            a.setCheckable(True)
+            a.setChecked((style == "classic") == (key == "classic"))
         theme_menu = view_menu.addMenu("Theme")
         from .app import THEMES
         for name in THEMES:
@@ -505,6 +517,14 @@ class MainWindow(QMainWindow):
         help_menu.addAction("GitHub Repository", self._open_github)
 
     # ── Toolbars ─────────────────────────────────────────────────────
+    def _set_toolbar_style(self, style: str):
+        """Ribbon or classic toolbars; takes effect on the next start."""
+        self._settings.setValue("toolbar_style", style)
+        QMessageBox.information(
+            self, "Toolbar Style",
+            "The new toolbar style will be used the next time "
+            "KherveSheet starts.")
+
     def _build_toolbars(self):
         self._ico = _ICO = 32
         icon_size = QSize(_ICO, _ICO)
