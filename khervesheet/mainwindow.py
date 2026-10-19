@@ -3279,6 +3279,10 @@ class MainWindow(QMainWindow):
         from PyQt5.QtCore import QSettings
         QSettings("KherveSheet", "KherveSheet").setValue("theme", name)
         self._refresh_toolbar_icons()
+        self._workbook.apply_accent()
+        if getattr(self, "_ribbon", None) is not None:
+            from .ribbon_tabs import retheme
+            retheme(self._ribbon)
 
     def _refresh_toolbar_icons(self):
         """Rebuild format toolbar icons so they match the current theme."""

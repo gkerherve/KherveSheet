@@ -35,8 +35,8 @@ QTabWidget#SheetTabs > QTabBar::tab:hover:!selected {
     background: palette(midlight);
 }
 QTabWidget#SheetTabs > QTabBar::tab:selected {
-    background: palette(base); color: #217346; font-weight: bold;
-    border-bottom: 2px solid #217346;
+    background: palette(base); color: {accent}; font-weight: bold;
+    border-bottom: 2px solid {accent};
 }
 QTabWidget#SheetTabs QToolButton { padding: 0; }
 """
@@ -86,7 +86,7 @@ class WorkbookWidget(QWidget):
         self.tabs.setObjectName("SheetTabs")
         self.tabs.tabBar().setExpanding(False)
         self.tabs.tabBar().setElideMode(Qt.ElideNone)
-        self.tabs.setStyleSheet(_SHEET_TABS_QSS)
+        self.apply_accent()
         self.tabs.tabCloseRequested.connect(self._close_tab)
         self.tabs.tabBar().setContextMenuPolicy(Qt.CustomContextMenu)
         self.tabs.tabBar().customContextMenuRequested.connect(
@@ -148,6 +148,14 @@ class WorkbookWidget(QWidget):
         self.ensure_layout_tabs()
         self.tabs.setCurrentIndex(0)
         self.tabs.currentChanged.connect(self._on_current_changed)
+
+    def apply_accent(self):
+        """Colour the active sheet tab with the theme's accent."""
+        from PyQt5.QtGui import QPalette
+        from PyQt5.QtWidgets import QApplication
+        accent = QApplication.palette().color(QPalette.Highlight).name()
+        qss = _SHEET_TABS_QSS.replace("{accent}", accent)
+        self.tabs.setStyleSheet(qss)
 
     # ── Publication layout tab (always pinned rightmost) ─────────────
     def ensure_layout_tabs(self):

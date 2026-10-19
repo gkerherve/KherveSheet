@@ -27,7 +27,7 @@ _LARGE = QSize(32, 32)
 _SMALL = QSize(16, 16)
 _BODY_H = 78                # group area height: three small rows
 
-RIBBON_QSS = f"""
+_QSS = """
 QTabWidget#ExcelRibbon::pane {{
     border: none; border-top: 1px solid palette(midlight);
     background: palette(base);
@@ -42,19 +42,19 @@ QTabWidget#ExcelRibbon > QTabBar::tab:hover {{
     background: palette(midlight);
 }}
 QTabWidget#ExcelRibbon > QTabBar::tab:selected {{
-    color: {ACCENT}; font-weight: bold;
-    border-bottom: 3px solid {ACCENT};
+    color: {accent}; font-weight: bold;
+    border-bottom: 3px solid {accent};
 }}
 QWidget#RibbonPage {{ background: palette(base); }}
 QWidget#RibbonPage QToolButton {{
     border: 1px solid transparent; border-radius: 3px; padding: 1px 2px;
 }}
 QWidget#RibbonPage QToolButton:hover {{
-    background: #e1f0e6; border-color: #b6d9c2;
+    background: {hover}; border-color: {hover_border};
 }}
 QWidget#RibbonPage QToolButton:checked,
 QWidget#RibbonPage QToolButton:pressed {{
-    background: #c6e5d0; border-color: #8cc3a0;
+    background: {down}; border-color: {down_border};
 }}
 QWidget#RibbonPage QToolButton[popupMode="1"] {{ padding-right: 10px; }}
 QWidget#RibbonPage QToolButton::menu-button {{
@@ -70,13 +70,31 @@ QToolButton#RibbonLauncher {{
     border: none; padding: 0; font-size: 9px; color: palette(dark);
 }}
 QToolButton#RibbonFile {{
-    background: {ACCENT}; color: white; border: none;
+    background: {accent}; color: white; border: none;
     padding: 4px 14px; font-weight: bold;
 }}
-QToolButton#RibbonFile:hover {{ background: #185c37; }}
+QToolButton#RibbonFile:hover {{ background: {dark}; }}
 QToolButton#RibbonFile::menu-indicator {{ image: none; }}
 QFrame#RibbonSep {{ color: palette(midlight); }}
 """
+
+
+def accent_color() -> str:
+    """The theme's accent: every theme sets it as the Highlight colour."""
+    from PyQt5.QtGui import QPalette
+    from PyQt5.QtWidgets import QApplication
+    return QApplication.palette().color(QPalette.Highlight).name()
+
+
+def ribbon_qss(accent: str) -> str:
+    from PyQt5.QtGui import QColor
+    c = QColor(accent)
+
+    def tint(alpha: float) -> str:
+        return f"rgba({c.red()}, {c.green()}, {c.blue()}, {alpha})"
+    return _QSS.format(accent=accent, hover=tint(0.14),
+                       hover_border=tint(0.35), down=tint(0.28),
+                       down_border=tint(0.6), dark=c.darker(130).name())
 
 
 def short(text: str) -> str:
@@ -206,7 +224,7 @@ class Ribbon(QTabWidget):
         super().__init__(parent)
         self.setObjectName("ExcelRibbon")
         self.setDocumentMode(True)
-        self.setStyleSheet(RIBBON_QSS)
+        self.apply_accent(accent_color())
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._collapsed = False
         self.tabBar().setDrawBase(False)
@@ -214,6 +232,12 @@ class Ribbon(QTabWidget):
             lambda _i: self.set_collapsed(not self._collapsed))
         self.tabBar().tabBarClicked.connect(self._on_tab_clicked)
         self._apply_height()
+
+    def apply_accent(self, accent: str) -> None:
+        """Recolour the ribbon to the theme (tab underline, File button,
+        hover tints)."""
+        self.accent = accent
+        self.setStyleSheet(ribbon_qss(accent))
 
     def add_tab(self, name: str) -> RibbonTab:
         tab = RibbonTab()
@@ -252,7 +276,7 @@ class Ribbon(QTabWidget):
             elif isinstance(a, QAction):
                 b = _button(a, False, False)
                 b.setStyleSheet("QToolButton { border: none; padding: 2px; }"
-                                "QToolButton:hover { background: #e1f0e6; }")
+                                "QToolButton:hover { background: palette(midlight); }")
                 h.addWidget(b)
             else:
                 h.addWidget(a)

@@ -24,13 +24,38 @@ from PyQt5.QtWidgets import (
 )
 
 from . import icons
-from .ribbon import ACCENT, Ribbon, short
+from .ribbon import Ribbon, accent_color, short
+
+ACCENT = object()      # "colour this icon with the theme accent"
+_accented: list = []   # (action, mdi name) recoloured on theme change
 
 _ICO = 32
 
 
-def _ic(name: str, color: str = "") -> "icons.QIcon":
+def _ic(name: str, color=""):
+    if color is ACCENT:
+        icon = icons.themed_icon(name, color=accent_color())
+        icon._accent_name = name
+        return icon
     return icons.themed_icon(name, color=color)
+
+
+def retheme(rb: Ribbon) -> None:
+    """Follow a theme change: ribbon colours and accent icons."""
+    accent = accent_color()
+    rb.apply_accent(accent)
+    for act, name in _accented:
+        act.setIcon(icons.themed_icon(name, color=accent))
+    # A new theme changes button padding; size the buttons again so the
+    # labels are not elided ("For…as Table").
+    from PyQt5.QtCore import QTimer
+
+    def refit():
+        for btn in rb.findChildren(QToolButton):
+            btn.ensurePolished()
+            btn.setMinimumWidth(0)
+            btn.setMinimumWidth(btn.sizeHint().width())
+    QTimer.singleShot(0, refit)
 
 
 class _Builder:
@@ -67,6 +92,8 @@ class _Builder:
             menu_only: bool = False, checkable: bool = False,
             tip: str = "") -> QAction:
         a = QAction(icon, text, self.w)
+        if getattr(icon, "_accent_name", None):
+            _accented.append((a, icon._accent_name))
         if slot is not None:
             a.triggered.connect(lambda _=False, s=slot: s())
         a.setCheckable(checkable)
