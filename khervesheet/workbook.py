@@ -22,6 +22,26 @@ from PyQt5.QtWidgets import (
 from .sheet import SheetWidget
 
 
+_SHEET_TABS_QSS = """
+QTabWidget#SheetTabs > QTabBar { background: palette(window); }
+QTabWidget#SheetTabs > QTabBar::tab {
+    background: transparent; color: palette(text);
+    padding: 2px 12px; margin: 0; min-width: 0;
+    border: none; border-radius: 0;
+    border-right: 1px solid palette(mid);
+    font-weight: normal;
+}
+QTabWidget#SheetTabs > QTabBar::tab:hover:!selected {
+    background: palette(midlight);
+}
+QTabWidget#SheetTabs > QTabBar::tab:selected {
+    background: palette(base); color: #217346; font-weight: bold;
+    border-bottom: 2px solid #217346;
+}
+QTabWidget#SheetTabs QToolButton { padding: 0; }
+"""
+
+
 class _RenameableTabBar(QTabWidget):
     """QTabWidget that renames tabs on double-click."""
 
@@ -57,9 +77,16 @@ class WorkbookWidget(QWidget):
 
         self.tabs = _RenameableTabBar()
         self.tabs.setTabPosition(QTabWidget.South)
-        self.tabs.setTabsClosable(True)
+        # Excel's sheet tabs: small, flat, no close button (Delete Sheet
+        # is on the right-click menu), the active one white with a
+        # green underline.
+        self.tabs.setTabsClosable(False)
         self.tabs.setMovable(True)
         self.tabs.setDocumentMode(True)
+        self.tabs.setObjectName("SheetTabs")
+        self.tabs.tabBar().setExpanding(False)
+        self.tabs.tabBar().setElideMode(Qt.ElideNone)
+        self.tabs.setStyleSheet(_SHEET_TABS_QSS)
         self.tabs.tabCloseRequested.connect(self._close_tab)
         self.tabs.tabBar().setContextMenuPolicy(Qt.CustomContextMenu)
         self.tabs.tabBar().customContextMenuRequested.connect(
@@ -71,7 +98,7 @@ class WorkbookWidget(QWidget):
         ch.setContentsMargins(0, 0, 0, 0)
         ch.setSpacing(0)
 
-        _BTN = 32
+        _BTN = 22
 
         def _mk(text, tip, fn):
             b = QToolButton()
@@ -80,7 +107,7 @@ class WorkbookWidget(QWidget):
             b.setAutoRaise(True)
             b.setFixedSize(_BTN, _BTN)
             f = b.font()
-            f.setPointSize(12)
+            f.setPointSize(9)
             b.setFont(f)
             b.clicked.connect(fn)
             return b
@@ -97,7 +124,7 @@ class WorkbookWidget(QWidget):
         self._btn_list.setAutoRaise(True)
         self._btn_list.setFixedSize(_BTN, _BTN)
         f = self._btn_list.font()
-        f.setPointSize(12)
+        f.setPointSize(9)
         self._btn_list.setFont(f)
         self._btn_list.setPopupMode(QToolButton.InstantPopup)
         self._btn_list.clicked.connect(self._show_sheet_list)
