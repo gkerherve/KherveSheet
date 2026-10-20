@@ -108,6 +108,15 @@ def _shown(text: str) -> str:
     return text.replace("&", "&&")
 
 
+def _label(b: QToolButton, action: QAction, label: str | None) -> None:
+    """Set the button's label. The button re-reads the action's icon
+    text whenever the action changes (its tooltip, checked state), so
+    the label lives there too, with a literal & kept."""
+    text = _shown(label or short(action.text()))
+    action.setIconText(text)
+    b.setText(text)
+
+
 def _button(action: QAction, large: bool, text: bool,
             label: str | None = None) -> QToolButton:
     b = QToolButton()
@@ -126,12 +135,12 @@ def _button(action: QAction, large: bool, text: bool,
         b.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
         b.setMinimumWidth(46)
         b.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        b.setText(_shown(label or short(action.text())))
+        _label(b, action, label)
     else:
         b.setIconSize(_SMALL)
         if text:
             b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
-            b.setText(_shown(label or short(action.text())))
+            _label(b, action, label)
         else:
             b.setToolButtonStyle(Qt.ToolButtonIconOnly)
     tip = short(action.text())
@@ -254,6 +263,7 @@ class Ribbon(QTabWidget):
         """The green File button at the left of the tab row."""
         b = QToolButton()
         b.setObjectName("RibbonFile")
+        b.setProperty("tip_key", "file")
         b.setText("File")
         b.setMenu(menu)
         b.setPopupMode(QToolButton.InstantPopup)

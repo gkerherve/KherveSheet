@@ -165,6 +165,8 @@ def build_ribbon(win) -> Ribbon:
     for cb in (font_combo, size_combo):
         cb.setFocusPolicy(Qt.ClickFocus)
     w._font_combo, w._font_size = font_combo, size_combo
+    font_combo.setProperty("tip_key", "font")
+    size_combo.setProperty("tip_key", "size")
 
     def twin(old: QToolButton, label: str) -> QToolButton:
         """A small ribbon copy of a classic-toolbar menu button."""
@@ -186,6 +188,8 @@ def build_ribbon(win) -> Ribbon:
     fcolor = twin(w._font_color_btn, "_apply_last_font_color")
     # The colour handlers repaint these by name with the window's size.
     w._fill_btn, w._font_color_btn = fill, fcolor
+    for t, key in ((borders, "borders"), (fill, "fill"), (fcolor, "fcolor")):
+        t.setProperty("tip_key", key)
     w._ico = 16
     home.add_group("Font", rows=[
         [font_combo, size_combo],
@@ -206,6 +210,7 @@ def build_ribbon(win) -> Ribbon:
     num.setFixedWidth(118)
     num.setFocusPolicy(Qt.NoFocus)
     num.textActivated.connect(w._set_number_format)
+    num.setProperty("tip_key", "number")
     pct = next((f for f in NUMBER_FORMATS if "%" in f), None)
     sci = next((f for f in NUMBER_FORMATS if "Sci" in f or "E+" in f), None)
     quick = []
@@ -294,8 +299,8 @@ def build_ribbon(win) -> Ribbon:
                                   others)]], text=False)
     spark = w._sparkline_btn.menu()
     ins.add_group("Sparklines", large=[
-        b.act("Line", icons.sparkline_icon(_ICO), w._insert_sparklines_bulk,
-              menu=spark)])
+        (b.act("Sparkline", icons.sparkline_icon(_ICO),
+               w._insert_sparklines_bulk, menu=spark), "Line")])
     ins.add_group("Controls", rows=[
         [b.act("Checkbox", icons.checkbox_icon(20), w._insert_checkbox)],
         [b.act("Button", icons.checkbox_icon(20), w._insert_button)],
@@ -436,6 +441,8 @@ def build_ribbon(win) -> Ribbon:
         _keep_shortcuts(w)
         w.menuBar().hide()
     rb.setCurrentIndex(0)
+    from . import tooltips
+    tooltips.apply(rb)
     return rb
 
 
@@ -476,7 +483,9 @@ def _category_rows(b: _Builder):
         name = short(a.text())
         icon = next((v for k, v in glyph.items() if name.startswith(k)),
                     "mdi.function")
-        btns.append(b.menu_act(name, _ic(icon), a.menu()))
+        btn = b.menu_act(name, _ic(icon), a.menu())
+        btn.setProperty("tip_category", True)
+        btns.append(btn)
     rows = [[], [], []]
     for i, btn in enumerate(btns):
         rows[i % 3].append(btn)
