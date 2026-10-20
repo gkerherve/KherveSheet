@@ -23,9 +23,10 @@ from PyQt5.QtWidgets import (
 )
 
 ACCENT = "#217346"          # Excel green
-_LARGE = QSize(32, 32)
+_LARGE = QSize(26, 26)
 _SMALL = QSize(16, 16)
-_BODY_H = 78                # group area height: three small rows
+_BODY_H = 58                # group area height: two small rows
+_ROWS = 2                   # small-button rows per group
 
 _QSS = """
 QTabWidget#ExcelRibbon::pane {{
@@ -167,6 +168,12 @@ class RibbonTab(QWidget):
         body.setSpacing(1)
         for it in large:
             body.addWidget(self._item(it, True, True))
+        rows = [list(r) for r in rows if r]
+        if len(rows) > _ROWS:
+            # Reflow into _ROWS rows, the first one taking the extra item.
+            flat = [it for r in rows for it in r]
+            n = -(-len(flat) // _ROWS)
+            rows = [flat[i:i + n] for i in range(0, len(flat), n)]
         if rows:
             grid = QGridLayout()
             grid.setSpacing(1)
