@@ -5,7 +5,7 @@ name: macOS build
 # would need universal wheels for numpy/scipy/h5py/pygit2 all the way
 # down, and those are not consistently published.
 #
-# macos-14 -> Apple Silicon (arm64), macos-15-intel -> Intel (x86_64).
+# macos-15 -> Apple Silicon (arm64), macos-15-intel -> Intel (x86_64).
 # The Intel DMG also runs on Apple Silicon under Rosetta, so it is the
 # safe one to hand to someone whose hardware you do not know.
 
@@ -21,7 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-14
+          - runner: macos-15
             arch: arm64
           - runner: macos-15-intel
             arch: x86_64
