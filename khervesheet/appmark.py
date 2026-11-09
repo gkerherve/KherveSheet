@@ -1,6 +1,6 @@
 """The KherveSheet application mark (window / taskbar icon).
 
-Draws a "KSheet" wordmark above a spreadsheet grid on a rounded green
+Draws a "kSheet" wordmark above a spreadsheet grid on a rounded green
 tile, in the shared Kherve-family style (cf. KherveBook / KhervePaint):
 the letters are stroked vector paths — not text — so the mark renders
 identically on every platform and stays crisp from 16 px to 256 px,
@@ -24,7 +24,7 @@ _EDGE = "#1c7a1c"
 _INK = "#ffffff"
 
 # The grid schematic is a stroked vector path (font-independent); the
-# "KSheet" wordmark itself is drawn with a normal system font.
+# "kSheet" wordmark itself is drawn with a normal system font.
 
 
 def _stroke(p, path, color, box, weight):
@@ -88,7 +88,7 @@ def _grid(p, box):
 
 
 def paint(size: int) -> QPixmap:
-    """Render the KSheet mark at *size* px."""
+    """Render the kSheet mark at *size* px."""
     pm = QPixmap(size, size)
     pm.fill(Qt.transparent)
     p = QPainter(pm)
@@ -96,7 +96,7 @@ def paint(size: int) -> QPixmap:
     s = float(size)
     rect = _tile(p, s)
     x, y, w, h = rect.x(), rect.y(), rect.width(), rect.height()
-    _wordmark(p, QRectF(x, y + h * 0.05, w, h * 0.44), "KSheet")
+    _wordmark(p, QRectF(x, y + h * 0.05, w, h * 0.44), "kSheet")
     gw, gh = w * 0.46, h * 0.38
     _grid(p, QRectF(x + (w - gw) / 2.0, y + h * 0.54, gw, gh))
     p.end()

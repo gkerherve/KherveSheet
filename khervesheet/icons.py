@@ -138,7 +138,7 @@ def themed_icon(qta_name: str, std_fallback=None,
 
 def _draw_app_pixmap(size: int = 32) -> QPixmap:
     """Render the KherveSheet mark at *size* px (crisp at any res): a
-    "KSheet" wordmark above a spreadsheet grid on a green tile. Drawn as
+    "kSheet" wordmark above a spreadsheet grid on a green tile. Drawn as
     stroked vector paths in ``appmark`` (Kherve-family icon style), so it
     needs no system font and stays sharp from 16 px to 256 px."""
     from . import appmark
